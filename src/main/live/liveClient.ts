@@ -99,6 +99,8 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
     gameTime: d.gameData.gameTime,
     gameMode: d.gameData.gameMode,
     activePlayer: d.activePlayer?.riotId ?? d.activePlayer?.summonerName ?? null,
+    activeChampion:
+      players.find((p) => p.riotId && p.riotId === (d.activePlayer?.riotId ?? d.activePlayer?.summonerName))?.championName ?? null,
     players,
     events
   }

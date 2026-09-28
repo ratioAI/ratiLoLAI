@@ -3,12 +3,39 @@
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
 export type Role = (typeof ROLES)[number]
 
-export const ROLE_LABELS: Record<Role, string> = {
+/** 'ARAM' is used as pseudo role for the Howling Abyss, where there are no lanes. */
+export type StatRole = Role | 'ARAM'
+
+export const ROLE_LABELS: Record<StatRole, string> = {
   TOP: 'Top',
   JUNGLE: 'Jungle',
   MIDDLE: 'Mid',
   BOTTOM: 'ADC',
-  UTILITY: 'Support'
+  UTILITY: 'Support',
+  ARAM: 'ARAM'
+}
+
+export type GameMode = 'ranked' | 'aram'
+export const GAME_MODES: Record<GameMode, { label: string; queue: number; roles: readonly StatRole[] }> = {
+  ranked: { label: 'Ranked Solo/Duo', queue: 420, roles: ROLES },
+  aram: { label: 'ARAM', queue: 450, roles: ['ARAM'] }
+}
+
+/** Queue ids of the modes the app recognises in champion select. */
+export const QUEUE_IDS = { ranked: [420, 440, 400, 430, 490], aram: [450, 100], mayhem: [2400] } as const
+export type SelectMode = 'ranked' | 'aram' | 'mayhem' | 'other'
+
+export function selectModeOfQueue(queueId: number | null | undefined, gameMode?: string | null): SelectMode {
+  if (gameMode === 'KIWI' || (queueId != null && (QUEUE_IDS.mayhem as readonly number[]).includes(queueId))) return 'mayhem'
+  if (queueId == null) return 'other'
+  if ((QUEUE_IDS.aram as readonly number[]).includes(queueId) || gameMode === 'ARAM') return 'aram'
+  if ((QUEUE_IDS.ranked as readonly number[]).includes(queueId)) return 'ranked'
+  return 'other'
+}
+
+/** Which statistics a champion select mode uses for builds. */
+export function statsModeOf(mode: SelectMode): GameMode {
+  return mode === 'aram' || mode === 'mayhem' ? 'aram' : 'ranked'
 }
 
 export const PLATFORMS = {
@@ -105,7 +132,7 @@ export interface StaticData {
 
 export interface ChampionRoleStats extends WG {
   championId: number
-  role: Role
+  role: StatRole
   /** key: primaryStyle|p0,p1,p2,p3|subStyle|s0,s1|shard0,shard1,shard2 */
   runes: Record<string, WG>
   /** key: "4,14" (sorted spell ids) */
@@ -129,6 +156,8 @@ export interface ChampionRoleStats extends WG {
 
 export interface PatchStats {
   patch: string
+  /** defaults to 'ranked' for files written by v0.1 */
+  mode?: GameMode
   matches: number
   updatedAt: number
   bans: Record<string, number>
@@ -141,7 +170,7 @@ export interface PatchStats {
 
 export interface TierEntry {
   championId: number
-  role: Role
+  role: StatRole
   tier: Tier
   score: number
   games: number
@@ -175,14 +204,15 @@ export interface Matchup {
 
 export interface ChampionBuild {
   championId: number
-  role: Role
+  role: StatRole
+  mode: GameMode
   patch: string
   games: number
   winRate: number
   pickRate: number
   banRate: number
   tier: Tier | null
-  availableRoles: { role: Role; games: number }[]
+  availableRoles: { role: StatRole; games: number }[]
   runes: Option<RunePage>[]
   spells: Option<number[]>[]
   starters: Option<number[]>[]
@@ -203,6 +233,7 @@ export interface ChampionBuild {
 
 export interface CrawlerStatus {
   running: boolean
+  mode: GameMode
   phase: 'idle' | 'seeding' | 'crawling' | 'stopping' | 'error' | 'done'
   message: string
   patch: string | null
@@ -288,6 +319,8 @@ export interface ChampSelectPlayer {
 
 export interface ChampSelectState {
   active: boolean
+  queueId: number | null
+  mode: SelectMode
   myChampionId: number
   myRole: Role | null
   locked: boolean
@@ -323,6 +356,8 @@ export interface LiveGameState {
   active: boolean
   gameTime: number
   gameMode: string
+  /** champion name of the local player */
+  activeChampion: string | null
   activePlayer: string | null
   players: LivePlayer[]
   events: { name: string; time: number; text: string }[]
@@ -397,6 +432,52 @@ export interface ScoutResult {
 }
 
 // ---------------------------------------------------------------------------
+// ARAM: Mayhem
+// ---------------------------------------------------------------------------
+
+export type AugmentRarity = 'silver' | 'gold' | 'prismatic'
+export type ComboType = 'god' | 'strong' | 'blackTech' | 'entertainment' | 'trap' | 'bug'
+
+export interface MayhemAugment {
+  /** augment id as used by the game client (cherry-augments.json) */
+  id: number
+  slug: string
+  name: string
+  rarity: AugmentRarity
+  /** absolute icon URL (CommunityDragon) */
+  icon: string
+  /** global pick rate in percent (arammayhem.com, China servers) */
+  pickRate: number | null
+  pickRateRank: number | null
+  pickRateChange: number | null
+  url: string | null
+}
+
+export interface MayhemCombo {
+  championAlias: string // Data Dragon id, e.g. "MonkeyKing"
+  augments: number[]
+  types: ComboType[]
+  url: string
+}
+
+export interface MayhemData {
+  patch: string | null
+  statsDate: string | null
+  fetchedAt: number
+  augments: Record<number, MayhemAugment>
+  combos: MayhemCombo[]
+  attribution: { text: string; url: string }
+}
+
+export interface MayhemPersonal {
+  games: number
+  wins: number
+  augments: { id: number; games: number; wins: number }[]
+  champions: { championId: number; games: number; wins: number }[]
+  recent: { gameId: number; championId: number; win: boolean; augments: number[]; createdAt: number }[]
+}
+
+// ---------------------------------------------------------------------------
 // IPC contract
 // ---------------------------------------------------------------------------
 
@@ -405,16 +486,23 @@ export interface RcApi {
   getSettings(): Promise<Settings>
   saveSettings(patch: Partial<Omit<Settings, 'hasApiKey'>>): Promise<Settings>
   setApiKey(key: string): Promise<{ ok: boolean; message: string }>
-  getPatches(): Promise<{ patch: string; matches: number; updatedAt: number }[]>
-  getTierList(patch: string): Promise<TierEntry[]>
-  getChampionBuild(patch: string, championId: number, role?: Role): Promise<ChampionBuild | null>
-  crawlerStart(): Promise<void>
+  getPatches(mode: GameMode): Promise<{ patch: string; matches: number; updatedAt: number }[]>
+  getTierList(patch: string, mode: GameMode): Promise<TierEntry[]>
+  getChampionBuild(patch: string, championId: number, role: StatRole | undefined, mode: GameMode): Promise<ChampionBuild | null>
+  crawlerStart(mode: GameMode): Promise<void>
   crawlerStop(): Promise<void>
   crawlerStatus(): Promise<CrawlerStatus>
-  resetStats(patch: string): Promise<void>
+  resetStats(patch: string, mode: GameMode): Promise<void>
   clientStatus(): Promise<ClientStatus>
   champSelect(): Promise<ChampSelectState | null>
-  importBuild(championId: number, role: Role | null, what?: ('runes' | 'items' | 'spells')[]): Promise<ImportResult>
+  importBuild(
+    championId: number,
+    role: StatRole | null,
+    what: ('runes' | 'items' | 'spells')[] | undefined,
+    mode: GameMode
+  ): Promise<ImportResult>
+  getMayhemData(): Promise<MayhemData>
+  getMayhemPersonal(): Promise<MayhemPersonal | null>
   liveGame(): Promise<LiveGameState | null>
   lookupProfile(riotId: string, platform: Platform): Promise<ProfileData>
   scoutActiveGame(riotId: string, platform: Platform): Promise<ScoutResult | null>
@@ -428,5 +516,5 @@ export interface RcEvents {
   champSelect: ChampSelectState | null
   live: LiveGameState | null
   imported: ImportResult & { championId: number }
-  statsUpdated: { patch: string }
+  statsUpdated: { patch: string; mode: GameMode }
 }

@@ -3,12 +3,16 @@ import type {
   ChampSelectState,
   ClientStatus,
   ClientSummoner,
+  GameMode,
   ImportResult,
   LiveGameState,
-  Role,
+  MayhemPersonal,
   Settings,
+  StatRole,
   StaticData
 } from '@shared/types'
+import { statsModeOf } from '@shared/types'
+import { personalMayhemStats, type LcuHistory } from '../mayhem'
 import { fetchAllGameData, parseLiveData } from '../live/liveClient'
 import {
   buildItemSet,
@@ -26,7 +30,7 @@ import { LcuClient, type LcuEvent } from './lcuClient'
 export interface LcuManagerDeps {
   settings(): Settings
   staticData(): Promise<StaticData>
-  build(championId: number, role: Role | null): Promise<ChampionBuild | null>
+  build(championId: number, role: StatRole | null, mode: GameMode): Promise<ChampionBuild | null>
   emit: {
     client(s: ClientStatus): void
     champSelect(s: ChampSelectState | null): void
@@ -56,6 +60,10 @@ export class LcuManager {
   private champSelectState: ChampSelectState | null = null
   private liveState: LiveGameState | null = null
   private lastAutoImport = ''
+  private queue: { id: number | null; gameMode: string | null } = { id: null, gameMode: null }
+  private importTimer: NodeJS.Timeout | null = null
+  /** ARAM/Mayhem have no lock-in: import once the champion has been stable for this long */
+  private static readonly ARAM_IMPORT_DELAY_MS = 1500
   private pollTimer: NodeJS.Timeout | null = null
   private liveTimer: NodeJS.Timeout | null = null
   private connecting = false
@@ -114,7 +122,10 @@ export class LcuManager {
       ])
       this.setStatus({ connected: true, summoner, phase })
       this.onPhase(phase)
-      if (session) this.onChampSelect(session)
+      if (session) {
+        await this.fetchQueue()
+        this.onChampSelect(session)
+      }
     } catch {
       this.client?.close()
       this.client = null
@@ -153,18 +164,34 @@ export class LcuManager {
     }
   }
 
+  private async fetchQueue(): Promise<void> {
+    try {
+      const session = await this.client?.get<{ gameData?: { queue?: { id?: number; gameMode?: string } } }>(
+        '/lol-gameflow/v1/session'
+      )
+      this.queue = { id: session?.gameData?.queue?.id ?? null, gameMode: session?.gameData?.queue?.gameMode ?? null }
+    } catch {
+      this.queue = { id: null, gameMode: null }
+    }
+  }
+
   private async onEvent(e: LcuEvent): Promise<void> {
     switch (e.uri) {
       case '/lol-gameflow/v1/gameflow-phase':
         this.setStatus({ phase: String(e.data) })
+        if (e.data === 'ChampSelect') await this.fetchQueue()
         this.onPhase(String(e.data))
         break
       case '/lol-champ-select/v1/session':
         if (e.eventType === 'Delete') {
           this.champSelectState = null
           this.lastAutoImport = ''
+          this.queue = { id: null, gameMode: null }
           this.deps.emit.champSelect(null)
-        } else this.onChampSelect(e.data as RawSession)
+        } else {
+          if (this.queue.id === null) await this.fetchQueue()
+          this.onChampSelect(e.data as RawSession)
+        }
         break
       case '/lol-matchmaking/v1/ready-check': {
         const rc = e.data as { state?: string; playerResponse?: string } | null
@@ -185,13 +212,28 @@ export class LcuManager {
   }
 
   private onChampSelect(session: RawSession): void {
-    const state = parseChampSelect(session)
+    const state = parseChampSelect(session, this.queue.id, this.queue.gameMode)
     this.champSelectState = state
     this.deps.emit.champSelect(state)
-    if (!state?.locked || !state.myChampionId) return
+    if (!state?.myChampionId) return
+    const aramLike = state.mode === 'aram' || state.mode === 'mayhem'
+    if (!aramLike && !state.locked) return
 
-    const key = `${state.myChampionId}:${state.myRole}`
+    const key = `${state.mode}:${state.myChampionId}:${state.myRole}`
     if (key === this.lastAutoImport) return
+    if (aramLike) {
+      // champions can still be swapped via the bench – wait until the choice settles
+      if (this.importTimer) clearTimeout(this.importTimer)
+      this.importTimer = setTimeout(() => {
+        this.importTimer = null
+        if (this.champSelectState?.myChampionId === state.myChampionId) this.autoImport(state, key)
+      }, LcuManager.ARAM_IMPORT_DELAY_MS)
+      return
+    }
+    this.autoImport(state, key)
+  }
+
+  private autoImport(state: ChampSelectState, key: string): void {
     const c = this.deps.settings().client
     const what = [
       ...(c.autoImportRunes ? (['runes'] as const) : []),
@@ -200,7 +242,9 @@ export class LcuManager {
     ]
     if (!what.length) return
     this.lastAutoImport = key
-    void this.importBuild(state.myChampionId, state.myRole, [...what]).then((r) =>
+    const mode = statsModeOf(state.mode)
+    const role = mode === 'aram' ? 'ARAM' : state.myRole
+    void this.importBuild(state.myChampionId, role, [...what], mode).then((r) =>
       this.deps.emit.imported({ ...r, championId: state.myChampionId })
     )
   }
@@ -231,13 +275,14 @@ export class LcuManager {
 
   async importBuild(
     championId: number,
-    role: Role | null,
-    what: ('runes' | 'items' | 'spells')[] = ['runes', 'items', 'spells']
+    role: StatRole | null,
+    what: ('runes' | 'items' | 'spells')[] = ['runes', 'items', 'spells'],
+    mode: GameMode = 'ranked'
   ): Promise<ImportResult> {
     const result: ImportResult = { errors: [] }
     const client = this.client
     if (!client) return { errors: ['League Client ist nicht verbunden.'] }
-    const build = await this.deps.build(championId, role)
+    const build = await this.deps.build(championId, role, mode)
     if (!build) return { errors: ['Noch keine Daten für diesen Champion – starte den Crawler.'] }
     const data = await this.deps.staticData()
     const champName = data.champions[championId]?.name ?? String(championId)
@@ -268,6 +313,15 @@ export class LcuManager {
       }
     }
     return result
+  }
+
+  /** The player's own ARAM: Mayhem games from the client's match history. */
+  async personalMayhem(): Promise<MayhemPersonal | null> {
+    if (!this.client) return null
+    const history = await this.client.get<LcuHistory>(
+      '/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=100'
+    )
+    return personalMayhemStats(history, this.status.summoner?.puuid ?? null)
   }
 
   private async importRunes(client: LcuClient, build: ChampionBuild, champName: string): Promise<string> {

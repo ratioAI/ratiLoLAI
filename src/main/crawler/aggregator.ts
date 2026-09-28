@@ -1,5 +1,5 @@
-import type { ChampionRoleStats, PatchStats, Role, WG } from '@shared/types'
-import { ROLES } from '@shared/types'
+import type { ChampionRoleStats, GameMode, PatchStats, StatRole, WG } from '@shared/types'
+import { ROLES, type Role } from '@shared/types'
 import type { MatchDTO, ParticipantDTO, TimelineDTO, TimelineEvent } from '../riot/types'
 
 /** What the aggregator needs to know about an item. */
@@ -19,11 +19,11 @@ export function patchOf(gameVersion: string): string {
   return `${major}.${minor}`
 }
 
-export function emptyPatchStats(patch: string): PatchStats {
-  return { patch, matches: 0, updatedAt: Date.now(), bans: {}, champions: {} }
+export function emptyPatchStats(patch: string, mode: GameMode = 'ranked'): PatchStats {
+  return { patch, mode, matches: 0, updatedAt: Date.now(), bans: {}, champions: {} }
 }
 
-export function emptyRoleStats(championId: number, role: Role): ChampionRoleStats {
+export function emptyRoleStats(championId: number, role: StatRole): ChampionRoleStats {
   return {
     championId,
     role,
@@ -173,7 +173,10 @@ export function aggregateMatch(
   if (patchOf(match.info.gameVersion) !== stats.patch) return false
   if (isRemake(match)) return false
   const parts = match.info.participants
-  if (parts.length !== 10 || parts.some((p) => !isRole(p.teamPosition))) return false
+  const aram = stats.mode === 'aram'
+  if (parts.length !== 10) return false
+  // on Summoner's Rift every player needs a lane; ARAM has none
+  if (!aram && parts.some((p) => !isRole(p.teamPosition))) return false
 
   const events = timeline ? timeline.info.frames.flatMap((f) => f.events) : []
 
@@ -187,7 +190,7 @@ export function aggregateMatch(
   }
 
   for (const p of parts) {
-    const role = p.teamPosition as Role
+    const role: StatRole = aram ? 'ARAM' : (p.teamPosition as Role)
     const key = `${p.championId}:${role}`
     const s = stats.champions[key] ?? (stats.champions[key] = emptyRoleStats(p.championId, role))
     const win = p.win
@@ -200,8 +203,13 @@ export function aggregateMatch(
     if (rk) bump(s.runes, rk, win)
     bump(s.spells, spellKey(p), win)
 
-    const opponent = parts.find((o) => o.teamId !== p.teamId && o.teamPosition === p.teamPosition)
-    if (opponent) bump(s.matchups, String(opponent.championId), win)
+    if (aram) {
+      // no lanes: every enemy counts as a "matchup"
+      for (const o of parts) if (o.teamId !== p.teamId) bump(s.matchups, String(o.championId), win)
+    } else {
+      const opponent = parts.find((o) => o.teamId !== p.teamId && o.teamPosition === p.teamPosition)
+      if (opponent) bump(s.matchups, String(opponent.championId), win)
+    }
 
     if (timeline) {
       const r = replayParticipant(events, p.participantId, classify)

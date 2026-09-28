@@ -60,6 +60,7 @@ describe('import payloads', () => {
   const build: ChampionBuild = {
     championId: 103,
     role: 'MIDDLE',
+    mode: 'ranked',
     patch: '15.19',
     games: 100,
     winRate: 0.52,

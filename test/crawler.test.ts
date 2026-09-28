@@ -55,3 +55,30 @@ describe('Crawler', () => {
     expect(comparePatch('16.1', '15.24')).toBeGreaterThan(0)
   })
 })
+
+describe('Crawler (ARAM)', () => {
+  it('only keeps ARAM games and snowballs through their participants', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rc-aram-'))
+    const store = new StatsStore(dir)
+    const seen: string[] = []
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
+    const fetch = async (url: string) => {
+      const u = new URL(url)
+      if (u.pathname.includes('challengerleagues')) return json({ entries: [{ puuid: 'seed' }] })
+      if (u.pathname.endsWith('/ids')) {
+        seen.push(u.pathname.split('/')[6])
+        expect(u.searchParams.get('queue')).toBe('450')
+        return json(u.pathname.includes('/seed/') ? ['EUW1_A1', 'EUW1_R1'] : [])
+      }
+      if (u.pathname.endsWith('/timeline')) return json(standardTimeline())
+      const id = u.pathname.split('/').pop()!
+      return json(match({ queueId: id.startsWith('EUW1_A') ? 450 : 420 }, id))
+    }
+    const crawler = new Crawler(new RiotClient(() => 'k', fetch), store, () => undefined, () => undefined)
+    await crawler.start({ patch: '15.19', mode: 'aram', platforms: ['euw1'], seedTiers: ['CHALLENGER'], maxMatches: 10, matchesPerPlayer: 5, classify })
+    expect(crawler.getStatus()).toMatchObject({ mode: 'aram', matchesThisRun: 1 })
+    expect(seen).toContain('puuid-3') // participant of the ARAM game was added to the pool
+    expect((await store.load('15.19', 'aram')).stats.champions['100:ARAM'].g).toBe(1)
+    expect((await store.patches('ranked')).length).toBe(0)
+  })
+})

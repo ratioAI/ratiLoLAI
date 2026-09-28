@@ -91,3 +91,15 @@ describe('aggregateMatch', () => {
     expect(stats.champions['100:TOP'].runes).not.toEqual({})
   })
 })
+
+describe('aggregateMatch (ARAM)', () => {
+  it('uses the ARAM pseudo role and counts every enemy as matchup', () => {
+    const stats = emptyPatchStats('15.19', 'aram')
+    const parts = Array.from({ length: 10 }, (_, i) => participant(i, { teamPosition: '' }))
+    expect(aggregateMatch(stats, match({ queueId: 450, participants: parts }), standardTimeline(), classify)).toBe(true)
+    const s = stats.champions['100:ARAM']
+    expect(s.g).toBe(1)
+    expect(Object.keys(s.matchups)).toHaveLength(5)
+    expect(s.core['6672,3031,6673']).toEqual({ g: 1, w: 1 })
+  })
+})

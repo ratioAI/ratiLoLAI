@@ -120,7 +120,7 @@ export function buildStaticData(
   for (const shard of STAT_SHARDS) data.runes[shard.id] = shard
 
   for (const s of Object.values(spells)) {
-    if (!s.modes.includes('CLASSIC')) continue
+    if (!s.modes.some((m) => m === 'CLASSIC' || m === 'ARAM')) continue
     const spell: StaticSpell = { id: Number(s.key), key: s.id, name: s.name, description: s.description }
     data.spells[spell.id] = spell
   }

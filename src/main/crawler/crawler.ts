@@ -1,4 +1,5 @@
-import type { CrawlerStatus, Platform, SeedTier } from '@shared/types'
+import type { CrawlerStatus, GameMode, Platform, SeedTier } from '@shared/types'
+import { GAME_MODES } from '@shared/types'
 import type { ItemClassifier } from './aggregator'
 import { aggregateMatch, patchOf } from './aggregator'
 import type { RiotClient } from '../riot/client'
@@ -7,6 +8,7 @@ import type { StatsStore } from './statsStore'
 
 export interface CrawlOptions {
   patch: string
+  mode?: GameMode
   platforms: Platform[]
   seedTiers: SeedTier[]
   maxMatches: number
@@ -14,7 +16,8 @@ export interface CrawlOptions {
   classify: ItemClassifier
 }
 
-const RANKED_SOLO = 420
+/** Upper bound for the snowball player pool (ARAM needs it, apex players rarely play ARAM). */
+const MAX_PLAYERS = 50_000
 const LOOKBACK_MS = 21 * 24 * 3600 * 1000
 const WORKERS = 3
 const FLUSH_EVERY = 10
@@ -46,12 +49,13 @@ export class Crawler {
     private readonly client: RiotClient,
     private readonly store: StatsStore,
     private readonly onStatus: (s: CrawlerStatus) => void,
-    private readonly onStatsUpdated: (patch: string) => void
+    private readonly onStatsUpdated: (patch: string, mode: GameMode) => void
   ) {}
 
-  static idleStatus(): CrawlerStatus {
+  static idleStatus(mode: GameMode = 'ranked'): CrawlerStatus {
     return {
       running: false,
+      mode,
       phase: 'idle',
       message: 'Bereit',
       patch: null,
@@ -84,12 +88,14 @@ export class Crawler {
 
   async start(opts: CrawlOptions): Promise<void> {
     if (this.status.running) return
+    const mode = opts.mode ?? 'ranked'
+    const queue = GAME_MODES[mode].queue
     this.abort = new AbortController()
     const signal = this.abort.signal
-    const stored = await this.store.load(opts.patch)
+    const stored = await this.store.load(opts.patch, mode)
 
     this.status = {
-      ...Crawler.idleStatus(),
+      ...Crawler.idleStatus(mode),
       running: true,
       phase: 'seeding',
       message: 'Lade High-Elo-Spieler …',
@@ -113,7 +119,15 @@ export class Crawler {
       }
       // interleave platforms so that every region is represented from the start
       const players: { platform: Platform; puuid: string }[] = []
-      for (let i = 0; perPlatform.some((l) => i < l.length); i++) for (const l of perPlatform) if (l[i]) players.push(l[i])
+      const known = new Set<string>()
+      const addPlayer = (p: { platform: Platform; puuid: string }): void => {
+        if (!p.puuid || known.has(p.puuid) || players.length >= MAX_PLAYERS) return
+        known.add(p.puuid)
+        players.push(p)
+      }
+      for (let i = 0; perPlatform.some((l) => i < l.length); i++) for (const l of perPlatform) if (l[i]) addPlayer(l[i])
+      // ARAM: apex players rarely queue up, so every crawled game adds its players to the pool
+      const snowball = mode === 'aram'
 
       this.update({ phase: 'crawling', players: players.length, message: `${players.length} Spieler gefunden` })
 
@@ -130,7 +144,7 @@ export class Crawler {
           const ids = await this.client.matchIds(
             regional,
             puuid,
-            { queue: RANKED_SOLO, count: opts.matchesPerPlayer, startTime },
+            { queue, count: opts.matchesPerPlayer, startTime },
             signal
           )
           for (const id of ids) {
@@ -146,18 +160,21 @@ export class Crawler {
               if (comparePatch(matchPatch, opts.patch) < 0) break
               continue
             }
+            if (match.info.queueId !== queue) continue
+            if (snowball) for (const p of match.info.participants) addPlayer({ platform, puuid: p.puuid })
             const timeline = await this.client.timeline(regional, id, signal)
             if (aggregateMatch(stored.stats, match, timeline, opts.classify)) {
-              this.store.markDirty(opts.patch)
+              this.store.markDirty(opts.patch, mode)
               this.update({
                 matchesThisRun: this.status.matchesThisRun + 1,
                 matchesTotal: stored.stats.matches,
-                message: `Analysiere Matches (${platform.toUpperCase()})`
+                players: players.length,
+                message: `Analysiere ${GAME_MODES[mode].label}-Matches (${platform.toUpperCase()})`
               })
               if (++sinceFlush >= FLUSH_EVERY) {
                 sinceFlush = 0
                 await this.store.flush()
-                this.onStatsUpdated(opts.patch)
+                this.onStatsUpdated(opts.patch, mode)
               }
             }
           }
@@ -178,9 +195,9 @@ export class Crawler {
         this.update({ phase: 'error', message: msg, lastError: msg })
       }
     } finally {
-      this.store.markDirty(opts.patch)
+      this.store.markDirty(opts.patch, mode)
       await this.store.flush().catch(() => undefined)
-      this.onStatsUpdated(opts.patch)
+      this.onStatsUpdated(opts.patch, mode)
       this.abort = null
       this.update({ running: false })
     }

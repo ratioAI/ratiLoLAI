@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { PatchStats } from '@shared/types'
+import type { GameMode, PatchStats } from '@shared/types'
 import { emptyPatchStats } from './aggregator'
 
 interface Stored {
@@ -15,68 +15,78 @@ export class StatsStore {
 
   constructor(private readonly dir: string) {}
 
-  private statsFile(patch: string): string {
-    return join(this.dir, `stats-${patch}.json`)
+  /** Ranked keeps the v0.1 file names (stats-15.19.json); other modes are prefixed (stats-aram-15.19.json). */
+  private prefix(mode: GameMode): string {
+    return mode === 'ranked' ? '' : `${mode}-`
   }
-  private processedFile(patch: string): string {
-    return join(this.dir, `processed-${patch}.json`)
+  private statsFile(patch: string, mode: GameMode): string {
+    return join(this.dir, `stats-${this.prefix(mode)}${patch}.json`)
+  }
+  private processedFile(patch: string, mode: GameMode): string {
+    return join(this.dir, `processed-${this.prefix(mode)}${patch}.json`)
+  }
+  private key(patch: string, mode: GameMode): string {
+    return `${mode}:${patch}`
   }
 
-  async patches(): Promise<{ patch: string; matches: number; updatedAt: number }[]> {
+  async patches(mode: GameMode = 'ranked'): Promise<{ patch: string; matches: number; updatedAt: number }[]> {
     await mkdir(this.dir, { recursive: true })
     const files = await readdir(this.dir)
-    const patches = files
-      .map((f) => /^stats-(.+)\.json$/.exec(f)?.[1])
-      .filter((p): p is string => !!p)
+    const re = mode === 'ranked' ? /^stats-(\d+\.\d+)\.json$/ : new RegExp(`^stats-${mode}-(\\d+\\.\\d+)\\.json$`)
+    const patches = files.map((f) => re.exec(f)?.[1]).filter((p): p is string => !!p)
     const result = await Promise.all(
       patches.map(async (p) => {
-        const { stats } = await this.load(p)
+        const { stats } = await this.load(p, mode)
         return { patch: p, matches: stats.matches, updatedAt: stats.updatedAt }
       })
     )
     return result.sort((a, b) => b.patch.localeCompare(a.patch, undefined, { numeric: true }))
   }
 
-  async load(patch: string): Promise<Stored> {
-    const cached = this.cache.get(patch)
+  async load(patch: string, mode: GameMode = 'ranked'): Promise<Stored> {
+    const k = this.key(patch, mode)
+    const cached = this.cache.get(k)
     if (cached) return cached
     let stats: PatchStats
     let processed: Set<string>
     try {
-      stats = JSON.parse(await readFile(this.statsFile(patch), 'utf8')) as PatchStats
+      stats = JSON.parse(await readFile(this.statsFile(patch, mode), 'utf8')) as PatchStats
+      stats.mode ??= mode
     } catch {
-      stats = emptyPatchStats(patch)
+      stats = emptyPatchStats(patch, mode)
     }
     try {
-      processed = new Set(JSON.parse(await readFile(this.processedFile(patch), 'utf8')) as string[])
+      processed = new Set(JSON.parse(await readFile(this.processedFile(patch, mode), 'utf8')) as string[])
     } catch {
       processed = new Set()
     }
     const stored = { stats, processed }
-    this.cache.set(patch, stored)
+    this.cache.set(k, stored)
     return stored
   }
 
-  markDirty(patch: string): void {
-    this.dirty.add(patch)
+  markDirty(patch: string, mode: GameMode = 'ranked'): void {
+    this.dirty.add(this.key(patch, mode))
   }
 
   async flush(): Promise<void> {
     await mkdir(this.dir, { recursive: true })
-    for (const patch of [...this.dirty]) {
-      const s = this.cache.get(patch)
+    for (const k of [...this.dirty]) {
+      const s = this.cache.get(k)
       if (!s) continue
-      await atomicWrite(this.statsFile(patch), JSON.stringify(s.stats))
-      await atomicWrite(this.processedFile(patch), JSON.stringify([...s.processed]))
-      this.dirty.delete(patch)
+      const mode = (s.stats.mode ?? 'ranked') as GameMode
+      await atomicWrite(this.statsFile(s.stats.patch, mode), JSON.stringify(s.stats))
+      await atomicWrite(this.processedFile(s.stats.patch, mode), JSON.stringify([...s.processed]))
+      this.dirty.delete(k)
     }
   }
 
-  async reset(patch: string): Promise<void> {
-    this.cache.delete(patch)
-    this.dirty.delete(patch)
-    await rm(this.statsFile(patch), { force: true })
-    await rm(this.processedFile(patch), { force: true })
+  async reset(patch: string, mode: GameMode = 'ranked'): Promise<void> {
+    const k = this.key(patch, mode)
+    this.cache.delete(k)
+    this.dirty.delete(k)
+    await rm(this.statsFile(patch, mode), { force: true })
+    await rm(this.processedFile(patch, mode), { force: true })
   }
 }
 

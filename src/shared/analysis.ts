@@ -4,13 +4,13 @@ import type {
   Matchup,
   Option,
   PatchStats,
-  Role,
   RunePage,
+  StatRole,
   Tier,
   TierEntry,
   WG
 } from '@shared/types'
-import { ROLES } from '@shared/types'
+import { GAME_MODES } from '@shared/types'
 
 /** Prior strength for the Bayesian win-rate estimate (virtual 50% games). */
 export const WR_PRIOR_GAMES = 30
@@ -34,8 +34,14 @@ export function smoothedWinRate(w: number, g: number, prior = WR_PRIOR_GAMES): n
  * Strength score used to rank champions inside a role. Win rate dominates; popularity and
  * ban rate add confidence that a champion is actually strong in the current meta.
  */
-export function strengthScore(winRate: number, pickRate: number, banRate: number): number {
+export function strengthScore(winRate: number, pickRate: number, banRate: number, aram = false): number {
+  // in ARAM champions are assigned randomly, so pick rate says nothing about strength
+  if (aram) return (winRate - 0.5) * 100
   return (winRate - 0.5) * 100 + Math.log1p(pickRate * 100) * 0.8 + banRate * 100 * 0.05
+}
+
+export function rolesOf(stats: PatchStats): readonly StatRole[] {
+  return GAME_MODES[stats.mode ?? 'ranked'].roles
 }
 
 export function tierForPercentile(p: number): Tier {
@@ -54,7 +60,8 @@ export function buildTierList(stats: PatchStats, minGames: number): TierEntry[] 
   const totals = championTotals(stats)
   const result: TierEntry[] = []
 
-  for (const role of ROLES) {
+  const aram = stats.mode === 'aram'
+  for (const role of rolesOf(stats)) {
     const rows = Object.values(stats.champions)
       .filter((s) => s.role === role && s.g >= minGames)
       .map((s) => {
@@ -62,7 +69,7 @@ export function buildTierList(stats: PatchStats, minGames: number): TierEntry[] 
         const winRate = smoothedWinRate(s.w, s.g)
         const pickRate = s.g / stats.matches
         const banRate = (stats.bans[s.championId] ?? 0) / stats.matches
-        return { s, roleShare, winRate, pickRate, banRate, score: strengthScore(winRate, pickRate, banRate) }
+        return { s, roleShare, winRate, pickRate, banRate, score: strengthScore(winRate, pickRate, banRate, aram) }
       })
       .filter((r) => r.roleShare >= MIN_ROLE_SHARE)
       .sort((a, b) => b.score - a.score)
@@ -127,10 +134,10 @@ function matchups(s: ChampionRoleStats, minGames: number): { counters: Matchup[]
 export function buildChampionView(
   stats: PatchStats,
   championId: number,
-  role: Role | undefined,
+  role: StatRole | undefined,
   tierList: TierEntry[]
 ): ChampionBuild | null {
-  const available = ROLES.map((r) => ({ role: r, games: stats.champions[`${championId}:${r}`]?.g ?? 0 }))
+  const available = rolesOf(stats).map((r) => ({ role: r, games: stats.champions[`${championId}:${r}`]?.g ?? 0 }))
     .filter((r) => r.games > 0)
     .sort((a, b) => b.games - a.games)
   if (!available.length) return null
@@ -152,6 +159,7 @@ export function buildChampionView(
   return {
     championId,
     role: chosen,
+    mode: stats.mode ?? 'ranked',
     patch: stats.patch,
     games: s.g,
     winRate: s.w / s.g,

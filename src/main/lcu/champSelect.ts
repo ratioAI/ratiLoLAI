@@ -1,4 +1,5 @@
 import type { ChampionBuild, ChampSelectPlayer, ChampSelectState, Platform, Role, StaticData } from '@shared/types'
+import { ROLE_LABELS, selectModeOfQueue } from '@shared/types'
 
 const POSITION_TO_ROLE: Record<string, Role> = {
   top: 'TOP',
@@ -74,7 +75,11 @@ export interface RawSession {
   actions: RawAction[][]
 }
 
-export function parseChampSelect(session: RawSession | null | undefined): ChampSelectState | null {
+export function parseChampSelect(
+  session: RawSession | null | undefined,
+  queueId: number | null = null,
+  gameMode: string | null = null
+): ChampSelectState | null {
   if (!session || !Array.isArray(session.myTeam)) return null
   const actions = (session.actions ?? []).flat()
   const toPlayer = (c: RawCell, team: 'ally' | 'enemy'): ChampSelectPlayer => ({
@@ -95,6 +100,8 @@ export function parseChampSelect(session: RawSession | null | undefined): ChampS
   const bans = actions.filter((a) => a.type === 'ban' && a.completed && a.championId > 0).map((a) => a.championId)
   return {
     active: true,
+    queueId,
+    mode: selectModeOfQueue(queueId, gameMode),
     myChampionId: me?.championId ?? 0,
     myRole: me?.role ?? null,
     locked,
@@ -116,7 +123,7 @@ export function buildRunePagePayload(build: ChampionBuild, championName: string)
   const page = build.runes[0]?.value
   if (!page) return null
   return {
-    name: `${RUNE_PAGE_PREFIX}${championName} ${build.role.charAt(0) + build.role.slice(1).toLowerCase()}`.slice(0, 25),
+    name: `${RUNE_PAGE_PREFIX}${championName} ${ROLE_LABELS[build.role]}`.slice(0, 25),
     primaryStyleId: page.primaryStyle,
     subStyleId: page.subStyle,
     selectedPerkIds: [...page.primary, ...page.secondary, ...page.shards],
@@ -155,16 +162,16 @@ export function buildItemSet(build: ChampionBuild, data: StaticData) {
     .filter((id) => !seen.has(id) && (seen.add(id), true))
   block('Situativ', late.slice(0, 8))
   if (build.core.length > 1) block('Alternative Kern-Builds', [...new Set(build.core.slice(1, 4).flatMap((c) => c.value))])
-  block('Verbrauchsgegenstände & Trinkets', [2003, 2055, 3340, 3364])
+  block('Verbrauchsgegenstände & Trinkets', build.mode === 'aram' ? [2003] : [2003, 2055, 3340, 3364])
 
   return {
-    title: `RC ${champ?.name ?? build.championId} ${build.role} ${build.patch}`,
-    uid: `${ITEM_SET_UID_PREFIX}${build.championId}`,
+    title: `RC ${champ?.name ?? build.championId} ${ROLE_LABELS[build.role]} ${build.patch}`,
+    uid: `${ITEM_SET_UID_PREFIX}${build.mode === 'aram' ? 'aram-' : ''}${build.championId}`,
     type: 'custom',
-    map: 'SR',
+    map: build.mode === 'aram' ? 'HA' : 'SR',
     mode: 'any',
     associatedChampions: [build.championId],
-    associatedMaps: [11],
+    associatedMaps: build.mode === 'aram' ? [12] : [11],
     blocks,
     sortrank: 0,
     startedFrom: 'blank',

@@ -1,12 +1,13 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import type { ChampionBuild, PatchStats, Platform, RcEvents, Role, Settings, TierEntry } from '@shared/types'
+import type { ChampionBuild, GameMode, PatchStats, Platform, RcEvents, Settings, StatRole, TierEntry } from '@shared/types'
 import { PLATFORMS } from '@shared/types'
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { Crawler } from './crawler/crawler'
 import { StatsStore } from './crawler/statsStore'
 import { DataDragon, makeClassifier } from './ddragon'
 import { LcuManager } from './lcu/manager'
+import { MayhemService } from './mayhem'
 import { ProfileService } from './profile'
 import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
 import { RiotClient } from './riot/client'
@@ -20,6 +21,7 @@ const ddragon = new DataDragon(join(userData, 'ddragon'), settings.get().languag
 const store = new StatsStore(join(userData, 'stats'))
 const riot = new RiotClient(() => settings.getApiKey())
 const profiles = new ProfileService(riot)
+const mayhem = new MayhemService(join(userData, 'mayhem.json'), settings.get().language)
 
 let win: BrowserWindow | null = null
 
@@ -31,28 +33,38 @@ function emit<K extends keyof RcEvents>(event: K, payload: RcEvents[K]): void {
 
 const tierCache = new Map<string, { at: number; list: TierEntry[] }>()
 
-async function statsFor(patch: string): Promise<PatchStats> {
-  return (await store.load(patch)).stats
+function assertMode(m: unknown): GameMode {
+  return m === 'aram' ? 'aram' : 'ranked'
 }
 
-async function tierList(patch: string): Promise<TierEntry[]> {
-  const stats = await statsFor(patch)
-  const cached = tierCache.get(patch)
+async function statsFor(patch: string, mode: GameMode): Promise<PatchStats> {
+  return (await store.load(patch, mode)).stats
+}
+
+async function tierList(patch: string, mode: GameMode): Promise<TierEntry[]> {
+  const stats = await statsFor(patch, mode)
+  const key = `${mode}:${patch}`
+  const cached = tierCache.get(key)
   if (cached && cached.at === stats.updatedAt) return cached.list
   const list = buildTierList(stats, settings.get().crawler.minGamesForTierList)
-  tierCache.set(patch, { at: stats.updatedAt, list })
+  tierCache.set(key, { at: stats.updatedAt, list })
   return list
 }
 
-async function currentPatch(): Promise<string> {
-  const known = await store.patches()
+async function currentPatch(mode: GameMode): Promise<string> {
+  const known = await store.patches(mode)
   const ddPatch = (await ddragon.get().catch(() => null))?.patch
   // prefer the newest patch with data, fall back to the live patch
   return known.find((p) => p.matches > 0)?.patch ?? ddPatch ?? known[0]?.patch ?? '0.0'
 }
 
-async function championBuild(patch: string, championId: number, role?: Role | null): Promise<ChampionBuild | null> {
-  return buildChampionView(await statsFor(patch), championId, role ?? undefined, await tierList(patch))
+async function championBuild(
+  patch: string,
+  championId: number,
+  role: StatRole | null | undefined,
+  mode: GameMode
+): Promise<ChampionBuild | null> {
+  return buildChampionView(await statsFor(patch, mode), championId, role ?? undefined, await tierList(patch, mode))
 }
 
 // --- services ----------------------------------------------------------------
@@ -61,16 +73,16 @@ const crawler = new Crawler(
   riot,
   store,
   (s) => emit('crawler', s),
-  (patch) => {
-    tierCache.delete(patch)
-    emit('statsUpdated', { patch })
+  (patch, mode) => {
+    tierCache.delete(`${mode}:${patch}`)
+    emit('statsUpdated', { patch, mode })
   }
 )
 
 const lcu = new LcuManager({
   settings: () => settings.get(),
   staticData: () => ddragon.get(),
-  build: async (championId, role) => championBuild(await currentPatch(), championId, role),
+  build: async (championId, role, mode) => championBuild(await currentPatch(mode), championId, role, mode),
   emit: {
     client: (s) => emit('client', s),
     champSelect: (s) => emit('champSelect', s),
@@ -102,6 +114,7 @@ function registerIpc(): void {
   handle('saveSettings', (patch: Partial<Omit<Settings, 'hasApiKey'>>) => {
     const next = settings.update(patch)
     ddragon.setLanguage(next.language)
+    mayhem.setLanguage(next.language)
     tierCache.clear()
     return next
   })
@@ -123,14 +136,17 @@ function registerIpc(): void {
       return { ok: false, message: `Key gespeichert, aber der Test ist fehlgeschlagen: ${(e as Error).message}` }
     }
   })
-  handle('getPatches', () => store.patches())
-  handle('getTierList', (patch: string) => tierList(patch))
-  handle('getChampionBuild', (patch: string, championId: number, role?: Role) => championBuild(patch, championId, role))
-  handle('crawlerStart', async () => {
+  handle('getPatches', (mode: GameMode) => store.patches(assertMode(mode)))
+  handle('getTierList', (patch: string, mode: GameMode) => tierList(patch, assertMode(mode)))
+  handle('getChampionBuild', (patch: string, championId: number, role: StatRole | undefined, mode: GameMode) =>
+    championBuild(patch, championId, role, assertMode(mode))
+  )
+  handle('crawlerStart', async (mode: GameMode) => {
     const s = settings.get()
     const data = await ddragon.get()
     void crawler.start({
       patch: data.patch,
+      mode: assertMode(mode),
       platforms: [...new Set([s.platform, ...s.crawler.extraPlatforms])],
       seedTiers: s.crawler.seedTiers,
       maxMatches: s.crawler.maxMatchesPerRun,
@@ -140,17 +156,22 @@ function registerIpc(): void {
   })
   handle('crawlerStop', () => crawler.stop())
   handle('crawlerStatus', () => crawler.getStatus())
-  handle('resetStats', async (patch: string) => {
-    await store.reset(patch)
-    tierCache.delete(patch)
-    emit('statsUpdated', { patch })
+  handle('resetStats', async (patch: string, mode: GameMode) => {
+    const m = assertMode(mode)
+    await store.reset(patch, m)
+    tierCache.delete(`${m}:${patch}`)
+    emit('statsUpdated', { patch, mode: m })
   })
   handle('clientStatus', () => lcu.getStatus())
   handle('champSelect', () => lcu.getChampSelect())
   handle('liveGame', () => lcu.getLive())
-  handle('importBuild', (championId: number, role: Role | null, what?: ('runes' | 'items' | 'spells')[]) =>
-    lcu.importBuild(championId, role, what)
+  handle(
+    'importBuild',
+    (championId: number, role: StatRole | null, what: ('runes' | 'items' | 'spells')[] | undefined, mode: GameMode) =>
+      lcu.importBuild(championId, role, what, assertMode(mode))
   )
+  handle('getMayhemData', () => mayhem.get())
+  handle('getMayhemPersonal', () => lcu.personalMayhem())
   handle('lookupProfile', (riotId: string, platform: string) => profiles.lookup(riotId, assertPlatform(platform)))
   handle('scoutActiveGame', (riotId: string, platform: string) => profiles.scout(riotId, assertPlatform(platform)))
   handle('openExternal', (url: string) => {

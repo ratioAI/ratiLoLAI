@@ -97,3 +97,18 @@ describe('buildChampionView', () => {
     expect(buildChampionView(statsWith([]), 99, undefined, [])).toBeNull()
   })
 })
+
+describe('ARAM tier list', () => {
+  it('ranks by win rate only and uses the ARAM role', () => {
+    const s = emptyPatchStats('15.19', 'aram')
+    s.matches = 1000
+    s.champions['1:ARAM'] = { ...emptyRoleStats(1, 'ARAM'), g: 100, w: 60 }
+    s.champions['2:ARAM'] = { ...emptyRoleStats(2, 'ARAM'), g: 900, w: 459 }
+    const list = buildTierList(s, 20)
+    expect(list.map((e) => [e.championId, e.role])).toEqual([
+      [1, 'ARAM'],
+      [2, 'ARAM']
+    ])
+    expect(buildChampionView(s, 2, undefined, list)).toMatchObject({ role: 'ARAM', mode: 'aram' })
+  })
+})
