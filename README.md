@@ -4,7 +4,7 @@
 
 # Rift Companion
 
-**An ad-free League of Legends companion app – tier lists, builds, runes, auto-import and live-game scouting, powered by your own Riot API crawler.**
+**An ad-free League of Legends companion app – tier lists, builds, runes, auto-import, ARAM & ARAM: Mayhem augments and live-game scouting, powered by your own Riot API crawler.**
 
 [![CI](https://github.com/ratioAI/ratiLoLAI/actions/workflows/ci.yml/badge.svg)](https://github.com/ratioAI/ratiLoLAI/actions/workflows/ci.yml)
 ![Electron](https://img.shields.io/badge/Electron-38-47848F?logo=electron&logoColor=white)
@@ -34,6 +34,8 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. Ri
 | ⚡ **Auto-import** | Detects champion select via the League Client API (LCU) and imports runes, an item set and (optionally) summoner spells the moment you lock in. Flash on D or F – your choice. |
 | ✅ **Auto-accept** | Optionally accepts the ready check for you. |
 | 🔴 **Live game** | Champion-select overview (allies, enemies, bans), in-game scoreboard via the Live Client Data API, and loading-screen scouting (ranks of all 10 players). |
+| ❄️ **ARAM** | Separate ARAM crawler (queue 450) with its own tier list, builds, runes and auto-import. Champion select on the Howling Abyss is detected automatically; since there is no lock-in, the build is imported once your champion has stayed the same for 1.5 s (bench swaps included). |
+| ✨ **ARAM: Mayhem** | Augment tips per champion (top combos, strong picks, *traps*), proven multi-augment combinations and the most picked augments per rarity – shown in champion select, **in game** next to the scoreboard and on a dedicated page. Items & runes come from ARAM data, and your **own** Mayhem history (augments you picked, win rate) is read from the League client. |
 | 👤 **Profiles** | op.gg-style player lookup: ranks, mastery, last 15 games with KDA, CS/min, items, runes and champion stats. |
 | 🕷️ **Own data pipeline** | Crawls Challenger/GM/Master Solo-Queue games of one or more regions, respects Riot rate limits, resumes where it stopped, keeps separate data per patch. |
 | 🔐 **Private by design** | Your API key is encrypted with the OS keychain (DPAPI/Keychain) and never leaves the main process. No telemetry. |
@@ -41,7 +43,7 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. Ri
 <table>
   <tr>
     <td><img src="docs/screenshots/tierlist.png" alt="Tier list" /></td>
-    <td><img src="docs/screenshots/home.png" alt="Overview" /></td>
+    <td><img src="docs/screenshots/aram-tierlist.png" alt="ARAM tier list" /></td>
   </tr>
   <tr>
     <td><img src="docs/screenshots/live.png" alt="Champion select" /></td>
@@ -50,6 +52,15 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. Ri
 </table>
 
 > Screenshots are taken from the web demo, which runs on **synthetic** statistics. The desktop app only shows data it crawled itself.
+
+### A note on ARAM: Mayhem
+
+Riot deliberately **blocks Mayhem matches in the public API** (they return `403`) and asks developers **not to publish augment win rates**, so that the mode isn't "solved" by stat sites ([developer-relations #1109](https://github.com/RiotGames/developer-relations/issues/1109)). Rift Companion respects that:
+
+- Augment names, rarities and icons come from the game client data on [CommunityDragon](https://www.communitydragon.org/).
+- Pick rates and curated combos come from the open dataset of [arammayhem.com](https://arammayhem.com/data/) (CC BY 4.0, China servers) – *Data: arammayhem.com*.
+- Items, runes and skill order for Mayhem come from your own crawled **ARAM** games.
+- Your personal Mayhem statistics are computed locally from your own match history in the League client and never leave your PC.
 
 ## Getting started
 
@@ -75,7 +86,7 @@ Requires Node.js 20+.
 
 ### 3. Crawl some games
 
-Open **Daten → Crawler starten**. The crawler fetches the apex leagues of your region(s), downloads recent ranked games including their timelines and aggregates them. With a development/personal key (100 requests / 2 min) you get roughly **20–25 matches per minute**; a few thousand matches already give a very usable tier list. Progress is stored continuously – just let it run in the background.
+Open **Daten**, pick *Ranked Solo/Duo* or *ARAM* and hit **Crawler starten**. The crawler fetches the apex leagues of your region(s), downloads recent ranked games including their timelines and aggregates them. With a development/personal key (100 requests / 2 min) you get roughly **20–25 matches per minute**; a few thousand matches already give a very usable tier list. Progress is stored continuously – just let it run in the background.
 
 ### 4. Play
 
@@ -130,7 +141,7 @@ test/                 Vitest unit + integration tests (crawler against a fake Ri
 
 ```bash
 npm run dev         # Electron + Vite with hot reload
-npm test            # Vitest (49 tests)
+npm test            # Vitest (67 tests)
 npm run typecheck   # strict TypeScript for main + renderer
 npm run build:web   # standalone web demo in ./dist-web (synthetic data)
 ```
