@@ -346,7 +346,7 @@ export function createMockApi(): RcApi {
       matchesPerPlayer: 10,
       minGamesForTierList: 20
     },
-    overlay: { enabled: true, hotkey: 'Alt+Shift+A', autoExpand: true },
+    overlay: { enabled: true, hotkey: 'Alt+Shift+A', autoExpand: true, cardFrames: true },
     client: { autoImportRunes: true, autoImportItems: true, autoImportSpells: false, flashOn: 'F', autoAccept: true }
   }
 

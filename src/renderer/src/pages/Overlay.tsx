@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Sparkles, X } from 'lucide-react'
-import type { AugmentRarity, Tier } from '@shared/types'
+import type { AugmentOffer, AugmentRarity, Tier } from '@shared/types'
 import { augmentTiersForChampion, COMBO_TYPE_LABELS, type AugmentTier } from '@shared/mayhem'
+import { cardRects } from '@shared/cardLayout'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { ChampIcon } from '@/components/icons'
@@ -21,6 +22,13 @@ export function Overlay() {
   const [rarity, setRarity] = useState<AugmentRarity | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [focus, setFocus] = useState<AugmentTier | null>(null)
+  // '#/overlay?champ=412&offer=1011,2107,1349' simulates an augment choice (web demo / screenshots)
+  const [offer, setOffer] = useState<AugmentOffer | null>(() => {
+    const ids = new URLSearchParams(window.location.hash.split('?')[1]).get('offer')
+    if (!ids) return null
+    const rects = cardRects(window.innerWidth, window.innerHeight)
+    return { displayId: 0, cards: ids.split(',').map((id, i) => ({ augmentId: Number(id), text: '', score: 1, rect: rects[i] })) }
+  })
   const hovered = useRef(false)
   const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -28,6 +36,7 @@ export function Overlay() {
     document.documentElement.classList.add('overlay-mode')
     const offs = [
       api.on('overlayToggle', () => setExpanded((e) => !e)),
+      api.on('augmentOffer', setOffer),
       api.on('overlayPreview', ({ championId }) => {
         setPreviewChamp(championId)
         setExpanded(true)
@@ -67,9 +76,11 @@ export function Overlay() {
 
   if (!championId || !statics) return null
   const hotkey = settings?.overlay.hotkey ?? 'Alt+Shift+A'
+  const tierById = new Map(tiers.map((t) => [t.augment.id, t]))
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none">
+      {offer && <CardFrames offer={offer} tierById={tierById} />}
       <div
         className="pointer-events-auto absolute right-3 top-[14%]"
         onMouseEnter={() => setHover(true)}
@@ -167,5 +178,47 @@ export function Overlay() {
         )}
       </div>
     </div>
+  )
+}
+
+const TIER_ORDER: Tier[] = ['S+', 'S', 'A', 'B', 'C', 'D']
+const TIER_WORDS: Record<Tier, string> = { 'S+': 'Must pick', S: 'Great', A: 'Good', B: 'Okay', C: 'Meh', D: 'Avoid' }
+
+/** Frames drawn exactly over the three augment cards the game currently offers. */
+function CardFrames({ offer, tierById }: { offer: AugmentOffer; tierById: Map<number, AugmentTier> }) {
+  const rated = offer.cards.map((c) => (c.augmentId != null ? tierById.get(c.augmentId) ?? null : null))
+  const bestRank = Math.min(...rated.map((t) => (t ? TIER_ORDER.indexOf(t.tier) : 99)))
+  return (
+    <>
+      {offer.cards.map((card, i) => {
+        const t = rated[i]
+        if (!t) return null
+        const best = TIER_ORDER.indexOf(t.tier) === bestRank && rated.filter((r) => r && TIER_ORDER.indexOf(r.tier) === bestRank).length === 1
+        const label = best ? 'Best pick' : t.combo ? COMBO_TYPE_LABELS[t.combo] : !t.fits ? 'Weak fit' : TIER_WORDS[t.tier]
+        return (
+          <div
+            key={i}
+            className="card-frame"
+            data-tier={t.tier}
+            style={{ left: card.rect.x - 6, top: card.rect.y - 6, width: card.rect.width + 12, height: card.rect.height + 12 }}
+          >
+            <div className="cf-ring">
+              <div className="cf-border" />
+            </div>
+            <span className="cf-corner tl" />
+            <span className="cf-corner tr" />
+            <span className="cf-corner bl" />
+            <span className="cf-corner br" />
+            <div className="cf-crest">
+              <span className="cf-shield">
+                <span className="cf-tier">{t.tier}</span>
+              </span>
+              <span className="cf-label">{label}</span>
+            </div>
+            {t.note && <div className="cf-note">{t.note}</div>}
+          </div>
+        )
+      })}
+    </>
   )
 }

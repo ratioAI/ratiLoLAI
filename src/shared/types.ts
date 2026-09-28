@@ -271,6 +271,8 @@ export interface Settings {
     hotkey: string
     /** pop the panel open automatically at augment levels (3/7/11/15) */
     autoExpand: boolean
+    /** recognise the offered augment cards on screen and frame them by tier */
+    cardFrames: boolean
   }
   client: {
     autoImportRunes: boolean
@@ -451,6 +453,8 @@ export interface MayhemAugment {
   id: number
   slug: string
   name: string
+  /** English client name (used to recognise the augment on screen) */
+  nameEn: string
   rarity: AugmentRarity
   /** absolute icon URL (CommunityDragon) */
   icon: string
@@ -522,6 +526,13 @@ export interface RcApi {
   on<K extends keyof RcEvents>(event: K, cb: (payload: RcEvents[K]) => void): () => void
 }
 
+/** Augment cards currently offered on screen (detected by screen recognition). */
+export interface AugmentOffer {
+  displayId: number
+  /** card rectangles relative to the display, in DIP */
+  cards: { augmentId: number | null; text: string; score: number; rect: { x: number; y: number; width: number; height: number } }[]
+}
+
 export interface UpdateState {
   status: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'none' | 'error' | 'dev'
   version?: string
@@ -537,6 +548,7 @@ export interface RcEvents {
   imported: ImportResult & { championId: number }
   statsUpdated: { patch: string; mode: GameMode }
   overlayToggle: null
+  augmentOffer: AugmentOffer | null
   overlayPreview: { championId: number }
   update: UpdateState
 }

@@ -291,3 +291,198 @@ html.overlay-mode #root {
   letter-spacing: 0.08em;
   color: #f0e6d2;
 }
+
+/* ---- Frames drawn directly over the in-game augment cards ---- */
+.card-frame {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 18px;
+  animation: card-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: scale(1.06);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.card-frame .cf-border {
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  padding: 5px;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.card-frame .cf-ring {
+  position: absolute;
+  inset: 0;
+}
+/* glow follows the ring only, so the card itself stays untinted */
+.card-frame[data-tier='S+'] .cf-ring,
+.card-frame[data-tier='S'] .cf-ring,
+.card-frame[data-tier='A'] .cf-ring {
+  filter: drop-shadow(0 0 8px var(--cf-accent)) drop-shadow(0 0 18px var(--cf-accent));
+  animation: rc-pulse 2.2s ease-in-out infinite;
+}
+.card-frame[data-tier='A'] .cf-ring {
+  filter: drop-shadow(0 0 8px var(--cf-accent));
+  animation: none;
+}
+.card-frame .cf-corner {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border-color: var(--cf-accent);
+  border-style: solid;
+  border-width: 0;
+  filter: drop-shadow(0 0 6px var(--cf-accent));
+}
+.card-frame .cf-corner.tl {
+  left: -8px;
+  top: -8px;
+  border-left-width: 4px;
+  border-top-width: 4px;
+  border-top-left-radius: 14px;
+}
+.card-frame .cf-corner.tr {
+  right: -8px;
+  top: -8px;
+  border-right-width: 4px;
+  border-top-width: 4px;
+  border-top-right-radius: 14px;
+}
+.card-frame .cf-corner.bl {
+  left: -8px;
+  bottom: -8px;
+  border-left-width: 4px;
+  border-bottom-width: 4px;
+  border-bottom-left-radius: 14px;
+}
+.card-frame .cf-corner.br {
+  right: -8px;
+  bottom: -8px;
+  border-right-width: 4px;
+  border-bottom-width: 4px;
+  border-bottom-right-radius: 14px;
+}
+.card-frame .cf-crest {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -78%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.7));
+}
+.card-frame .cf-shield {
+  position: relative;
+  width: 66px;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  clip-path: polygon(50% 0, 100% 22%, 100% 70%, 50% 100%, 0 70%, 0 22%);
+  background: var(--cf-text);
+}
+.card-frame .cf-shield::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  clip-path: polygon(50% 0, 100% 22%, 100% 70%, 50% 100%, 0 70%, 0 22%);
+  background: radial-gradient(circle at 50% 35%, #1b2433, #06090e 75%);
+}
+.card-frame .cf-tier {
+  position: relative;
+  z-index: 1;
+  font-family: 'Beaufort for LOL', 'Cinzel', Georgia, serif;
+  font-weight: 900;
+  font-size: 30px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  background: var(--cf-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.card-frame .cf-label {
+  margin-top: -6px;
+  position: relative;
+  z-index: 2;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: #0b0e14;
+  background: var(--cf-text);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+.card-frame .cf-note {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 72.5%;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(6, 9, 14, 0.86);
+  border: 1px solid var(--cf-accent);
+  box-shadow: 0 0 18px -4px var(--cf-accent);
+  color: #f0e6d2;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.card-frame[data-tier='S+'] {
+  --cf-accent: #7ef0ff;
+  --cf-text: linear-gradient(180deg, #fffbe6, #f5c451 45%, #7ef0ff);
+}
+.card-frame[data-tier='S+'] .cf-border {
+  background: conic-gradient(from var(--rc-angle), #fff4c2, #f5c451, #36e3ff, #b8f5ff, #f5c451, #fff4c2);
+  animation: rc-rotate 3.5s linear infinite;
+}
+.card-frame[data-tier='S'] {
+  --cf-accent: #c47bff;
+  --cf-text: linear-gradient(180deg, #fbe9ff, #c47bff 55%, #7a2ee0);
+}
+.card-frame[data-tier='S'] .cf-border {
+  background: linear-gradient(160deg, #f0b8ff, #a24cff 45%, #5d1fb8);
+}
+.card-frame[data-tier='A'] {
+  --cf-accent: #6ea4ff;
+  --cf-text: linear-gradient(180deg, #e6f2ff, #6ea4ff 60%, #2f5fd0);
+}
+.card-frame[data-tier='A'] .cf-border {
+  background: linear-gradient(160deg, #c8e6ff, #4e8dff 45%, #2447b8);
+}
+.card-frame[data-tier='B'] {
+  --cf-accent: #3dd68c;
+  --cf-text: linear-gradient(180deg, #e3ffef, #3dd68c);
+}
+.card-frame[data-tier='B'] .cf-border {
+  background: linear-gradient(160deg, #aef5cf, #2fb877 55%, #147a4c);
+}
+.card-frame[data-tier='C'] {
+  --cf-accent: #b4c2d1;
+  --cf-text: linear-gradient(180deg, #ffffff, #b4c2d1);
+}
+.card-frame[data-tier='C'] .cf-border {
+  background: linear-gradient(160deg, #e3e9f0, #8da0b3 55%, #56677a);
+}
+.card-frame[data-tier='D'] {
+  --cf-accent: #c0896b;
+  --cf-text: linear-gradient(180deg, #f3d3bf, #9b6a4f);
+}
+.card-frame[data-tier='D'] .cf-border {
+  background: linear-gradient(160deg, #a37a61, #5a4436);
+}

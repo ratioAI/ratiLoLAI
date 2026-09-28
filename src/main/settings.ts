@@ -22,7 +22,8 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
   overlay: {
     enabled: true,
     hotkey: 'Alt+Shift+A',
-    autoExpand: true
+    autoExpand: true,
+    cardFrames: true
   },
   client: {
     autoImportRunes: true,

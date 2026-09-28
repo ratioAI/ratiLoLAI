@@ -107,6 +107,11 @@ export function Settings() {
           value={settings.overlay.autoExpand}
           onChange={(v) => save({ overlay: { ...settings.overlay, autoExpand: v } })}
         />
+        <Toggle
+          label="Frame the offered augment cards directly in the game (screen recognition)"
+          value={settings.overlay.cardFrames}
+          onChange={(v) => save({ overlay: { ...settings.overlay, cardFrames: v } })}
+        />
         <Field label="Hotkey to show / hide">
           <input
             className="input w-44 text-center"

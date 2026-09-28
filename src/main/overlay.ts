@@ -10,6 +10,7 @@ export class OverlayManager {
   private win: BrowserWindow | null = null
   private hotkey: string | null = null
   private previewTimer: NodeJS.Timeout | null = null
+  private displayId: number | null = null
 
   constructor(
     private readonly preload: string,
@@ -21,8 +22,23 @@ export class OverlayManager {
     })
   }
 
+  private display(): Electron.Display {
+    return screen.getAllDisplays().find((d) => d.id === this.displayId) ?? screen.getPrimaryDisplay()
+  }
+
+  /** Moves the overlay onto the monitor the game runs on. */
+  moveToDisplay(id: number): void {
+    if (id === this.displayId) return
+    this.displayId = id
+    this.win?.setBounds(this.display().bounds)
+  }
+
+  get currentDisplayId(): number {
+    return this.display().id
+  }
+
   private create(): BrowserWindow {
-    const { bounds } = screen.getPrimaryDisplay()
+    const { bounds } = this.display()
     const win = new BrowserWindow({
       ...bounds,
       transparent: true,

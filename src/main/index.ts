@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { ChampionBuild, GameMode, LiveGameState, PatchStats, Platform, RcEvents, Settings, StatRole, TierEntry, UpdateState } from '@shared/types'
 import { PLATFORMS } from '@shared/types'
@@ -10,6 +10,9 @@ import { DataDragon, makeClassifier } from './ddragon'
 import { LcuManager } from './lcu/manager'
 import { MayhemService } from './mayhem'
 import { OverlayManager } from './overlay'
+import { AugmentScanner } from './scanner/scanner'
+import { cardRects, type NameCandidate } from './scanner/detect'
+import { augmentTiersForChampion } from '@shared/mayhem'
 import { ProfileService } from './profile'
 import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
 import { RiotClient } from './riot/client'
@@ -43,10 +46,33 @@ const overlay = new OverlayManager(join(__dirname, '../preload/index.js'), loadR
   emit('overlayToggle', null)
 })
 
+// screen recognition of the offered augment cards (only while a Mayhem game is running)
+let candidates: NameCandidate[] = []
+const scanner = new AugmentScanner(
+  join(userData, 'ocr'),
+  () => candidates,
+  (offer) => {
+    if (offer) overlay.moveToDisplay(offer.displayId)
+    emit('augmentOffer', offer)
+  },
+  () => overlay.currentDisplayId
+)
+
 function updateOverlay(live: LiveGameState | null): void {
-  const mayhem = !!live?.active && live.gameMode === 'KIWI'
-  if (mayhem && settings.get().overlay.enabled) overlay.show()
-  else overlay.hide()
+  const inMayhem = !!live?.active && live.gameMode === 'KIWI'
+  const s = settings.get().overlay
+  if (inMayhem && s.enabled) {
+    overlay.show()
+    if (s.cardFrames && !scanner.running) {
+      void mayhem.get().then((d) => {
+        candidates = Object.values(d.augments).map((a) => ({ id: a.id, names: [a.name, a.nameEn] }))
+        scanner.start()
+      })
+    }
+  } else {
+    overlay.hide()
+    if (scanner.running) scanner.stop()
+  }
 }
 
 // --- auto update ---------------------------------------------------------------------
@@ -221,7 +247,24 @@ function registerIpc(): void {
   handle('getMayhemData', () => mayhem.get())
   handle('getMayhemPersonal', () => lcu.personalMayhem())
   handle('overlayPreview', (championId: number) => {
-    overlay.preview(() => emit('overlayPreview', { championId }))
+    overlay.preview(async () => {
+      emit('overlayPreview', { championId })
+      // simulate an augment choice so the card frames can be checked without a game
+      try {
+        const [data, statics] = await Promise.all([mayhem.get(), ddragon.get()])
+        const tiers = augmentTiersForChampion(data, statics, championId)
+        const pick = [tiers[0], tiers[Math.floor(tiers.length * 0.3)], tiers[tiers.length - 1]].filter(Boolean)
+        const display = screen.getAllDisplays().find((d) => d.id === overlay.currentDisplayId) ?? screen.getPrimaryDisplay()
+        const rects = cardRects(display.size.width, display.size.height)
+        emit('augmentOffer', {
+          displayId: display.id,
+          cards: pick.map((t, i) => ({ augmentId: t.augment.id, text: t.augment.nameEn, score: 1, rect: rects[i] }))
+        })
+        setTimeout(() => emit('augmentOffer', null), 20_000)
+      } catch {
+        /* no data – side panel only */
+      }
+    })
   })
   handle('appInfo', () => ({ version: app.getVersion(), update: updateState }))
   handle('installUpdate', () => {
@@ -278,7 +321,14 @@ app.on('second-instance', () => {
   }
 })
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
+  if (process.env.RC_OCR_SELFTEST) {
+    const { nativeImage } = await import('electron')
+    const res = await scanner.selfTest(nativeImage.createFromPath(process.env.RC_OCR_SELFTEST))
+    console.log('RC_OCR_SELFTEST ' + JSON.stringify(res))
+    app.exit(0)
+    return
+  }
   app.setAppUserModelId('dev.riftcompanion.app')
   registerIpc()
   createWindow()
@@ -291,6 +341,7 @@ void app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  scanner.stop()
   overlay.destroy()
   lcu.stop()
   crawler.stop()

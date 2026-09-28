@@ -120,6 +120,7 @@ export function buildMayhemData(
         id: c.id,
         slug,
         name: localName.get(c.id) || c.nameTRA,
+        nameEn: c.nameTRA,
         rarity: row ? rarityOf(row.rarity) : rarityOf(c.rarity),
         icon: cdragonIcon(c.augmentSmallIconPath),
         pickRate: row?.pickRate ?? existing?.pickRate ?? null,

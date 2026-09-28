@@ -35,11 +35,13 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. Ri
 | ✅ **Auto-accept** | Optionally accepts the ready check for you. |
 | 🔴 **Live game** | Champion-select overview (allies, enemies, bans), in-game scoreboard via the Live Client Data API, and loading-screen scouting (ranks of all 10 players). |
 | ❄️ **ARAM** | Separate ARAM crawler (queue 450) with its own tier list, builds, runes and auto-import. Champion select on the Howling Abyss is detected automatically; since there is no lock-in, the build is imported once your champion has stayed the same for 1.5 s (bench swaps included). |
-| 🖼️ **In-game overlay** | A transparent, click-through panel on top of League (borderless/windowed mode) that pops open at every augment choice (level 3/7/11/15) and shows the augment tiers for your champion in framed tiers – S+ (animated radiant frame), S, A, B, C, D – plus a one-line note on hover why the augment is good. Toggle with <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>. |
+| 🖼️ **In-game overlay** | When the augment choice appears in ARAM: Mayhem, Rift Companion **recognises the three offered cards on screen** (frame detection + OCR of the card titles with a bundled Tesseract model – no memory reading, no injection) and draws a tier frame directly around each card: an animated radiant S+ frame, royal S, crystal A, emerald B, steel C and bronze D, with a crest, a *Best pick* marker and a one-line note inside the card. A side panel lists all augment tiers for your champion. Toggle with <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>; League must run in borderless or windowed mode. |
 | ✨ **ARAM: Mayhem** | Augment tips per champion (top combos, strong picks, *traps*), proven multi-augment combinations and the most picked augments per rarity – shown in champion select, **in game** next to the scoreboard and on a dedicated page. Items & runes come from ARAM data, and your **own** Mayhem history (augments you picked, win rate) is read from the League client. |
 | 👤 **Profiles** | op.gg-style player lookup: ranks, mastery, last 15 games with KDA, CS/min, items, runes and champion stats. |
 | 🕷️ **Own data pipeline** | Crawls Challenger/GM/Master Solo-Queue games of one or more regions, respects Riot rate limits, resumes where it stopped, keeps separate data per patch. |
 | 🔐 **Private by design** | Your API key is encrypted with the OS keychain (DPAPI/Keychain) and never leaves the main process. No telemetry. |
+
+<p align="center"><img src="docs/screenshots/overlay-cards.png" alt="In-game augment overlay" width="900" /><br/><sub>In-game overlay on a real ARAM: Mayhem augment choice</sub></p>
 
 <table>
   <tr>
@@ -147,7 +149,7 @@ test/                 Vitest unit + integration tests (crawler against a fake Ri
 
 ```bash
 npm run dev         # Electron + Vite with hot reload
-npm test            # Vitest (72 tests)
+npm test            # Vitest (80 tests)
 npm run typecheck   # strict TypeScript for main + renderer
 npm run build:web   # standalone web demo in ./dist-web (synthetic data)
 ```

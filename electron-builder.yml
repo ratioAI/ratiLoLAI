@@ -8,8 +8,15 @@ files:
   - resources/**
   - package.json
   - '!**/*.map'
+  # only the small (best_int) OCR language model is needed
+  - '!node_modules/@tesseract.js-data/eng/4.0.0/**'
 asarUnpack:
   - resources/**
+  # OCR (screen recognition of augment cards): worker thread, WASM core and language model
+  - node_modules/tesseract.js/**
+  - node_modules/tesseract.js-core/**
+  - node_modules/@tesseract.js-data/eng/4.0.0_best_int/**
+  - node_modules/{bmp-js,idb-keyval,is-url,node-fetch,whatwg-url,tr46,webidl-conversions,regenerator-runtime,wasm-feature-detect,zlibjs}/**
 win:
   target:
     - target: nsis
