@@ -1,4 +1,5 @@
-import type { AugmentRarity, ComboType, MayhemAugment, MayhemCombo, MayhemData, StaticData } from './types'
+import type { AugmentRarity, ComboType, MayhemAugment, MayhemCombo, MayhemData, StaticData, Tier } from './types'
+import { AUGMENT_NOTES, type AugmentFit } from './augmentNotes'
 
 /** Client augment list (cherry-augments.json) as served by CommunityDragon. */
 export interface CherryAugment {
@@ -27,21 +28,32 @@ export interface AmComboRow {
   url: string
 }
 
+/** augment-lists.json – the "KIWI" list is the ARAM: Mayhem augment pool */
+export interface AugmentList {
+  modeName: string
+  augmentList: string[]
+}
+
+export function mayhemPool(lists: AugmentList[] | null | undefined): Set<string> {
+  const kiwi = lists?.find((l) => l.modeName === 'KIWI')
+  return new Set((kiwi?.augmentList ?? []).map((p) => p.split('/').pop()!.toLowerCase()))
+}
+
 export interface AmFile<T> {
   meta?: { patch?: string; statsDate?: string }
   rows: T[]
 }
 
 export const CDRAGON_GAME_DATA = 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/'
-export const MAYHEM_ATTRIBUTION = { text: 'Augment-Daten: arammayhem.com (CC BY 4.0)', url: 'https://arammayhem.com/data/' }
+export const MAYHEM_ATTRIBUTION = { text: 'Augment data: arammayhem.com (CC BY 4.0)', url: 'https://arammayhem.com/data/' }
 
 export const COMBO_TYPE_LABELS: Record<ComboType, string> = {
-  god: 'Top-Kombo',
-  strong: 'Stark',
-  blackTech: 'Geheimtipp',
+  god: 'Top combo',
+  strong: 'Strong',
+  blackTech: 'Hidden gem',
   entertainment: 'Fun',
-  trap: 'Falle',
-  bug: 'Bug-Kombo'
+  trap: 'Trap',
+  bug: 'Bug combo'
 }
 
 export const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -61,20 +73,25 @@ function rarityOf(r: string): AugmentRarity {
  * Arena and Mayhem share many augment names. The Mayhem variants carry an "ARAM_" name id
  * (or a Kiwi icon / id >= 1000) – those are the ids the game writes into Mayhem match data.
  */
-function mayhemPreference(a: CherryAugment): number {
+function mayhemPreference(a: CherryAugment, pool?: Set<string>): number {
+  if (pool?.has(a.augmentNameId.toLowerCase())) return 5
   if (a.augmentNameId.startsWith('ARAM_')) return 3
   if (/\/kiwi\//i.test(a.augmentSmallIconPath)) return 2
   if (a.id >= 1000) return 1
   return 0
 }
 
-export function indexCherry(list: CherryAugment[]): Map<string, CherryAugment> {
+/** Quest augments are called "Quest: X" on some lists and "X" on others. */
+const nameKeys = (name: string): string[] => [...new Set([norm(name), norm(name.replace(/^quest:\s*/i, ''))])]
+
+export function indexCherry(list: CherryAugment[], pool?: Set<string>): Map<string, CherryAugment> {
   const byName = new Map<string, CherryAugment>()
   for (const a of list) {
-    const k = norm(a.nameTRA)
-    if (!k) continue
-    const cur = byName.get(k)
-    if (!cur || mayhemPreference(a) > mayhemPreference(cur)) byName.set(k, a)
+    for (const k of nameKeys(a.nameTRA)) {
+      if (!k) continue
+      const cur = byName.get(k)
+      if (!cur || mayhemPreference(a, pool) > mayhemPreference(cur, pool)) byName.set(k, a)
+    }
   }
   return byName
 }
@@ -88,9 +105,10 @@ export function buildMayhemData(
   cherryLocal: CherryAugment[],
   augments: AmFile<AmAugmentRow> | null,
   combos: AmFile<AmComboRow> | null,
-  fetchedAt = Date.now()
+  fetchedAt = Date.now(),
+  pool?: Set<string>
 ): MayhemData {
-  const byName = indexCherry(cherryEn)
+  const byName = indexCherry(cherryEn, pool)
   const localName = new Map(cherryLocal.map((a) => [a.id, a.nameTRA]))
   const result: Record<number, MayhemAugment> = {}
   const bySlug = new Map<string, number>()
@@ -115,13 +133,17 @@ export function buildMayhemData(
   }
 
   for (const row of augments?.rows ?? []) {
-    const c = byName.get(norm(row.name.en ?? '')) ?? byName.get(norm(row.augmentId))
+    const c = nameKeys(row.name.en ?? '').map((k) => byName.get(k)).find(Boolean) ?? byName.get(norm(row.augmentId))
     if (c) add(c, row.augmentId, row)
+  }
+  // every augment of the Mayhem pool, even without pick-rate data
+  if (pool?.size) {
+    for (const c of cherryEn) if (pool.has(c.augmentNameId.toLowerCase()) && !result[c.id]) add(c, norm(c.nameTRA), undefined)
   }
 
   const resolveSlug = (slug: string): number | null => {
     if (bySlug.has(slug)) return bySlug.get(slug)!
-    const c = byName.get(norm(slug))
+    const c = nameKeys(slug.replace(/_/g, ' ')).map((k) => byName.get(k)).find(Boolean)
     return c ? add(c, slug) : null
   }
 
@@ -167,4 +189,72 @@ export function popularByRarity(data: MayhemData, limit = 8): Record<AugmentRari
       .sort((a, b) => (b.pickRate ?? 0) - (a.pickRate ?? 0))
       .slice(0, limit)
   return { prismatic: pick('prismatic'), gold: pick('gold'), silver: pick('silver') }
+}
+
+// ---------------------------------------------------------------------------
+// Per-champion augment tiers
+// ---------------------------------------------------------------------------
+
+const TIERS: Tier[] = ['S+', 'S', 'A', 'B', 'C', 'D']
+const COMBO_TIER: Record<ComboType, Tier> = { god: 'S+', strong: 'S', blackTech: 'A', entertainment: 'B', bug: 'B', trap: 'D' }
+
+export interface AugmentTier {
+  augment: MayhemAugment
+  tier: Tier
+  note: string | null
+  source: 'combo' | 'rating'
+  combo?: ComboType
+  fits: boolean
+}
+
+export function championProfile(tags: string[]): Set<AugmentFit> {
+  const p = new Set<AugmentFit>()
+  const has = (t: string) => tags.includes(t)
+  if (has('Mage')) p.add('ap')
+  if (has('Marksman')) ['crit', 'onhit', 'ad'].forEach((x) => p.add(x as AugmentFit))
+  if (has('Assassin') && !has('Mage')) p.add('ad')
+  if (has('Fighter')) ['ad', 'onhit', 'tank'].forEach((x) => p.add(x as AugmentFit))
+  if (has('Tank')) p.add('tank')
+  if (has('Support')) p.add('sup')
+  if (!p.size) p.add('ad')
+  return p
+}
+
+const shift = (t: Tier, by: number): Tier => TIERS[Math.min(TIERS.length - 1, Math.max(1, TIERS.indexOf(t) + by))]
+
+/**
+ * Tier of every Mayhem augment for one champion. Riot asks not to publish Mayhem win rates, so the
+ * rating combines (1) curated champion combos, (2) how often players pick the augment within its
+ * rarity and (3) whether it fits the champion's archetype. S+ is reserved for curated top combos.
+ */
+export function augmentTiersForChampion(data: MayhemData, statics: StaticData, championId: number): AugmentTier[] {
+  const champ = statics.champions[championId]
+  const profile = championProfile(champ?.tags ?? [])
+  const combos = combosForChampion(data, statics, championId).filter((c) => c.augments.length === 1 && c.types.length)
+  const comboOf = new Map(combos.map((c) => [c.augments[0], c.types[0]]))
+
+  const ranked: Record<AugmentRarity, MayhemAugment[]> = { silver: [], gold: [], prismatic: [] }
+  for (const a of Object.values(data.augments)) if (a.pickRate != null) ranked[a.rarity].push(a)
+  const percentile = new Map<number, number>()
+  for (const list of Object.values(ranked)) {
+    list.sort((x, y) => (y.pickRate ?? 0) - (x.pickRate ?? 0))
+    list.forEach((a, i) => percentile.set(a.id, (i + 1) / list.length))
+  }
+
+  return Object.values(data.augments)
+    .map((augment) => {
+      const [note, fitTags] = AUGMENT_NOTES[augment.id] ?? [null, ['any'] as AugmentFit[]]
+      const fits = fitTags.includes('any') || fitTags.some((f) => profile.has(f))
+      const combo = comboOf.get(augment.id)
+      if (combo) return { augment, tier: COMBO_TIER[combo], note, source: 'combo' as const, combo, fits }
+      const p = percentile.get(augment.id)
+      let tier: Tier = p == null ? 'C' : p <= 0.1 ? 'S' : p <= 0.3 ? 'A' : p <= 0.6 ? 'B' : p <= 0.85 ? 'C' : 'D'
+      if (!fits) tier = shift(tier, 2)
+      else if (!fitTags.includes('any') && TIERS.indexOf(tier) >= 2) tier = shift(tier, -1)
+      return { augment, tier, note, source: 'rating' as const, fits }
+    })
+    .sort(
+      (a, b) =>
+        TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || (b.augment.pickRate ?? 0) - (a.augment.pickRate ?? 0)
+    )
 }

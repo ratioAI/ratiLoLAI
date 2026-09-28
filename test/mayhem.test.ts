@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildMayhemData, cdragonIcon, combosForChampion, indexCherry, popularByRarity, type CherryAugment } from '../src/shared/mayhem'
+import { augmentTiersForChampion, buildMayhemData, cdragonIcon, championProfile, combosForChampion, indexCherry, popularByRarity, type CherryAugment } from '../src/shared/mayhem'
+import { AUGMENT_NOTES } from '../src/shared/augmentNotes'
 import { isMayhemGame, personalMayhemStats } from '../src/main/mayhem'
 import type { StaticData } from '../src/shared/types'
 
@@ -104,5 +105,48 @@ describe('personal Mayhem stats', () => {
     expect(isMayhemGame({ queueId: 2400, gameMode: 'X' })).toBe(true)
     expect(isMayhemGame({ queueId: 0, gameMode: 'KIWI' })).toBe(true)
     expect(isMayhemGame({ queueId: 450, gameMode: 'ARAM' })).toBe(false)
+  })
+})
+
+describe('augment tiers per champion', () => {
+  const data = buildMayhemData(cherryEn, cherryDe, augments, combos, 1)
+  const withTags = (tags: string[]) =>
+    ({ champions: { 86: { id: 'Garen', key: 86, name: 'Garen', title: '', tags } } }) as unknown as StaticData
+
+  it('uses curated combos first (god = S+, trap = D)', () => {
+    const tiers = augmentTiersForChampion(data, withTags(['Fighter', 'Tank']), 86)
+    const byId = new Map(tiers.map((t) => [t.augment.id, t]))
+    expect(byId.get(1500)).toMatchObject({ tier: 'S+', source: 'combo', combo: 'god' })
+    expect(byId.get(48)).toMatchObject({ tier: 'D', combo: 'trap' })
+    expect(tiers[0].tier).toBe('S+')
+  })
+
+  it('downgrades augments that do not fit the champion', () => {
+    // Purist - Caster is an AP/support augment: good on a mage, poor on a marksman
+    const mage = augmentTiersForChampion(data, withTags(['Mage']), 86).find((t) => t.augment.id === 2018)!
+    const adc = augmentTiersForChampion(data, withTags(['Marksman']), 86).find((t) => t.augment.id === 2018)!
+    expect(mage.fits).toBe(true)
+    expect(adc.fits).toBe(false)
+    expect(['S+', 'S', 'A', 'B', 'C', 'D'].indexOf(adc.tier)).toBeGreaterThan(['S+', 'S', 'A', 'B', 'C', 'D'].indexOf(mage.tier))
+    expect(mage.note).toMatch(/\w+/)
+  })
+
+  it('reserves S+ for curated combos', () => {
+    const tiers = augmentTiersForChampion(data, withTags(['Mage']), 999)
+    expect(tiers.some((t) => t.tier === 'S+')).toBe(false)
+  })
+
+  it('maps champion tags to archetypes', () => {
+    expect([...championProfile(['Marksman'])].sort()).toEqual(['ad', 'crit', 'onhit'])
+    expect([...championProfile(['Mage', 'Support'])].sort()).toEqual(['ap', 'sup'])
+  })
+
+  it('has a short note for every augment of the Mayhem pool', () => {
+    for (const [note] of Object.values(AUGMENT_NOTES)) {
+      const words = note.split(/\s+/).length
+      expect(words).toBeGreaterThanOrEqual(4)
+      expect(words).toBeLessThanOrEqual(12)
+    }
+    expect(Object.keys(AUGMENT_NOTES).length).toBeGreaterThanOrEqual(220)
   })
 })

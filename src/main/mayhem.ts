@@ -6,7 +6,9 @@ import {
   type AmAugmentRow,
   type AmComboRow,
   type AmFile,
-  type CherryAugment
+  type AugmentList,
+  type CherryAugment,
+  mayhemPool
 } from '@shared/mayhem'
 
 const CDRAGON = 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global'
@@ -49,13 +51,14 @@ export class MayhemService {
   private async load(): Promise<MayhemData> {
     const locale = this.language.toLowerCase()
     try {
-      const [en, local, augments, combos] = await Promise.all([
+      const [en, local, augments, combos, lists] = await Promise.all([
         json<CherryAugment[]>(`${CDRAGON}/default/v1/cherry-augments.json`),
         locale === 'en_us' ? Promise.resolve(null) : json<CherryAugment[]>(`${CDRAGON}/${locale}/v1/cherry-augments.json`).catch(() => null),
         json<AmFile<AmAugmentRow>>(`${AM}/augments.json`).catch(() => null),
-        json<AmFile<AmComboRow>>(`${AM}/combos.json`).catch(() => null)
+        json<AmFile<AmComboRow>>(`${AM}/combos.json`).catch(() => null),
+        json<AugmentList[]>(`${CDRAGON}/default/v1/augment-lists.json`).catch(() => null)
       ])
-      const data = buildMayhemData(en, local ?? en, augments, combos)
+      const data = buildMayhemData(en, local ?? en, augments, combos, Date.now(), mayhemPool(lists))
       this.data = data
       await mkdir(dirname(this.cacheFile), { recursive: true })
       await writeFile(this.cacheFile, JSON.stringify({ language: this.language, data }))
@@ -66,7 +69,7 @@ export class MayhemService {
         this.data = cached.data
         return cached.data
       } catch {
-        throw new Error(`Mayhem-Daten nicht erreichbar: ${(e as Error).message}`)
+        throw new Error(`Mayhem data unavailable: ${(e as Error).message}`)
       }
     }
   }

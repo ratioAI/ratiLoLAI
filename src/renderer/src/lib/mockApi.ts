@@ -5,7 +5,7 @@
  */
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { DDRAGON, loadStaticData } from '@shared/staticData'
-import { buildMayhemData, type AmAugmentRow, type AmComboRow, type AmFile, type CherryAugment } from '@shared/mayhem'
+import { buildMayhemData, mayhemPool, type AmAugmentRow, type AmComboRow, type AmFile, type AugmentList, type CherryAugment } from '@shared/mayhem'
 import type {
   ChampionRoleStats,
   ChampSelectState,
@@ -324,18 +324,19 @@ export function createMockApi(): RcApi {
       const cd = 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global'
       const am = 'https://arammayhem.com/data/v1/latest'
       const j = async <T,>(u: string): Promise<T> => (await fetch(u)).json() as Promise<T>
-      const [en, de, aug, combos] = await Promise.all([
+      const [en, de, aug, combos, lists] = await Promise.all([
         j<CherryAugment[]>(`${cd}/default/v1/cherry-augments.json`),
         j<CherryAugment[]>(`${cd}/de_de/v1/cherry-augments.json`).catch(() => null),
         j<AmFile<AmAugmentRow>>(`${am}/augments.json`).catch(() => null),
-        j<AmFile<AmComboRow>>(`${am}/combos.json`).catch(() => null)
+        j<AmFile<AmComboRow>>(`${am}/combos.json`).catch(() => null),
+        j<AugmentList[]>(`${cd}/default/v1/augment-lists.json`).catch(() => null)
       ])
-      return buildMayhemData(en, de ?? en, aug, combos)
+      return buildMayhemData(en, de ?? en, aug, combos, Date.now(), mayhemPool(lists))
     })())
 
   let settings: Settings = {
     platform: 'euw1',
-    language: 'de_DE',
+    language: 'en_US',
     hasApiKey: true,
     leaguePath: '',
     crawler: {
@@ -345,6 +346,7 @@ export function createMockApi(): RcApi {
       matchesPerPlayer: 10,
       minGamesForTierList: 20
     },
+    overlay: { enabled: true, hotkey: 'Alt+Shift+A', autoExpand: true },
     client: { autoImportRunes: true, autoImportItems: true, autoImportSpells: false, flashOn: 'F', autoAccept: true }
   }
 
@@ -352,7 +354,7 @@ export function createMockApi(): RcApi {
     mode: 'ranked',
     running: false,
     phase: 'done',
-    message: 'Fertig – 1500 neue Matches',
+    message: 'Done – 1500 new matches',
     patch: null,
     players: 3120,
     playersDone: 412,
@@ -413,7 +415,7 @@ export function createMockApi(): RcApi {
       settings = { ...settings, ...patch, crawler: { ...settings.crawler, ...patch.crawler }, client: { ...settings.client, ...patch.client } }
       return settings
     },
-    setApiKey: async () => ({ ok: true, message: 'Demo-Modus: Key wird nicht gespeichert.' }),
+    setApiKey: async () => ({ ok: true, message: 'Web demo: the key is not stored.' }),
     getPatches: async (mode) => {
       const s = await getStats(mode)
       return [{ patch: s.patch, matches: s.matches, updatedAt: s.updatedAt }]
@@ -425,7 +427,7 @@ export function createMockApi(): RcApi {
     },
     crawlerStart: async (mode) => {
       const s = await getStats(mode)
-      crawler = { ...crawler, mode, running: true, phase: 'crawling', message: 'Analysiere Matches (EUW1)', matchesThisRun: 0, playersDone: 0, startedAt: Date.now(), patch: s.patch }
+      crawler = { ...crawler, mode, running: true, phase: 'crawling', message: 'Analysing matches (EUW1)', matchesThisRun: 0, playersDone: 0, startedAt: Date.now(), patch: s.patch }
       emit('crawler', crawler)
       crawlTimer = setInterval(() => {
         crawler = {
@@ -440,11 +442,17 @@ export function createMockApi(): RcApi {
     },
     crawlerStop: async () => {
       if (crawlTimer) clearInterval(crawlTimer)
-      crawler = { ...crawler, running: false, phase: 'done', message: 'Gestoppt' }
+      crawler = { ...crawler, running: false, phase: 'done', message: 'Stopped' }
       emit('crawler', crawler)
     },
     crawlerStatus: async () => ({ ...crawler, patch: (await getStats()).patch }),
     getMayhemData: getMayhem,
+    overlayPreview: async (championId) => {
+      window.open(`#/overlay?champ=${championId}`, '_blank')
+    },
+    setOverlayInteractive: () => undefined,
+    appInfo: async () => ({ version: 'web-demo', update: { status: 'dev' } }),
+    installUpdate: async () => undefined,
     getMayhemPersonal: async (): Promise<MayhemPersonal> => {
       const m = await getMayhem()
       const r = rng(99)
