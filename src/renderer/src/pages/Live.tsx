@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Ban, Eye, Loader2, Radio, Skull } from 'lucide-react'
-import type { ChampSelectPlayer, LiveGameState, Platform, ScoutResult } from '@shared/types'
-import { PLATFORMS, ROLE_LABELS } from '@shared/types'
+import type { ChampSelectPlayer, GameMode, LiveGameState, Platform, ScoutResult } from '@shared/types'
+import { PLATFORMS, ROLE_LABELS, statsModeOf } from '@shared/types'
+import { MayhemChampionPanel } from '@/components/mayhem'
 import { api } from '@/lib/api'
 import { duration, num, pct, RANK_COLORS, wrColor } from '@/lib/format'
 import { useApp, useAsync } from '@/lib/store'
@@ -90,11 +91,19 @@ export function Live() {
 function ChampSelectView() {
   const { champSelect, data, patch, statsVersion, lastImport } = useApp()
   const cs = champSelect!
-  const { value: build } = useAsync(
-    () => (patch && cs.myChampionId ? api.getChampionBuild(patch, cs.myChampionId, cs.myRole ?? undefined) : Promise.resolve(null)),
-    [patch, cs.myChampionId, cs.myRole, statsVersion]
-  )
+  const statsMode: GameMode = statsModeOf(cs.mode)
+  const role = statsMode === 'aram' ? 'ARAM' : (cs.myRole ?? undefined)
+  const { value: build } = useAsync(async () => {
+    if (!cs.myChampionId) return null
+    const p = (await api.getPatches(statsMode)).find((x) => x.matches > 0)?.patch ?? patch
+    return p ? api.getChampionBuild(p, cs.myChampionId, role, statsMode) : null
+  }, [patch, cs.myChampionId, role, statsMode, statsVersion])
   return (
+    <>
+    <div className="mb-3 text-xs font-semibold text-muted">
+      Modus: <span className="text-accent">{MODE_LABELS[cs.mode]}</span>
+      {cs.mode === 'mayhem' && ' · Builds aus ARAM-Daten, Augments unten'}
+    </div>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_1.3fr_1fr]">
       <TeamColumn title="Dein Team" players={cs.allies} />
       <div className="panel p-5">
@@ -106,7 +115,9 @@ function ChampSelectView() {
                 <div className="text-xl font-extrabold">{data?.champions[cs.myChampionId]?.name}</div>
                 <div className="flex items-center gap-1.5 text-sm text-muted">
                   {cs.myRole && <RoleIcon role={cs.myRole} size={14} />}
-                  {cs.myRole ? ROLE_LABELS[cs.myRole] : 'Keine Rolle'} · {cs.locked ? 'gelockt' : 'hovert'}
+                  {statsMode === 'aram'
+                    ? `${MODE_LABELS[cs.mode]} · zufälliger Champion`
+                    : `${cs.myRole ? ROLE_LABELS[cs.myRole] : 'Keine Rolle'} · ${cs.locked ? 'gelockt' : 'hovert'}`}
                 </div>
               </div>
               {build && <TierBadge tier={build.tier} size="lg" />}
@@ -139,7 +150,7 @@ function ChampSelectView() {
                   <Link to={`/champion/${cs.myChampionId}/${build.role}`} className="text-sm font-semibold text-accent">
                     Kompletter Build →
                   </Link>
-                  <button className="btn btn-primary" onClick={() => api.importBuild(cs.myChampionId, cs.myRole)}>
+                  <button className="btn btn-primary" onClick={() => api.importBuild(cs.myChampionId, role ?? null, undefined, statsMode)}>
                     Importieren
                   </button>
                 </div>
@@ -171,8 +182,17 @@ function ChampSelectView() {
       </div>
       <TeamColumn title="Gegner" players={cs.enemies} enemy />
     </div>
+    {cs.mode === 'mayhem' && cs.myChampionId > 0 && (
+      <section className="panel mt-5 p-5">
+        <h2 className="mb-4 text-sm font-bold tracking-wide text-gold uppercase">ARAM: Mayhem – Augments</h2>
+        <MayhemChampionPanel championId={cs.myChampionId} />
+      </section>
+    )}
+    </>
   )
 }
+
+const MODE_LABELS = { ranked: "Summoner's Rift", aram: 'ARAM', mayhem: 'ARAM: Mayhem', other: 'Sonstiger Modus' } as const
 
 function TeamColumn({ title, players, enemy = false }: { title: string; players: ChampSelectPlayer[]; enemy?: boolean }) {
   const { data } = useApp()
@@ -206,6 +226,8 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
   const { data } = useApp()
   if (!data) return null
   const teams = (['ORDER', 'CHAOS'] as const).map((t) => live.players.filter((p) => p.team === t))
+  const myChamp =
+    Object.values(data.champions).find((c) => c.name === live.activeChampion || c.id === live.activeChampion)?.key ?? 0
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[2fr_1fr]">
       <div className="space-y-4">
@@ -243,6 +265,13 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
           </div>
         ))}
       </div>
+      <div className="space-y-4">
+      {live.gameMode === 'KIWI' && myChamp > 0 && (
+        <div className="panel p-4">
+          <h2 className="mb-3 text-sm font-bold text-gold uppercase">Augments für {live.activeChampion}</h2>
+          <MayhemChampionPanel championId={myChamp} compact />
+        </div>
+      )}
       <div className="panel p-4">
         <h2 className="mb-3 text-sm font-bold text-muted uppercase">Ereignisse</h2>
         <div className="space-y-2 text-sm">
@@ -253,6 +282,7 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
             </div>
           ))}
         </div>
+      </div>
       </div>
     </div>
   )

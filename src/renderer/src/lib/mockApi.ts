@@ -5,6 +5,7 @@
  */
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { DDRAGON, loadStaticData } from '@shared/staticData'
+import { buildMayhemData, type AmAugmentRow, type AmComboRow, type AmFile, type CherryAugment } from '@shared/mayhem'
 import type {
   ChampionRoleStats,
   ChampSelectState,
@@ -17,6 +18,10 @@ import type {
   RcApi,
   RcEvents,
   Role,
+  GameMode,
+  MayhemData,
+  MayhemPersonal,
+  StatRole,
   ScoutResult,
   Settings,
   StaticData,
@@ -69,6 +74,9 @@ const SPELLS: Record<Role, number[][]> = {
   UTILITY: [[4, 14], [4, 3], [4, 7]]
 }
 
+const ARAM_SPELLS = [[4, 32], [32, 14], [4, 14]]
+const ARAM_STARTERS = [[1056, 2003, 2003, 1052], [1055, 2003, 1036], [1054, 1028, 2003]]
+
 const STARTERS: Record<Role, number[][]> = {
   TOP: [[1055, 2003], [1054, 2003], [1056, 2003]],
   JUNGLE: [[1101, 2003], [1102, 2003], [1103, 2003]],
@@ -120,9 +128,10 @@ function bootsFor(d: StaticData, tag: string): number[] {
   return p.length ? p : all.slice(0, 2)
 }
 
-function generateStats(d: StaticData, patch: string): PatchStats {
-  const r = rng(1337)
-  const stats: PatchStats = { patch, matches: 48_213, updatedAt: Date.now() - 1000 * 60 * 42, bans: {}, champions: {} }
+function generateStats(d: StaticData, patch: string, mode: GameMode = 'ranked'): PatchStats {
+  const aram = mode === 'aram'
+  const r = rng(aram ? 4242 : 1337)
+  const stats: PatchStats = { patch, mode, matches: aram ? 61_507 : 48_213, updatedAt: Date.now() - 1000 * 60 * 42, bans: {}, champions: {} }
   const trees = d.runeTrees
   const shardSets: Record<string, number[][]> = {
     Marksman: [[5005, 5008, 5011], [5008, 5008, 5011]],
@@ -141,14 +150,17 @@ function generateStats(d: StaticData, patch: string): PatchStats {
     const secondRole = r() < 0.4 ? roles.find((x) => x !== mainRole) : undefined
     const popularity = Math.pow(r(), 2.2)
     const baseWr = 0.47 + r() * 0.075
-    stats.bans[champ.key] = Math.round(stats.matches * Math.pow(r(), 3) * 0.35)
+    if (!aram) stats.bans[champ.key] = Math.round(stats.matches * Math.pow(r(), 3) * 0.35)
 
-    for (const [role, share] of [
-      [mainRole, 1],
-      [secondRole, 0.15 + r() * 0.3]
-    ] as [Role | undefined, number][]) {
+    const entries: [StatRole | undefined, number][] = aram
+      ? [['ARAM', 1]]
+      : [
+          [mainRole, 1],
+          [secondRole, 0.15 + r() * 0.3]
+        ]
+    for (const [role, share] of entries) {
       if (!role) continue
-      const games = Math.round((300 + popularity * 9000) * share)
+      const games = aram ? Math.round(stats.matches * 10 / 172 * (0.9 + r() * 0.2)) : Math.round((300 + popularity * 9000) * share)
       const wr = baseWr + (share < 1 ? -0.015 : 0)
       const s: ChampionRoleStats = {
         championId: champ.key,
@@ -180,11 +192,12 @@ function generateStats(d: StaticData, patch: string): PatchStats {
       }
 
       // spells & starters
-      SPELLS[role].forEach((sp, i) => (s.spells[sp.join(',')] = wg(r, s.g * [0.78, 0.15, 0.05][i], wr)))
-      STARTERS[role].forEach((st, i) => (s.starters[[...st].sort((a, b) => a - b).join(',')] = wg(r, s.g * [0.7, 0.2, 0.08][i], wr)))
+      const itemRole: Role = role === 'ARAM' ? mainRole : role
+      ;(aram ? ARAM_SPELLS : SPELLS[itemRole]).forEach((sp, i) => (s.spells[sp.join(',')] = wg(r, s.g * [0.78, 0.15, 0.05][i], wr)))
+      ;(aram ? ARAM_STARTERS : STARTERS[itemRole]).forEach((st, i) => (s.starters[[...st].sort((a, b) => a - b).join(',')] = wg(r, s.g * [0.7, 0.2, 0.08][i], wr)))
 
       // items
-      const pool = itemPool(d, role === 'UTILITY' && tag !== 'Mage' ? 'Support' : tag)
+      const pool = itemPool(d, itemRole === 'UTILITY' && tag !== 'Mage' ? 'Support' : tag)
       const rp = [...pool].sort(() => r() - 0.5)
       const coreA = rp.slice(0, 3)
       const variants = [coreA, [coreA[0], coreA[2], coreA[1]], [coreA[0], coreA[1], rp[3]], [rp[4], coreA[0], coreA[1]]]
@@ -208,7 +221,7 @@ function generateStats(d: StaticData, patch: string): PatchStats {
   }
 
   // matchups within each role
-  for (const role of ROLES) {
+  for (const role of aram ? (['ARAM'] as StatRole[]) : ROLES) {
     const inRole = Object.values(stats.champions).filter((c) => c.role === role)
     for (const c of inRole) {
       for (const o of inRole) {
@@ -301,8 +314,24 @@ export function createMockApi(): RcApi {
       return loadStaticData(get, version, settings.language)
     })())
 
-  let statsPromise: Promise<PatchStats> | null = null
-  const getStats = (): Promise<PatchStats> => (statsPromise ??= getStatic().then((d) => generateStats(d, d.patch)))
+  const statsPromise: Partial<Record<GameMode, Promise<PatchStats>>> = {}
+  const getStats = (mode: GameMode = 'ranked'): Promise<PatchStats> =>
+    (statsPromise[mode] ??= getStatic().then((d) => generateStats(d, d.patch, mode)))
+
+  let mayhemPromise: Promise<MayhemData> | null = null
+  const getMayhem = (): Promise<MayhemData> =>
+    (mayhemPromise ??= (async () => {
+      const cd = 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global'
+      const am = 'https://arammayhem.com/data/v1/latest'
+      const j = async <T,>(u: string): Promise<T> => (await fetch(u)).json() as Promise<T>
+      const [en, de, aug, combos] = await Promise.all([
+        j<CherryAugment[]>(`${cd}/default/v1/cherry-augments.json`),
+        j<CherryAugment[]>(`${cd}/de_de/v1/cherry-augments.json`).catch(() => null),
+        j<AmFile<AmAugmentRow>>(`${am}/augments.json`).catch(() => null),
+        j<AmFile<AmComboRow>>(`${am}/combos.json`).catch(() => null)
+      ])
+      return buildMayhemData(en, de ?? en, aug, combos)
+    })())
 
   let settings: Settings = {
     platform: 'euw1',
@@ -320,6 +349,7 @@ export function createMockApi(): RcApi {
   }
 
   let crawler: CrawlerStatus = {
+    mode: 'ranked',
     running: false,
     phase: 'done',
     message: 'Fertig – 1500 neue Matches',
@@ -362,14 +392,17 @@ export function createMockApi(): RcApi {
       spell1Id: 0,
       spell2Id: 0
     })
+    const noRole = (p: ReturnType<typeof ally>) => ({ ...p, role: null })
     return {
       active: true,
-      myChampionId: byName('Ahri'),
-      myRole: 'MIDDLE',
-      locked: true,
-      allies: [ally(0, 'Garen', 'TOP'), ally(1, 'LeeSin', 'JUNGLE'), ally(2, 'Ahri', 'MIDDLE', true), ally(3, 'Jinx', 'BOTTOM'), ally(4, 'Thresh', 'UTILITY')],
+      queueId: 2400,
+      mode: 'mayhem',
+      myChampionId: byName('Lux'),
+      myRole: null,
+      locked: false,
+      allies: [ally(0, 'Garen', 'TOP'), ally(1, 'LeeSin', 'JUNGLE'), ally(2, 'Lux', 'MIDDLE', true), ally(3, 'Jinx', 'BOTTOM'), ally(4, 'Thresh', 'UTILITY')].map(noRole),
       enemies: [enemy(5, 'Darius'), enemy(6, 'Vi'), enemy(7, 'Syndra'), enemy(8, 'Kaisa'), enemy(9, 'Nautilus')],
-      bans: ['Yasuo', 'Zed', 'Morgana', 'Yone', 'Lux', 'Viego'].map(byName)
+      bans: []
     }
   }
 
@@ -381,18 +414,18 @@ export function createMockApi(): RcApi {
       return settings
     },
     setApiKey: async () => ({ ok: true, message: 'Demo-Modus: Key wird nicht gespeichert.' }),
-    getPatches: async () => {
-      const s = await getStats()
+    getPatches: async (mode) => {
+      const s = await getStats(mode)
       return [{ patch: s.patch, matches: s.matches, updatedAt: s.updatedAt }]
     },
-    getTierList: async () => buildTierList(await getStats(), settings.crawler.minGamesForTierList),
-    getChampionBuild: async (_patch, championId, role) => {
-      const s = await getStats()
+    getTierList: async (_patch, mode) => buildTierList(await getStats(mode), settings.crawler.minGamesForTierList),
+    getChampionBuild: async (_patch, championId, role, mode) => {
+      const s = await getStats(mode)
       return buildChampionView(s, championId, role, buildTierList(s, settings.crawler.minGamesForTierList))
     },
-    crawlerStart: async () => {
-      const s = await getStats()
-      crawler = { ...crawler, running: true, phase: 'crawling', message: 'Analysiere Matches (EUW1)', matchesThisRun: 0, playersDone: 0, startedAt: Date.now(), patch: s.patch }
+    crawlerStart: async (mode) => {
+      const s = await getStats(mode)
+      crawler = { ...crawler, mode, running: true, phase: 'crawling', message: 'Analysiere Matches (EUW1)', matchesThisRun: 0, playersDone: 0, startedAt: Date.now(), patch: s.patch }
       emit('crawler', crawler)
       crawlTimer = setInterval(() => {
         crawler = {
@@ -411,6 +444,37 @@ export function createMockApi(): RcApi {
       emit('crawler', crawler)
     },
     crawlerStatus: async () => ({ ...crawler, patch: (await getStats()).patch }),
+    getMayhemData: getMayhem,
+    getMayhemPersonal: async (): Promise<MayhemPersonal> => {
+      const m = await getMayhem()
+      const r = rng(99)
+      const ids = Object.values(m.augments)
+        .filter((a) => a.pickRate != null)
+        .map((a) => a.id)
+      const d = await getStatic()
+      const champs = Object.values(d.champions)
+      const recent = Array.from({ length: 12 }, (_, i) => ({
+        gameId: i,
+        championId: pick(r, champs).key,
+        win: r() < 0.58,
+        augments: [0, 1, 2, 3].map(() => pick(r, ids.slice(0, 40))),
+        createdAt: Date.now() - i * 1000 * 60 * 60 * 7
+      }))
+      const agg = new Map<number, { games: number; wins: number }>()
+      for (const g of recent) for (const id of g.augments) {
+        const e = agg.get(id) ?? { games: 0, wins: 0 }
+        e.games++
+        e.wins += g.win ? 1 : 0
+        agg.set(id, e)
+      }
+      return {
+        games: recent.length,
+        wins: recent.filter((g) => g.win).length,
+        augments: [...agg.entries()].map(([id, v]) => ({ id, ...v })).sort((a, b) => b.games - a.games),
+        champions: [],
+        recent
+      }
+    },
     resetStats: async () => undefined,
     clientStatus: async () => client,
     champSelect,

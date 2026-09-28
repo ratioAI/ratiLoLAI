@@ -12,6 +12,7 @@ import { Live } from './pages/Live'
 import { Profile } from './pages/Profile'
 import { Data } from './pages/Data'
 import { Settings } from './pages/Settings'
+import { Mayhem } from './pages/Mayhem'
 
 function Shell() {
   const { data, dataError } = useApp()
@@ -40,6 +41,7 @@ function Shell() {
         <Route path="/champions" element={<Champions />} />
         <Route path="/champion/:id/:role?" element={<ChampionPage />} />
         <Route path="/live" element={<Live />} />
+        <Route path="/mayhem" element={<Mayhem />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/data" element={<Data />} />
         <Route path="/settings" element={<Settings />} />

@@ -1,0 +1,172 @@
+import { useEffect, useState } from 'react'
+import { ExternalLink, Sparkles, TriangleAlert } from 'lucide-react'
+import type { AugmentRarity, ComboType, MayhemAugment, MayhemData } from '@shared/types'
+import { COMBO_TYPE_LABELS, combosForChampion, popularByRarity } from '@shared/mayhem'
+import { api } from '@/lib/api'
+import { useApp } from '@/lib/store'
+import { GameImage } from './icons'
+
+export const RARITY_COLORS: Record<AugmentRarity, string> = {
+  silver: '#b8c4d6',
+  gold: '#f5c451',
+  prismatic: '#c07bff'
+}
+export const RARITY_LABELS: Record<AugmentRarity, string> = { silver: 'Silber', gold: 'Gold', prismatic: 'Prismatisch' }
+
+export const COMBO_COLORS: Record<ComboType, string> = {
+  god: 'var(--color-tier-splus)',
+  strong: 'var(--color-tier-s)',
+  blackTech: 'var(--color-accent)',
+  entertainment: 'var(--color-tier-c)',
+  bug: 'var(--color-tier-a)',
+  trap: 'var(--color-loss)'
+}
+
+let cache: Promise<MayhemData> | null = null
+
+export function useMayhemData(): { data: MayhemData | null; error: string | null } {
+  const [state, setState] = useState<{ data: MayhemData | null; error: string | null }>({ data: null, error: null })
+  useEffect(() => {
+    let alive = true
+    cache ??= api.getMayhemData().catch((e) => {
+      cache = null
+      throw e
+    })
+    cache.then(
+      (data) => alive && setState({ data, error: null }),
+      (e: Error) => alive && setState({ data: null, error: e.message })
+    )
+    return () => {
+      alive = false
+    }
+  }, [])
+  return state
+}
+
+export function AugmentIcon({ augment, size = 40 }: { augment: MayhemAugment | undefined; size?: number }) {
+  if (!augment) return <span className="inline-block rounded-lg bg-panel-2" style={{ width: size, height: size }} />
+  const color = RARITY_COLORS[augment.rarity]
+  return (
+    <span className="inline-flex rounded-lg p-[2px]" style={{ background: `color-mix(in srgb, ${color} 55%, transparent)` }}>
+      <GameImage
+        src={augment.icon}
+        size={size - 4}
+        alt={augment.name}
+        rounded="rounded-md"
+        className="bg-bg"
+        tooltip={
+          <span className="block">
+            <b style={{ color }}>{augment.name}</b>
+            <span className="block text-muted">
+              {RARITY_LABELS[augment.rarity]}
+              {augment.pickRate != null && ` · ${augment.pickRate.toFixed(1)} % Pickrate (#${augment.pickRateRank})`}
+            </span>
+          </span>
+        }
+      />
+    </span>
+  )
+}
+
+export function Attribution({ data }: { data: MayhemData }) {
+  return (
+    <button
+      onClick={() => api.openExternal(data.attribution.url)}
+      className="inline-flex items-center gap-1 text-[11px] text-muted hover:text-accent"
+    >
+      {data.attribution.text}
+      {data.patch && ` · Patch ${data.patch}`} <ExternalLink size={11} />
+    </button>
+  )
+}
+
+/** Augment recommendations for one champion – shown in champion select, in game and on the champion page. */
+export function MayhemChampionPanel({ championId, compact = false }: { championId: number; compact?: boolean }) {
+  const { data: statics } = useApp()
+  const { data, error } = useMayhemData()
+  if (error) return <p className="text-sm text-loss">{error}</p>
+  if (!data || !statics) return <p className="text-sm text-muted">Lade Augment-Daten …</p>
+
+  const combos = combosForChampion(data, statics, championId)
+  const tips = combos.filter((c) => c.types.length && c.augments.length === 1)
+  const builds = combos.filter((c) => c.augments.length > 1).slice(0, compact ? 3 : 6)
+  const popular = popularByRarity(data, compact ? 5 : 8)
+
+  return (
+    <div className="space-y-5">
+      {tips.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold text-muted">Augment-Tipps für {statics.champions[championId]?.name}</h3>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {tips.map((c, i) => {
+              const a = data.augments[c.augments[0]]
+              const t = c.types[0]
+              return (
+                <div key={i} className="flex items-center gap-3 rounded-xl bg-bg-2 p-2">
+                  <AugmentIcon augment={a} size={38} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold">{a?.name}</div>
+                    <div className="flex items-center gap-1 text-xs font-bold" style={{ color: COMBO_COLORS[t] }}>
+                      {t === 'trap' && <TriangleAlert size={12} />}
+                      {COMBO_TYPE_LABELS[t]}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {builds.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold text-muted">Bewährte Augment-Kombinationen</h3>
+          <div className="space-y-2">
+            {builds.map((c, i) => (
+              <button
+                key={i}
+                onClick={() => api.openExternal(c.url)}
+                className="flex w-full items-center gap-1.5 rounded-xl bg-bg-2 p-2 text-left hover:bg-panel-2"
+                title="Details auf arammayhem.com"
+              >
+                {c.augments.map((id) => (
+                  <AugmentIcon key={id} augment={data.augments[id]} size={34} />
+                ))}
+                {c.types.map((t) => (
+                  <span key={t} className="ml-auto text-xs font-bold" style={{ color: COMBO_COLORS[t] }}>
+                    {COMBO_TYPE_LABELS[t]}
+                  </span>
+                ))}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!tips.length && !builds.length && (
+        <p className="flex items-center gap-2 text-sm text-muted">
+          <Sparkles size={15} /> Für diesen Champion gibt es noch keine kuratierten Kombos – hier die global beliebtesten Augments:
+        </p>
+      )}
+
+      <div>
+        <h3 className="mb-2 text-xs font-semibold text-muted">Beliebteste Augments (alle Champions)</h3>
+        <div className="space-y-2">
+          {(['prismatic', 'gold', 'silver'] as AugmentRarity[]).map((r) => (
+            <div key={r} className="flex items-center gap-2">
+              <span className="w-20 text-xs font-bold" style={{ color: RARITY_COLORS[r] }}>
+                {RARITY_LABELS[r]}
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {popular[r].map((a) => (
+                  <AugmentIcon key={a.id} augment={a} size={34} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <Attribution data={data} />
+    </div>
+  )
+}

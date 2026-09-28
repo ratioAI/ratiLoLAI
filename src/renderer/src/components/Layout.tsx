@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Database, Gauge, LayoutGrid, Radio, Search, Settings as SettingsIcon, Trophy } from 'lucide-react'
+import { Database, Gauge, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy } from 'lucide-react'
+import type { GameMode } from '@shared/types'
 import { useApp } from '@/lib/store'
 import { isDemo } from '@/lib/api'
 import { num } from '@/lib/format'
@@ -10,6 +11,7 @@ const NAV = [
   { to: '/tierlist', label: 'Tierliste', icon: Trophy },
   { to: '/champions', label: 'Champions', icon: LayoutGrid },
   { to: '/live', label: 'Live', icon: Radio },
+  { to: '/mayhem', label: 'Mayhem', icon: Sparkles },
   { to: '/profile', label: 'Profil', icon: Search },
   { to: '/data', label: 'Daten', icon: Database }
 ]
@@ -30,7 +32,7 @@ function Logo() {
 }
 
 export function Layout({ children }: { children: ReactNode }) {
-  const { client, patches, patch, setPatch, crawler } = useApp()
+  const { client, patches, patch, setPatch, crawler, mode, setMode } = useApp()
   return (
     <div className="flex h-full">
       <aside className="flex w-[76px] shrink-0 flex-col items-center border-r border-line bg-bg-2 pt-3 pb-4">
@@ -79,9 +81,20 @@ export function Layout({ children }: { children: ReactNode }) {
           {crawler?.running && (
             <span className="flex items-center gap-2 text-muted">
               <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
-              Crawler: {num(crawler.matchesThisRun)} Matches
+              Crawler ({crawler.mode === 'aram' ? 'ARAM' : 'Ranked'}): {num(crawler.matchesThisRun)} Matches
             </span>
           )}
+          <div className="no-drag flex rounded-lg border border-line bg-panel p-0.5">
+            {(['ranked', 'aram'] as GameMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`rounded-md px-2.5 py-0.5 font-semibold ${mode === m ? 'bg-panel-2 text-accent' : 'text-muted hover:text-text'}`}
+              >
+                {m === 'ranked' ? 'Ranked' : 'ARAM'}
+              </button>
+            ))}
+          </div>
           <label className="no-drag flex items-center gap-2 text-muted">
             Patch
             <select

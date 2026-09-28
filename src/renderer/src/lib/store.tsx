@@ -3,6 +3,7 @@ import type {
   ChampSelectState,
   ClientStatus,
   CrawlerStatus,
+  GameMode,
   ImportResult,
   LiveGameState,
   Settings,
@@ -15,6 +16,8 @@ interface AppState {
   dataError: string | null
   settings: Settings | null
   setSettings: (s: Settings) => void
+  mode: GameMode
+  setMode: (m: GameMode) => void
   patches: { patch: string; matches: number; updatedAt: number }[]
   patch: string | null
   setPatch: (p: string) => void
@@ -33,6 +36,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<StaticData | null>(null)
   const [dataError, setDataError] = useState<string | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [mode, setModeState] = useState<GameMode>(() => {
+    try {
+      return localStorage.getItem('rc.mode') === 'aram' ? 'aram' : 'ranked'
+    } catch {
+      return 'ranked'
+    }
+  })
+  const setMode = useCallback((m: GameMode) => {
+    setModeState(m)
+    try {
+      localStorage.setItem('rc.mode', m)
+    } catch {
+      /* ignore */
+    }
+  }, [])
   const [patches, setPatches] = useState<AppState['patches']>([])
   const [patch, setPatch] = useState<string | null>(null)
   const [statsVersion, setStatsVersion] = useState(0)
@@ -43,10 +61,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [lastImport, setLastImport] = useState<AppState['lastImport']>(null)
 
   const refreshPatches = useCallback(async () => {
-    const list = await api.getPatches()
+    const list = await api.getPatches(mode)
     setPatches(list)
-    setPatch((cur) => cur ?? list.find((p) => p.matches > 0)?.patch ?? list[0]?.patch ?? null)
-  }, [])
+    setPatch((cur) => {
+      if (cur && list.some((p) => p.patch === cur)) return cur
+      return list.find((p) => p.matches > 0)?.patch ?? list[0]?.patch ?? cur
+    })
+  }, [mode])
+
+  useEffect(() => {
+    void refreshPatches()
+  }, [refreshPatches])
 
   useEffect(() => {
     api.getSettings().then(setSettings)
@@ -57,7 +82,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setPatch((cur) => cur ?? d.patch)
       })
       .catch((e: Error) => setDataError(e.message))
-    void refreshPatches()
     api.clientStatus().then(setClient)
     api.champSelect().then(setChampSelect)
     api.liveGame().then(setLive)
@@ -69,13 +93,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       api.on('live', setLive),
       api.on('crawler', setCrawler),
       api.on('imported', (r) => setLastImport({ ...r, at: Date.now() })),
-      api.on('statsUpdated', () => {
-        setStatsVersion((v) => v + 1)
-        void refreshPatches()
-      })
+      api.on('statsUpdated', () => setStatsVersion((v) => v + 1))
     ]
     return () => offs.forEach((off) => off())
-  }, [refreshPatches])
+  }, [])
+
+  useEffect(() => {
+    if (statsVersion) void refreshPatches()
+  }, [statsVersion, refreshPatches])
 
   // reload static data when the language changes
   const language = settings?.language
@@ -91,6 +116,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dataError,
         settings,
         setSettings,
+        mode,
+        setMode,
         patches,
         patch,
         setPatch,

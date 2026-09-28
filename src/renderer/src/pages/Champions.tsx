@@ -8,38 +8,40 @@ import { PageHeader } from '@/components/Layout'
 import { RoleTabs } from './TierList'
 
 export function Champions() {
-  const { data, patch, statsVersion } = useApp()
+  const { data, patch, statsVersion, mode } = useApp()
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [role, setRole] = useState<Role | 'ALL'>('ALL')
-  const { value: tiers } = useAsync(() => (patch ? api.getTierList(patch) : Promise.resolve([])), [patch, statsVersion])
+  const { value: tiers } = useAsync(() => (patch ? api.getTierList(patch, mode) : Promise.resolve([])), [patch, statsVersion, mode])
 
   const best = useMemo(() => {
     const m = new Map<number, TierEntry>()
     for (const t of tiers ?? []) {
-      if (role !== 'ALL' && t.role !== role) continue
+      if (mode === 'ranked' && role !== 'ALL' && t.role !== role) continue
       const cur = m.get(t.championId)
       if (!cur || t.games > cur.games) m.set(t.championId, t)
     }
     return m
-  }, [tiers, role])
+  }, [tiers, role, mode])
 
   const champs = useMemo(() => {
     if (!data) return []
     const q = query.trim().toLowerCase()
     return Object.values(data.champions)
-      .filter((c) => (!q || c.name.toLowerCase().includes(q)) && (role === 'ALL' || best.has(c.key)))
+      .filter((c) => (!q || c.name.toLowerCase().includes(q)) && (mode === 'aram' || role === 'ALL' || best.has(c.key)))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [data, query, role, best])
+  }, [data, query, role, best, mode])
 
   return (
     <div className="fade-in mx-auto max-w-6xl p-8">
       <PageHeader title="Champions" subtitle={`${champs.length} Champions · klicke für Builds, Runen & Matchups`}>
         <input autoFocus className="input w-64" placeholder="Champion suchen …" value={query} onChange={(e) => setQuery(e.target.value)} />
       </PageHeader>
-      <div className="mb-5">
-        <RoleTabs value={role} onChange={setRole} />
-      </div>
+      {mode === 'ranked' && (
+        <div className="mb-5">
+          <RoleTabs value={role} onChange={setRole} />
+        </div>
+      )}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-3">
         {champs.map((c) => {
           const t = best.get(c.key)

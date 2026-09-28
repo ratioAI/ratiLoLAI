@@ -21,9 +21,9 @@ const PHASES: Record<string, string> = {
 }
 
 export function Home() {
-  const { data, client, champSelect, patch, patches, crawler, statsVersion, lastImport } = useApp()
+  const { data, client, champSelect, patch, patches, crawler, statsVersion, lastImport, mode } = useApp()
   const navigate = useNavigate()
-  const { value: tiers } = useAsync(() => (patch ? api.getTierList(patch) : Promise.resolve([])), [patch, statsVersion])
+  const { value: tiers } = useAsync(() => (patch ? api.getTierList(patch, mode) : Promise.resolve([])), [patch, statsVersion, mode])
   const patchInfo = patches.find((p) => p.patch === patch)
 
   return (
@@ -51,7 +51,7 @@ export function Home() {
         </StatusCard>
         <StatusCard
           icon={<Database size={18} />}
-          title={`Datenbasis Patch ${patch ?? '–'}`}
+          title={`${mode === 'aram' ? 'ARAM' : 'Ranked'}-Daten Patch ${patch ?? '–'}`}
           value={patchInfo ? `${num(patchInfo.matches)} Matches` : 'Keine Daten'}
           ok={!!patchInfo?.matches}
         >
@@ -89,6 +89,35 @@ export function Home() {
         </button>
       )}
 
+      {mode === 'aram' ? (
+        <>
+          <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Stärkste ARAM-Champions</h2>
+          <div className="panel grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 lg:grid-cols-5">
+            {(tiers ?? [])
+              .slice()
+              .sort((a, b) => a.rank - b.rank)
+              .slice(0, 15)
+              .map((t) => (
+                <button
+                  key={t.championId}
+                  onClick={() => navigate(`/champion/${t.championId}/ARAM`)}
+                  className="flex items-center gap-2.5 rounded-lg p-1.5 text-left hover:bg-panel-2"
+                >
+                  <ChampIcon id={t.championId} size={32} tooltip={false} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-semibold">{data?.champions[t.championId]?.name}</div>
+                    <div className="text-[11px]" style={{ color: wrColor(t.winRate) }}>
+                      {pct(t.winRate)} WR
+                    </div>
+                  </div>
+                  <TierBadge tier={t.tier} size="sm" />
+                </button>
+              ))}
+            {!tiers?.length && <p className="text-xs text-muted">Noch keine ARAM-Daten – starte den ARAM-Crawler unter „Daten“.</p>}
+          </div>
+        </>
+      ) : (
+      <>
       <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Meta-Picks pro Rolle</h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {ROLES.map((role) => {
@@ -124,6 +153,8 @@ export function Home() {
           )
         })}
       </div>
+      </>
+      )}
     </div>
   )
 }

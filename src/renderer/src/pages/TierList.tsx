@@ -34,21 +34,22 @@ export function RoleTabs({ value, onChange, withAll = true }: { value: Role | 'A
 }
 
 export function TierList() {
-  const { data, patch, statsVersion } = useApp()
+  const { data, patch, statsVersion, mode } = useApp()
+  const aram = mode === 'aram'
   const navigate = useNavigate()
   const [role, setRole] = useState<Role | 'ALL'>('ALL')
   const [query, setQuery] = useState('')
   const [tierFilter, setTierFilter] = useState<Tier | null>(null)
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'rank', dir: 1 })
 
-  const { value: list, loading } = useAsync(() => (patch ? api.getTierList(patch) : Promise.resolve([])), [patch, statsVersion])
+  const { value: list, loading } = useAsync(() => (patch ? api.getTierList(patch, mode) : Promise.resolve([])), [patch, statsVersion, mode])
 
   const rows = useMemo(() => {
     if (!list || !data) return []
     const q = query.trim().toLowerCase()
     let r = list.filter(
       (e) =>
-        (role === 'ALL' || e.role === role) &&
+        (aram || role === 'ALL' || e.role === role) &&
         (!tierFilter || e.tier === tierFilter) &&
         (!q || data.champions[e.championId]?.name.toLowerCase().includes(q))
     )
@@ -59,7 +60,7 @@ export function TierList() {
         case 'tier':
           return TIER_ORDER.indexOf(e.tier) * 1000 - e.score
         case 'rank':
-          return role === 'ALL' ? TIER_ORDER.indexOf(e.tier) * 1000 - e.score : e.rank
+          return role === 'ALL' && !aram ? TIER_ORDER.indexOf(e.tier) * 1000 - e.score : e.rank
         default:
           return -e[sort.key]
       }
@@ -70,7 +71,7 @@ export function TierList() {
       return (typeof va === 'string' ? va.localeCompare(vb as string) : va - (vb as number)) * sort.dir
     })
     return r
-  }, [list, data, role, query, tierFilter, sort])
+  }, [list, data, role, query, tierFilter, sort, aram])
 
   const Th = ({ k, children, className = '' }: { k: SortKey; children: React.ReactNode; className?: string }) => (
     <th
@@ -88,13 +89,17 @@ export function TierList() {
     <div className="fade-in mx-auto max-w-6xl p-8">
       <PageHeader
         title="Tierliste"
-        subtitle={`Ranked Solo/Duo · Master+ · Patch ${patch ?? '–'} · basierend auf deinen gecrawlten Matches`}
+        subtitle={
+          aram
+            ? `ARAM (Howling Abyss) · Patch ${patch ?? '–'} · auch als Build-Basis für ARAM: Mayhem`
+            : `Ranked Solo/Duo · Master+ · Patch ${patch ?? '–'} · basierend auf deinen gecrawlten Matches`
+        }
       >
         <input className="input w-56" placeholder="Champion suchen …" value={query} onChange={(e) => setQuery(e.target.value)} />
       </PageHeader>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <RoleTabs value={role} onChange={setRole} />
+        {aram ? <span /> : <RoleTabs value={role} onChange={setRole} />}
         <div className="flex gap-1">
           {TIER_ORDER.map((t) => (
             <button key={t} onClick={() => setTierFilter((cur) => (cur === t ? null : t))} className={tierFilter && tierFilter !== t ? 'opacity-35' : ''}>
@@ -124,7 +129,7 @@ export function TierList() {
                 <Th k="tier">Tier</Th>
                 <Th k="winRate">Winrate</Th>
                 <Th k="pickRate">Pickrate</Th>
-                <Th k="banRate">Banrate</Th>
+                {!aram && <Th k="banRate">Banrate</Th>}
                 <Th k="games" className="text-right">
                   Spiele
                 </Th>
@@ -139,7 +144,7 @@ export function TierList() {
                     className="cursor-pointer border-b border-line/50 transition last:border-0 hover:bg-panel-2"
                     onClick={() => navigate(`/champion/${e.championId}/${e.role}`)}
                   >
-                    <td className="px-3 py-2 text-center font-semibold text-muted">{sort.key === 'rank' && role !== 'ALL' ? e.rank : i + 1}</td>
+                    <td className="px-3 py-2 text-center font-semibold text-muted">{sort.key === 'rank' && (role !== 'ALL' || aram) ? e.rank : i + 1}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-3">
                         <ChampIcon id={e.championId} size={38} tooltip={false} />
@@ -161,9 +166,11 @@ export function TierList() {
                     <td className="px-3 py-2">
                       <Bar value={e.pickRate} max={0.25} />
                     </td>
-                    <td className="px-3 py-2">
-                      <Bar value={e.banRate} max={0.4} color="var(--color-loss)" />
-                    </td>
+                    {!aram && (
+                      <td className="px-3 py-2">
+                        <Bar value={e.banRate} max={0.4} color="var(--color-loss)" />
+                      </td>
+                    )}
                     <td className="px-3 py-2 text-right text-muted">{num(e.games)}</td>
                   </tr>
                 )

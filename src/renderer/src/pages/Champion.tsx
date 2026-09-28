@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronRight, Download, Loader2, Swords } from 'lucide-react'
-import type { ChampionBuild, ImportResult, Matchup, Option, Role, RunePage } from '@shared/types'
+import { ChevronRight, Download, Loader2, Sparkles, Swords } from 'lucide-react'
+import type { ChampionBuild, ImportResult, Matchup, Option, RunePage, StatRole } from '@shared/types'
 import { ROLE_LABELS } from '@shared/types'
 import { api } from '@/lib/api'
 import { duration, num, pct, wrColor } from '@/lib/format'
@@ -9,6 +9,7 @@ import { useApp, useAsync } from '@/lib/store'
 import { ChampIcon, ItemIcon, RoleIcon, RuneIcon, SpellIcon, TierBadge } from '@/components/icons'
 import { Spinner } from '@/components/Layout'
 import { NoDataHint } from './NoDataHint'
+import { MayhemChampionPanel } from '@/components/mayhem'
 
 const SHARD_ROWS = [
   [5008, 5005, 5007],
@@ -19,12 +20,13 @@ const SHARD_ROWS = [
 export function ChampionPage() {
   const params = useParams()
   const championId = Number(params.id)
-  const role = params.role as Role | undefined
-  const { data, patch, statsVersion, client } = useApp()
+  const { data, patch, statsVersion, client, mode } = useApp()
+  const aram = mode === 'aram'
+  const role = aram ? 'ARAM' : (params.role as StatRole | undefined)
   const navigate = useNavigate()
   const { value: build, loading } = useAsync(
-    () => (patch ? api.getChampionBuild(patch, championId, role) : Promise.resolve(null)),
-    [patch, championId, role, statsVersion]
+    () => (patch ? api.getChampionBuild(patch, championId, role === 'ARAM' && !aram ? undefined : role, mode) : Promise.resolve(null)),
+    [patch, championId, role, statsVersion, mode]
   )
   const [runeIdx, setRuneIdx] = useState(0)
   useEffect(() => setRuneIdx(0), [championId, role])
@@ -53,7 +55,7 @@ export function ChampionPage() {
               {build && <TierBadge tier={build.tier} size="lg" />}
             </div>
             <p className="text-sm text-muted capitalize">{champ.title}</p>
-            {build && (
+            {build && !aram && (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {build.availableRoles.map((r) => (
                   <button
@@ -74,7 +76,7 @@ export function ChampionPage() {
             <div className="flex gap-6">
               <Stat label="Winrate" value={pct(build.winRate, 2)} color={wrColor(build.winRate)} />
               <Stat label="Pickrate" value={pct(build.pickRate)} />
-              <Stat label="Banrate" value={pct(build.banRate)} />
+              {!aram && <Stat label="Banrate" value={pct(build.banRate)} />}
               <Stat label="Spiele" value={num(build.games)} />
               <Stat label="Ø Dauer" value={duration(build.avgDuration)} />
             </div>
@@ -208,10 +210,16 @@ export function ChampionPage() {
             </div>
           </Card>
 
-          <Card title="Schwere Matchups" icon={<Swords size={15} className="text-loss" />}>
+          {aram && (
+            <Card title="ARAM: Mayhem – Augments" icon={<Sparkles size={15} className="text-gold" />} className="lg:col-span-2">
+              <MayhemChampionPanel championId={championId} />
+            </Card>
+          )}
+
+          <Card title={aram ? 'Schwere Gegner' : 'Schwere Matchups'} icon={<Swords size={15} className="text-loss" />}>
             <MatchupList list={build.counters} />
           </Card>
-          <Card title="Gute Matchups" icon={<Swords size={15} className="text-win" />}>
+          <Card title={aram ? 'Gute Gegner' : 'Gute Matchups'} icon={<Swords size={15} className="text-win" />}>
             <MatchupList list={build.goodAgainst} />
           </Card>
         </div>
@@ -227,7 +235,7 @@ function ImportBar({ build, connected }: { build: ChampionBuild; connected: bool
     setBusy(true)
     setResult(null)
     try {
-      setResult(await api.importBuild(build.championId, build.role, what))
+      setResult(await api.importBuild(build.championId, build.role, what, build.mode))
     } catch (e) {
       setResult({ errors: [(e as Error).message] })
     } finally {

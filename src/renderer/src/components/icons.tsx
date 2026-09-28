@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import type { Role, Tier } from '@shared/types'
+import type { StatRole, Tier } from '@shared/types'
 import { useApp } from '@/lib/store'
 import { img } from '@/lib/img'
 import { TIER_COLORS } from '@/lib/format'
@@ -148,7 +148,7 @@ export function TierBadge({ tier, size = 'md' }: { tier: Tier | null; size?: 'sm
 }
 
 /** Stylised lane icons (own artwork, no Riot assets). */
-export function RoleIcon({ role, size = 18, className = '' }: { role: Role | 'ALL'; size?: number; className?: string }) {
+export function RoleIcon({ role, size = 18, className = '' }: { role: StatRole | 'ALL'; size?: number; className?: string }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', className, fill: 'currentColor' }
   switch (role) {
     case 'TOP':
@@ -184,6 +184,13 @@ export function RoleIcon({ role, size = 18, className = '' }: { role: Role | 'AL
       return (
         <svg {...common}>
           <path d="M9 3h6l-1 4h-4zM4 8h16l-3 4h-3l1 9-3-3-3 3 1-9H7z" />
+        </svg>
+      )
+    case 'ARAM':
+      return (
+        <svg {...common}>
+          <path d="M12 2 9.5 6.5 12 8l2.5-1.5zM4 9l3 1-1 3 3 2 3-2 3 2 3-2-1-3 3-1-3-2-2 1.5L12 10 9 8.5 7 7z" />
+          <path d="M6 17h12l-1.5 5h-9z" opacity=".5" />
         </svg>
       )
     default:

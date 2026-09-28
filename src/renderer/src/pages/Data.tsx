@@ -1,13 +1,16 @@
 import { Link } from 'react-router-dom'
 import { Info, Play, Square, Trash2 } from 'lucide-react'
-import { PLATFORMS } from '@shared/types'
+import { useState } from 'react'
+import type { GameMode } from '@shared/types'
+import { GAME_MODES, PLATFORMS } from '@shared/types'
 import { api } from '@/lib/api'
 import { num, timeAgo } from '@/lib/format'
 import { useApp } from '@/lib/store'
 import { PageHeader } from '@/components/Layout'
 
 export function Data() {
-  const { crawler, settings, patches, data, refreshPatches } = useApp()
+  const { crawler, settings, patches, data, refreshPatches, mode } = useApp()
+  const [crawlMode, setCrawlMode] = useState<GameMode>(mode)
   const running = !!crawler?.running
   const elapsed = crawler?.startedAt ? (Date.now() - crawler.startedAt) / 1000 : 0
   const perMin = elapsed > 30 && crawler ? (crawler.matchesThisRun / elapsed) * 60 : 0
@@ -18,16 +21,29 @@ export function Data() {
     <div className="fade-in mx-auto max-w-5xl p-8">
       <PageHeader
         title="Datenbasis & Crawler"
-        subtitle="Sammelt High-Elo Ranked-Matches über die offizielle Riot API und berechnet daraus Tierliste, Builds und Matchups."
+        subtitle="Sammelt Ranked- oder ARAM-Matches über die offizielle Riot API und berechnet daraus Tierliste, Builds und Matchups."
       >
         {running ? (
           <button className="btn btn-ghost" onClick={() => api.crawlerStop()}>
             <Square size={15} /> Stoppen
           </button>
         ) : (
-          <button className="btn btn-primary" disabled={!settings?.hasApiKey} onClick={() => api.crawlerStart()}>
-            <Play size={15} /> Crawler starten
-          </button>
+          <>
+            <div className="flex rounded-xl border border-line bg-bg-2 p-1">
+              {(['ranked', 'aram'] as GameMode[]).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setCrawlMode(m)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${crawlMode === m ? 'bg-panel-2 text-accent' : 'text-muted'}`}
+                >
+                  {GAME_MODES[m].label}
+                </button>
+              ))}
+            </div>
+            <button className="btn btn-primary" disabled={!settings?.hasApiKey} onClick={() => api.crawlerStart(crawlMode)}>
+              <Play size={15} /> {crawlMode === 'aram' ? 'ARAM-Crawler starten' : 'Crawler starten'}
+            </button>
+          </>
         )}
       </PageHeader>
 
@@ -69,7 +85,7 @@ export function Data() {
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         <div className="panel p-5">
-          <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Gespeicherte Patches</h2>
+          <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Gespeicherte Patches ({GAME_MODES[mode].label})</h2>
           {patches.length ? (
             <div className="space-y-2">
               {patches.map((p) => (
@@ -83,7 +99,7 @@ export function Data() {
                     title="Daten dieses Patches löschen"
                     onClick={async () => {
                       if (confirm(`Alle Statistiken für Patch ${p.patch} löschen?`)) {
-                        await api.resetStats(p.patch)
+                        await api.resetStats(p.patch, mode)
                         await refreshPatches()
                       }
                     }}
@@ -104,6 +120,7 @@ export function Data() {
             <li>Lädt deren letzte Solo/Duo-Matches inkl. Timeline (Kaufreihenfolge, Skills).</li>
             <li>Zählt nur Spiele des aktuellen Patches, Remakes werden ignoriert.</li>
             <li>Berechnet Winrate (Bayes-geglättet), Pick- & Banrate und daraus die Tiers.</li>
+            <li>ARAM: Startet bei High-Elo-Spielern und nimmt die Mitspieler jedes ARAM-Spiels in den Pool auf. Die Builds nutzt die App auch für ARAM: Mayhem (Mayhem selbst sperrt Riot in der API).</li>
           </ol>
           <p className="mt-3">
             Ein Development- oder Personal-Key erlaubt 100 Requests / 2 Min – das sind ca. <b className="text-text">20–25 Matches pro Minute</b> (jedes Match braucht 2 Requests).
