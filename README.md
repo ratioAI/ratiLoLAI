@@ -1,0 +1,148 @@
+<div align="center">
+
+<img src="build/icon.png" width="96" alt="Rift Companion logo" />
+
+# Rift Companion
+
+**An ad-free League of Legends companion app – tier lists, builds, runes, auto-import and live-game scouting, powered by your own Riot API crawler.**
+
+[![CI](https://github.com/ratioAI/ratiLoLAI/actions/workflows/ci.yml/badge.svg)](https://github.com/ratioAI/ratiLoLAI/actions/workflows/ci.yml)
+![Electron](https://img.shields.io/badge/Electron-38-47848F?logo=electron&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+[**Live web demo**](https://ratioai.github.io/ratiLoLAI/) · [Download](https://github.com/ratioAI/ratiLoLAI/releases) · [Architecture](#architecture)
+
+<img src="docs/screenshots/champion.png" alt="Champion build page" width="900" />
+
+</div>
+
+---
+
+## Why?
+
+Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. Rift Companion does the same job as a small, open-source desktop app **without any ads, tracking or third-party backend**. Instead of scraping someone else's statistics it ships its own **match crawler** that talks to the official Riot API and computes every number locally on your machine.
+
+## Features
+
+| | |
+|---|---|
+| 🏆 **Tier list** | S+ → D tiers per role, computed from win rate (Bayesian-smoothed), pick rate and ban rate. Sortable, filterable, searchable. |
+| 📖 **Champion builds** | Most popular & best rune pages, summoner spells, starting items, core build *in purchase order*, boots, situational 4th–6th items, skill order + full 15-level skill path. |
+| ⚔️ **Matchups** | Hardest and easiest lane opponents per champion and role. |
+| ⚡ **Auto-import** | Detects champion select via the League Client API (LCU) and imports runes, an item set and (optionally) summoner spells the moment you lock in. Flash on D or F – your choice. |
+| ✅ **Auto-accept** | Optionally accepts the ready check for you. |
+| 🔴 **Live game** | Champion-select overview (allies, enemies, bans), in-game scoreboard via the Live Client Data API, and loading-screen scouting (ranks of all 10 players). |
+| 👤 **Profiles** | op.gg-style player lookup: ranks, mastery, last 15 games with KDA, CS/min, items, runes and champion stats. |
+| 🕷️ **Own data pipeline** | Crawls Challenger/GM/Master Solo-Queue games of one or more regions, respects Riot rate limits, resumes where it stopped, keeps separate data per patch. |
+| 🔐 **Private by design** | Your API key is encrypted with the OS keychain (DPAPI/Keychain) and never leaves the main process. No telemetry. |
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/tierlist.png" alt="Tier list" /></td>
+    <td><img src="docs/screenshots/home.png" alt="Overview" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/live.png" alt="Champion select" /></td>
+    <td><img src="docs/screenshots/profile.png" alt="Profile" /></td>
+  </tr>
+</table>
+
+> Screenshots are taken from the web demo, which runs on **synthetic** statistics. The desktop app only shows data it crawled itself.
+
+## Getting started
+
+### 1. Install
+
+Download the latest `RiftCompanion-Setup-x.y.z.exe` from [Releases](https://github.com/ratioAI/ratiLoLAI/releases) – or build it yourself:
+
+```bash
+git clone https://github.com/ratioAI/ratiLoLAI.git
+cd ratiLoLAI
+npm install
+npm run dev        # start in development mode
+npm run dist:win   # build the Windows installer into ./release
+```
+
+Requires Node.js 20+.
+
+### 2. Get a Riot API key
+
+1. Sign in at [developer.riotgames.com](https://developer.riotgames.com/).
+2. Copy the **Development API Key** (valid for 24 h) – or register a *Personal API Key* for long-term use.
+3. Paste it in **Optionen → Riot API** inside the app and pick your region.
+
+### 3. Crawl some games
+
+Open **Daten → Crawler starten**. The crawler fetches the apex leagues of your region(s), downloads recent ranked games including their timelines and aggregates them. With a development/personal key (100 requests / 2 min) you get roughly **20–25 matches per minute**; a few thousand matches already give a very usable tier list. Progress is stored continuously – just let it run in the background.
+
+### 4. Play
+
+Start the League client. Rift Companion connects automatically; when you lock in a champion your runes and item set are imported.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Main["Electron main process (Node)"]
+    Crawler --> RiotClient
+    RiotClient --> RL[Rate limiter<br/>multi-window]
+    Crawler --> Agg[Aggregator] --> Store[(JSON stats<br/>per patch)]
+    LCU[LCU manager<br/>HTTPS + WAMP websocket] --> Import[Rune / item-set / spell import]
+    Live[Live Client Data poller]
+    DD[Data Dragon cache]
+  end
+  subgraph Renderer["Renderer (React 19 + Tailwind 4)"]
+    UI[Tier list · Builds · Live · Profile · Settings]
+  end
+  RL -->|HTTPS| Riot[(Riot API)]
+  LCU -->|127.0.0.1| Client[League Client]
+  Live -->|127.0.0.1:2999| Game[Running game]
+  DD -->|HTTPS| DDragon[(Data Dragon CDN)]
+  UI <-->|typed IPC via preload| Main
+```
+
+```
+src/
+├─ main/              Electron main process
+│  ├─ riot/           Riot API client + sliding-window rate limiter
+│  ├─ crawler/        crawler, match/timeline aggregator, persistent stats store
+│  ├─ lcu/            League client discovery, websocket events, champ select, import payloads
+│  ├─ live/           Live Client Data API (in-game)
+│  ├─ ddragon.ts      static data download + cache
+│  └─ profile.ts      summoner profiles & live-game scouting
+├─ preload/           contextBridge – exposes a typed `window.rc` API
+├─ renderer/          React UI (also builds as a standalone web demo)
+└─ shared/            types, tier/build analysis, static-data parsing (pure & tested)
+test/                 Vitest unit + integration tests (crawler against a fake Riot API)
+```
+
+### How the numbers are computed
+
+- **Only ranked Solo/Duo, current patch, Master+.** Remakes and games with missing positions are discarded.
+- **Win rate** used for ranking is Bayesian-smoothed with 30 virtual 50 % games, so a champion with 6/6 wins doesn't end up S+.
+- **Strength score** = `(smoothedWR − 50) · 100 + 0.8 · ln(1 + pickRate%) + 0.05 · banRate%`, ranked **within each role**. Tiers are percentiles: S+ top 5 %, S 15 %, A 35 %, B 60 %, C 85 %, D rest.
+- **Item builds** are reconstructed from the match *timeline* (`ITEM_PURCHASED` / `ITEM_UNDO`), so the core build shows the real purchase order and undone purchases don't count.
+- **Skill order** comes from `SKILL_LEVEL_UP` events; the max order is the order in which Q/W/E reach rank 5.
+
+## Development
+
+```bash
+npm run dev         # Electron + Vite with hot reload
+npm test            # Vitest (49 tests)
+npm run typecheck   # strict TypeScript for main + renderer
+npm run build:web   # standalone web demo in ./dist-web (synthetic data)
+```
+
+CI runs type checks, tests and both builds on every push. Tagging `v*` builds the Windows installer and attaches it to a GitHub release; `main` is deployed as the web demo to GitHub Pages.
+
+## Is this allowed?
+
+Rift Companion only uses **official, documented interfaces**: the public Riot API, the League Client API (LCU – the same interface Blitz, Porofessor, Mobalytics etc. use for rune import) and the in-game Live Client Data API. It does not read game memory or inject anything into the game, so it is not affected by Vanguard. For personal use a development or personal API key is sufficient; if you want to distribute the app publicly with a shared key you have to register it as a product with Riot.
+
+## Legal
+
+Rift Companion isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
+
+Code licensed under [MIT](LICENSE).
