@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import type { ChampionBuild, GameMode, LiveGameState, PatchStats, Platform, RcEvents, Settings, StatRole, TierEntry, UpdateState } from '@shared/types'
+import type { ChampionBuild, GameMode, LiveGameState, PatchStats, Platform, RcEvents, Settings, StatRole, TierEntry, UpdateState, OverlayDiagnostics } from '@shared/types'
 import { PLATFORMS } from '@shared/types'
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { Crawler } from './crawler/crawler'
@@ -10,8 +10,9 @@ import { DataDragon, makeClassifier } from './ddragon'
 import { LcuManager } from './lcu/manager'
 import { MayhemService } from './mayhem'
 import { OverlayManager } from './overlay'
-import { AugmentScanner } from './scanner/scanner'
-import { cardRects, type NameCandidate } from './scanner/detect'
+import { AugmentScanner, type ScanState } from './scanner/scanner'
+import { DiagLog } from './diag'
+import { cardRects, WINDOWS, type NameCandidate } from './scanner/detect'
 import { augmentTiersForChampion } from '@shared/mayhem'
 import { ProfileService } from './profile'
 import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
@@ -41,22 +42,30 @@ function loadRenderer(w: BrowserWindow, hash = ''): void {
 
 // --- in-game overlay -------------------------------------------------------------
 //
-// The overlay window is only visible while an augment choice is on screen (or opened with the
-// hotkey). A transparent always-on-top window costs frames, so it stays hidden the rest of the game.
+// The overlay window is only visible while the augment choice can be open (dead / game start, an
+// augment pending), while the cards are on screen, or when opened with the hotkey. A transparent
+// always-on-top window costs frames, so it stays hidden the rest of the game.
 
+const diag = new DiagLog(join(userData, 'logs', 'overlay.log'))
+let inGame = false
 let inMayhem = false
 let manualOpen = false
-let offerOnScreen = false
+let hintOpen = false
+let cards: ScanState = { visible: false, offer: null, displayId: null }
+let lastTick = { level: 0, dead: false, gameMode: null as string | null }
 
 const overlay = new OverlayManager(join(__dirname, '../preload/index.js'), loadRenderer, () => {
   manualOpen = !manualOpen
+  diag.log(`hotkey → overlay ${manualOpen ? 'open' : 'closed'} (inGame=${inGame}, mayhem=${inMayhem})`)
+  if (manualOpen && scanner.running) scanner.lookNow(WINDOWS.manual)
   refreshOverlay()
   emit('overlayToggle', null)
 })
 
 function refreshOverlay(): void {
   const s = settings.get().overlay
-  if (inMayhem && s.enabled && (offerOnScreen || manualOpen)) overlay.show()
+  const want = s.enabled && ((inGame && manualOpen) || (inMayhem && (cards.visible || hintOpen)))
+  if (want) overlay.show()
   else overlay.hide()
 }
 
@@ -65,39 +74,82 @@ let candidates: NameCandidate[] = []
 const scanner = new AugmentScanner(
   join(userData, 'ocr'),
   () => candidates,
-  (offer) => {
-    if (offer) overlay.moveToDisplay(offer.displayId)
-    offerOnScreen = !!offer
-    if (!offer) manualOpen = false // augment picked → overlay goes away
-    emit('augmentOffer', offer)
+  (state) => {
+    const wasVisible = cards.visible
+    cards = state
+    if (state.displayId !== null) overlay.moveToDisplay(state.displayId)
+    if (wasVisible && !state.visible) manualOpen = false // augment picked → overlay goes away
+    emit('augmentCards', { visible: state.visible })
+    emit('augmentOffer', state.offer)
     refreshOverlay()
   },
-  () => overlay.currentDisplayId
+  (msg) => diag.log(msg)
 )
 
+async function loadCandidates(): Promise<void> {
+  const d = await mayhem.get().catch(() => null)
+  if (d) candidates = Object.values(d.augments).map((a) => ({ id: a.id, names: [a.name, a.nameEn] }))
+}
+
 function updateOverlay(live: LiveGameState | null): void {
-  const nowMayhem = !!live?.active && live.gameMode === 'KIWI'
   const s = settings.get().overlay
+  const wasInGame = inGame
+  inGame = !!live?.active
+  const queueId = lcu.getGameQueueId()
+  const nowMayhem = inGame && (live!.gameMode === 'KIWI' || queueId === 2400)
+  if (inGame && (!wasInGame || live!.gameMode !== lastTick.gameMode)) {
+    diag.log(`game detected: gameMode=${live!.gameMode} queue=${queueId ?? '?'} → mayhem=${nowMayhem}`)
+    lastTick.gameMode = live!.gameMode
+  }
   if (nowMayhem && s.enabled) {
     if (!inMayhem) overlay.prepare() // create the (hidden) window early so it appears instantly
     inMayhem = true
     const me = live!.players.find((p) => p.riotId === live!.activePlayer)
+    const level = me?.level ?? 0
+    const dead = me?.isDead ?? false
+    if (level !== lastTick.level || dead !== lastTick.dead) {
+      diag.log(`level ${level}${dead ? ', dead' : ''}${me ? '' : ' (player not found: ' + live!.activePlayer + ')'}`)
+      lastTick = { ...lastTick, level, dead }
+    }
     if (s.cardFrames) {
       if (!scanner.running) {
         scanner.start()
-        void mayhem.get().then((d) => {
-          candidates = Object.values(d.augments).map((a) => ({ id: a.id, names: [a.name, a.nameEn] }))
-        })
+        void loadCandidates()
       }
-      scanner.update(me?.level ?? 0, me?.isDead ?? false)
+      scanner.update({ level, dead, gameTime: live!.gameTime, itemsKey: (me?.items ?? []).join(',') })
     }
+    // small "augment ready" pill while the choice can be open (dead or at the start of the game)
+    const sched = scanner.schedule
+    hintOpen = s.cardFrames && sched.pending && (dead || live!.gameTime < WINDOWS.gameStart)
   } else {
+    if (inMayhem) diag.log('left the Mayhem game')
     inMayhem = false
-    manualOpen = false
-    offerOnScreen = false
+    hintOpen = false
+    cards = { visible: false, offer: null, displayId: null }
     if (scanner.running) scanner.stop()
   }
+  if (!inGame) {
+    manualOpen = false
+    lastTick = { level: 0, dead: false, gameMode: null }
+  }
   refreshOverlay()
+}
+
+function overlayDiagnostics(): OverlayDiagnostics {
+  const live = lcu.getLive()
+  return {
+    gameMode: live?.gameMode ?? null,
+    queueId: lcu.getGameQueueId(),
+    mayhem: inMayhem,
+    level: lastTick.level,
+    dead: lastTick.dead,
+    augmentPending: scanner.schedule.pending,
+    canOpen: scanner.schedule.canOpen(),
+    scanning: scanner.scanning,
+    cardsVisible: cards.visible,
+    overlayVisible: !!overlay.window?.isVisible(),
+    log: diag.recent(40)
+  }
 }
 
 // --- auto update ---------------------------------------------------------------------
@@ -291,6 +343,12 @@ function registerIpc(): void {
       }
     })
   })
+  handle('overlayDiagnostics', () => overlayDiagnostics())
+  handle('overlayTestScan', async () => {
+    if (!candidates.length) await loadCandidates()
+    return scanner.testScan(join(userData, 'logs'))
+  })
+  handle('openDiagnosticsFolder', () => shell.openPath(join(userData, 'logs')).then(() => undefined))
   handle('appInfo', () => ({ version: app.getVersion(), update: updateState }))
   handle('installUpdate', () => {
     if (updateState.status === 'ready') autoUpdater.quitAndInstall()
@@ -351,6 +409,16 @@ void app.whenReady().then(async () => {
     const { nativeImage } = await import('electron')
     const res = await scanner.selfTest(nativeImage.createFromPath(process.env.RC_OCR_SELFTEST))
     console.log('RC_OCR_SELFTEST ' + JSON.stringify(res))
+    app.exit(0)
+    return
+  }
+  if (process.env.RC_SCAN_SELFTEST) {
+    // end-to-end check of the capture path: show a screenshot full screen and scan the desktop
+    const w = new BrowserWindow({ ...screen.getPrimaryDisplay().bounds, frame: false, show: true })
+    await w.loadFile(process.env.RC_SCAN_SELFTEST)
+    await new Promise((r) => setTimeout(r, 1500))
+    const res = await scanner.testScan(join(userData, 'logs'))
+    console.log('RC_SCAN_SELFTEST ' + JSON.stringify(res))
     app.exit(0)
     return
   }

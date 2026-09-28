@@ -1,3 +1,4 @@
+import { liveChampionKey } from '@shared/staticData'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Ban, Eye, Loader2, Radio, Skull } from 'lucide-react'
@@ -226,8 +227,7 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
   const { data } = useApp()
   if (!data) return null
   const teams = (['ORDER', 'CHAOS'] as const).map((t) => live.players.filter((p) => p.team === t))
-  const myChamp =
-    Object.values(data.champions).find((c) => c.name === live.activeChampion || c.id === live.activeChampion)?.key ?? 0
+  const myChamp = liveChampionKey(data, live)
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[2fr_1fr]">
       <div className="space-y-4">

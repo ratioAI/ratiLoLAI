@@ -1,3 +1,4 @@
+import { liveChampionKey } from '@shared/staticData'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Sparkles, X } from 'lucide-react'
 import type { AugmentOffer, AugmentRarity, Tier } from '@shared/types'
@@ -35,11 +36,9 @@ export function Overlay() {
     document.documentElement.classList.add('overlay-mode')
     const offs = [
       api.on('overlayToggle', () => setExpanded((e) => !e)),
-      api.on('augmentOffer', (o) => {
-        setOffer(o)
-        // the panel opens together with the card frames and closes once an augment is picked
-        setExpanded(!!o && autoExpandRef.current)
-      }),
+      api.on('augmentOffer', (o) => setOffer(o)),
+      // the panel opens together with the cards and closes once an augment is picked
+      api.on('augmentCards', ({ visible }) => setExpanded(visible && autoExpandRef.current)),
       api.on('overlayPreview', ({ championId }) => {
         setPreviewChamp(championId)
         setExpanded(true)
@@ -50,8 +49,7 @@ export function Overlay() {
 
   const championId = useMemo(() => {
     if (previewChamp) return previewChamp
-    if (!live?.activeChampion || !statics) return 0
-    return Object.values(statics.champions).find((c) => c.name === live.activeChampion || c.id === live.activeChampion)?.key ?? 0
+    return liveChampionKey(statics, live)
   }, [previewChamp, live, statics])
 
   autoExpandRef.current = settings?.overlay.autoExpand ?? true
@@ -71,7 +69,16 @@ export function Overlay() {
     api.setOverlayInteractive(h)
   }
 
-  if (!championId || !statics) return null
+  if (!statics) return null
+  if (!championId)
+    return (
+      <div className="pointer-events-none fixed inset-0 select-none">
+        <div className="overlay-panel absolute right-3 top-[14%] flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#f0e6d2]">
+          <Sparkles size={14} className="text-gold" /> Augments
+          <span className="text-[10px] font-medium text-muted">waiting for your champion…</span>
+        </div>
+      </div>
+    )
   const hotkey = settings?.overlay.hotkey ?? 'Alt+Shift+A'
   const tierById = new Map(tiers.map((t) => [t.augment.id, t]))
 

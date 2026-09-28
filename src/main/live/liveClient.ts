@@ -33,6 +33,7 @@ interface RawLive {
     riotId?: string
     summonerName?: string
     championName: string
+    rawChampionName?: string
     team: 'ORDER' | 'CHAOS'
     level: number
     position: string
@@ -101,6 +102,10 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
     activePlayer: d.activePlayer?.riotId ?? d.activePlayer?.summonerName ?? null,
     activeChampion:
       players.find((p) => p.riotId && p.riotId === (d.activePlayer?.riotId ?? d.activePlayer?.summonerName))?.championName ?? null,
+    activeChampionKey: (() => {
+      const me = d.allPlayers.find((p) => (p.riotId ?? p.summonerName) === (d.activePlayer?.riotId ?? d.activePlayer?.summonerName))
+      return me?.rawChampionName?.replace(/^game_character_displayname_/, '') ?? null
+    })(),
     players,
     events
   }

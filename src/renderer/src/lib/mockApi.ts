@@ -453,6 +453,21 @@ export function createMockApi(): RcApi {
     setOverlayInteractive: () => undefined,
     appInfo: async () => ({ version: 'web-demo', update: { status: 'dev' } }),
     installUpdate: async () => undefined,
+    overlayDiagnostics: async () => ({
+      gameMode: null,
+      queueId: null,
+      mayhem: false,
+      level: 0,
+      dead: false,
+      augmentPending: false,
+      canOpen: false,
+      scanning: false,
+      cardsVisible: false,
+      overlayVisible: false,
+      log: ['web demo – no game running']
+    }),
+    overlayTestScan: async () => ({ captureMs: 0, screens: [] }),
+    openDiagnosticsFolder: async () => undefined,
     getMayhemPersonal: async (): Promise<MayhemPersonal> => {
       const m = await getMayhem()
       const r = rng(99)

@@ -165,21 +165,51 @@ export function signatureChanged(a: number[] | null, b: number[], tolerance = 18
 /** Levels at which ARAM: Mayhem grants an augment. */
 export const AUGMENT_LEVELS = [1, 7, 11, 15]
 
+/** What the scheduler needs to know about the local player (from the Live Client Data API). */
+export interface PlayerTick {
+  level: number
+  dead: boolean
+  /** in-game clock in seconds */
+  gameTime: number
+  /** changes whenever the inventory changes – in ARAM you can only shop while dead or in the fountain */
+  itemsKey: string
+}
+
+/** Length of the "probably in the fountain" windows, in ms. */
+export const WINDOWS = { respawn: 20_000, shopping: 15_000, manual: 20_000, gameStart: 100 }
+
 /**
- * Decides whether an augment choice can be open right now. A choice becomes pending when the
- * player reaches an augment level and is resolved once its cards disappear from the screen.
- * The selection only opens while dead or in the fountain, so scanning is slow while alive.
+ * Decides when the screen is worth looking at. A choice becomes pending when the player reaches an
+ * augment level and is resolved once its cards disappear from the screen. The selection only opens
+ * while dead or in the fountain, so outside of those moments **no screenshot is taken at all**:
+ *  - while dead,
+ *  - in the first 100 s of the game (spawn, level-1 augment),
+ *  - 20 s after respawning (standing in the fountain),
+ *  - 15 s after an inventory change (shopping is only possible in the fountain),
+ *  - 20 s after pressing the overlay hotkey,
+ *  - while the cards are on screen (to notice the pick).
  */
 export class AugmentSchedule {
   private picked = 0
   private level = 0
   private dead = false
+  private gameTime = 0
+  private itemsKey: string | null = null
+  private windowUntil = 0
   private seen = false
   private misses = 0
 
-  update(level: number, dead: boolean): void {
-    this.level = level
-    this.dead = dead
+  update(t: PlayerTick, now = Date.now()): void {
+    if (this.dead && !t.dead) this.openWindow(WINDOWS.respawn, now)
+    if (this.itemsKey !== null && t.itemsKey !== this.itemsKey) this.openWindow(WINDOWS.shopping, now)
+    this.itemsKey = t.itemsKey
+    this.level = t.level
+    this.dead = t.dead
+    this.gameTime = t.gameTime
+  }
+
+  openWindow(ms: number, now = Date.now()): void {
+    this.windowUntil = Math.max(this.windowUntil, now + ms)
   }
 
   get earned(): number {
@@ -190,10 +220,19 @@ export class AugmentSchedule {
     return this.level > 0 && this.earned > this.picked
   }
 
-  /** Scan interval in ms, or null when there is nothing to look for. */
-  get interval(): number | null {
-    if (!this.pending) return null
-    return this.dead || this.seen ? 900 : 2500
+  /** True while the choice can actually be open (dead, fountain, cards on screen). */
+  canOpen(now = Date.now()): boolean {
+    return this.dead || this.seen || this.gameTime < WINDOWS.gameStart || now < this.windowUntil
+  }
+
+  /** Scan interval in ms, or null when there is nothing to look for right now. */
+  interval(now = Date.now()): number | null {
+    if (!this.pending || !this.canOpen(now)) return null
+    return this.seen ? 1000 : 1200
+  }
+
+  get cardsSeen(): boolean {
+    return this.seen
   }
 
   /** Feed the scan result: cards disappearing after being visible means the augment was picked. */
@@ -217,6 +256,9 @@ export class AugmentSchedule {
     this.picked = 0
     this.level = 0
     this.dead = false
+    this.gameTime = 0
+    this.itemsKey = null
+    this.windowUntil = 0
     this.seen = false
     this.misses = 0
   }

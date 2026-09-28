@@ -14,7 +14,9 @@ import {
   similarity,
   titleRects,
   titleSignature,
-  type Bitmap
+  type Bitmap,
+  type PlayerTick,
+  WINDOWS
 } from '../src/main/scanner/detect'
 
 // Real 1920×1080 screenshot of the Mayhem augment selection (Thresh, level 3)
@@ -122,36 +124,60 @@ describe('cheap preview check', () => {
 })
 
 describe('AugmentSchedule', () => {
-  it('only looks for cards while an augment is pending', () => {
+  const tick = (level: number, dead: boolean, gameTime = 600, itemsKey = '1,2'): PlayerTick => ({ level, dead, gameTime, itemsKey })
+  const T = 1_000_000
+
+  it('never takes a screenshot while alive outside the fountain', () => {
     const s = new AugmentSchedule()
-    expect(s.interval).toBeNull() // no game yet
-    s.update(1, false)
-    expect(s.pending).toBe(true) // level-1 augment at game start (in the fountain)
-    expect(s.interval).toBe(2500) // alive → slow checks
-    s.update(1, true)
-    expect(s.interval).toBe(900) // dead → the choice may open
+    expect(s.interval(T)).toBeNull() // no game yet
+    s.update(tick(7, false), T)
+    expect(s.pending).toBe(true)
+    expect(s.interval(T)).toBeNull() // alive in lane → nothing, however long the augment is pending
+    s.update(tick(7, true), T)
+    expect(s.interval(T)).toBe(1200) // dead → the choice may open
+  })
+
+  it('looks at game start, after respawn, after shopping and on the hotkey', () => {
+    const s = new AugmentSchedule()
+    s.update(tick(1, false, 20), T)
+    expect(s.interval(T)).toBe(1200) // standing on the spawn at the start
+    s.update(tick(1, false, 150), T)
+    expect(s.interval(T)).toBeNull()
+
+    s.update(tick(7, true), T) // died
+    s.update(tick(7, false), T + 5000) // respawned in the fountain
+    expect(s.interval(T + 10_000)).toBe(1200)
+    expect(s.interval(T + 5000 + WINDOWS.respawn + 1)).toBeNull()
+
+    const later = T + 100_000
+    s.update(tick(7, false, 600, '1,2,3'), later) // bought an item → in the fountain
+    expect(s.interval(later + 1000)).toBe(1200)
+    expect(s.interval(later + WINDOWS.shopping + 1)).toBeNull()
+
+    s.openWindow(WINDOWS.manual, later + 60_000)
+    expect(s.interval(later + 61_000)).toBe(1200)
   })
 
   it('counts a pick when the cards disappear (twice in a row)', () => {
     const s = new AugmentSchedule()
-    s.update(1, false)
+    s.update(tick(1, false, 10), T)
     expect(s.observe(true)).toBeNull()
-    expect(s.interval).toBe(900) // cards on screen → fast
+    expect(s.interval(T)).toBe(1000) // cards on screen → keep watching
     expect(s.observe(false)).toBeNull() // one missing frame is not a pick
     expect(s.observe(true)).toBeNull()
     expect(s.observe(false)).toBeNull()
     expect(s.observe(false)).toBe('picked')
     expect(s.pending).toBe(false)
-    expect(s.interval).toBeNull() // nothing to do until level 7
-    s.update(6, true)
-    expect(s.interval).toBeNull()
-    s.update(7, false)
+    expect(s.interval(T)).toBeNull() // nothing to do until level 7
+    s.update(tick(6, true), T)
+    expect(s.interval(T)).toBeNull()
+    s.update(tick(7, true), T)
     expect(s.pending).toBe(true)
   })
 
   it('handles several unpicked augments', () => {
     const s = new AugmentSchedule()
-    s.update(11, false)
+    s.update(tick(11, true), T)
     expect(s.earned).toBe(3)
     for (let i = 0; i < 3; i++) {
       s.observe(true)
@@ -159,7 +185,7 @@ describe('AugmentSchedule', () => {
       s.observe(false)
     }
     expect(s.pending).toBe(false)
-    s.update(15, false)
+    s.update(tick(15, false), T)
     expect(s.pending).toBe(true)
   })
 })

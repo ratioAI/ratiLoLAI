@@ -62,6 +62,7 @@ export class LcuManager {
   private lastAutoImport = ''
   private queue: { id: number | null; gameMode: string | null } = { id: null, gameMode: null }
   private importTimer: NodeJS.Timeout | null = null
+  private gameQueueId: number | null = null
   /** ARAM/Mayhem have no lock-in: import once the champion has been stable for this long */
   private static readonly ARAM_IMPORT_DELAY_MS = 1500
   private pollTimer: NodeJS.Timeout | null = null
@@ -207,8 +208,22 @@ export class LcuManager {
   }
 
   private onPhase(phase: string): void {
-    if (phase === 'InProgress') this.startLivePolling()
-    else this.stopLivePolling()
+    if (phase === 'InProgress') {
+      // remember the queue of the running game (the champ-select queue is cleared when it ends)
+      void this.client
+        ?.get<{ gameData?: { queue?: { id?: number } } }>('/lol-gameflow/v1/session')
+        .then((s) => (this.gameQueueId = s?.gameData?.queue?.id ?? null))
+        .catch(() => undefined)
+      this.startLivePolling()
+    } else {
+      this.gameQueueId = null
+      this.stopLivePolling()
+    }
+  }
+
+  /** Queue id of the game in progress (2400 = ARAM: Mayhem), null when unknown. */
+  getGameQueueId(): number | null {
+    return this.gameQueueId
   }
 
   private onChampSelect(session: RawSession): void {

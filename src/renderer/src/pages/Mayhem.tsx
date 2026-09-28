@@ -1,3 +1,4 @@
+import { liveChampionKey } from '@shared/staticData'
 import { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Info, RefreshCw } from 'lucide-react'
 import type { AugmentRarity, MayhemPersonal } from '@shared/types'
@@ -13,9 +14,7 @@ export function Mayhem() {
   const { data, error } = useMayhemData()
   const currentChamp = useMemo(() => {
     if (champSelect?.myChampionId) return champSelect.myChampionId
-    if (live?.activeChampion && statics)
-      return Object.values(statics.champions).find((c) => c.name === live.activeChampion || c.id === live.activeChampion)?.key ?? 0
-    return 0
+    return liveChampionKey(statics, live)
   }, [champSelect, live, statics])
   const [picked, setPicked] = useState<number>(0)
   const championId = picked || currentChamp || 103

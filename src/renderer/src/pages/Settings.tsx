@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Download, ExternalLink, KeyRound, Loader2, MonitorPlay } from 'lucide-react'
-import type { Platform, SeedTier, Settings as SettingsT, UpdateState } from '@shared/types'
+import { Download, ExternalLink, FolderOpen, KeyRound, Loader2, MonitorPlay, ScanSearch } from 'lucide-react'
+import type { OverlayDiagnostics, Platform, ScanTestResult, SeedTier, Settings as SettingsT, UpdateState } from '@shared/types'
 import { PLATFORMS } from '@shared/types'
 import { api, isDemo } from '@/lib/api'
 import { useApp } from '@/lib/store'
@@ -98,8 +98,9 @@ export function Settings() {
       <Group title="In-game overlay (ARAM: Mayhem)">
         <p className="mb-2 text-sm text-muted">
           Frames the augment cards by tier right in the game. It only looks at the screen while an augment is waiting to be
-          picked (level 1, 7, 11, 15 – the choice opens when you are dead or in the fountain) and disappears as soon as you
-          have picked one. League must run in <b className="text-text">Borderless</b> or <b className="text-text">Windowed</b>{' '}
+          picked (level 1, 7, 11, 15) and only while the choice can open – when you are dead, at the start of the game, right
+          after respawning or shopping – and disappears as soon as you have picked one. No screenshots are taken while you
+          are fighting. League must run in <b className="text-text">Borderless</b> or <b className="text-text">Windowed</b>{' '}
           mode – exclusive fullscreen cannot be overlaid.
         </p>
         <Toggle label="Enable overlay" value={settings.overlay.enabled} onChange={(v) => save({ overlay: { ...settings.overlay, enabled: v } })} />
@@ -125,6 +126,7 @@ export function Settings() {
             <MonitorPlay size={15} /> Preview overlay (20 s)
           </button>
         </div>
+        {!isDemo && <OverlayDiagnosticsPanel />}
       </Group>
 
       <Group title="League client">
@@ -299,5 +301,87 @@ function NumberField({ label, value, min, max, onChange }: { label: string; valu
         }}
       />
     </Field>
+  )
+}
+
+/** Live status of the screen recognition + a one-click test that saves screenshots for debugging. */
+function OverlayDiagnosticsPanel() {
+  const [diag, setDiag] = useState<OverlayDiagnostics | null>(null)
+  const [test, setTest] = useState<ScanTestResult | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    const load = () => void api.overlayDiagnostics().then((d) => alive && setDiag(d)).catch(() => undefined)
+    load()
+    const t = setInterval(load, 2000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [open])
+
+  const runTest = async () => {
+    setTesting(true)
+    try {
+      setTest(await api.overlayTestScan())
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const yes = (b: boolean | undefined) => (b ? <span className="text-emerald-400">yes</span> : <span className="text-muted">no</span>)
+
+  return (
+    <div className="mt-4 rounded-xl border border-line bg-bg-2 p-3 text-xs">
+      <button className="flex w-full items-center justify-between font-semibold text-text" onClick={() => setOpen((o) => !o)}>
+        Diagnostics <span className="text-muted">{open ? 'hide' : 'show'}</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          {diag && (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
+              <div>Game mode: <b className="text-text">{diag.gameMode ?? '–'}</b></div>
+              <div>Queue: <b className="text-text">{diag.queueId ?? '–'}</b></div>
+              <div>Mayhem detected: {yes(diag.mayhem)}</div>
+              <div>Level: <b className="text-text">{diag.level || '–'}</b>{diag.dead ? ' (dead)' : ''}</div>
+              <div>Augment pending: {yes(diag.augmentPending)}</div>
+              <div>Choice can be open: {yes(diag.canOpen)}</div>
+              <div>Scanning: {yes(diag.scanning)}</div>
+              <div>Cards on screen: {yes(diag.cardsVisible)}</div>
+              <div>Overlay visible: {yes(diag.overlayVisible)}</div>
+            </div>
+          )}
+          <p className="text-muted">
+            Open the augment choice in game (alt-tab is fine in borderless mode) and click <b>Test screen recognition</b>. The
+            screenshots are saved to the log folder – attach them together with <code>overlay.log</code> when reporting a problem.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn btn-ghost" disabled={testing} onClick={runTest}>
+              {testing ? <Loader2 size={15} className="animate-spin" /> : <ScanSearch size={15} />} Test screen recognition
+            </button>
+            <button className="btn btn-ghost" onClick={() => api.openDiagnosticsFolder()}>
+              <FolderOpen size={15} /> Open log folder
+            </button>
+          </div>
+          {test && (
+            <div className="space-y-1">
+              <div>Capture took <b className="text-text">{test.captureMs} ms</b> for {test.screens.length} screen(s)</div>
+              {test.screens.map((s, i) => (
+                <div key={i}>
+                  Screen {i + 1} ({s.size}): {s.black ? <span className="text-red-400">black image – use Borderless mode</span> : <>cards {yes(s.visible)}</>}
+                  {s.titles.length > 0 && <> · read: {s.titles.map((t, j) => `"${t}"${s.matches[j] ? ' ✓' : ' ✗'}`).join(', ')}</>}
+                </div>
+              ))}
+            </div>
+          )}
+          {diag && diag.log.length > 0 && (
+            <pre className="max-h-48 overflow-auto rounded-lg bg-black/40 p-2 text-[10px] leading-4 text-muted">{diag.log.join('\n')}</pre>
+          )}
+        </div>
+      )}
+    </div>
   )
 }

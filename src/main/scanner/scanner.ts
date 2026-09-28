@@ -1,5 +1,7 @@
+import { writeFile, mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
 import { desktopCapturer, nativeImage, screen, type Display } from 'electron'
-import type { AugmentOffer } from '@shared/types'
+import type { AugmentOffer, ScanTestResult } from '@shared/types'
 import {
   AugmentSchedule,
   cardRects,
@@ -10,36 +12,76 @@ import {
   titleRects,
   titleSignature,
   type Bitmap,
-  type NameCandidate
+  type NameCandidate,
+  type PlayerTick
 } from './detect'
 import { TitleOcr } from './ocr'
 
-/** Width of the cheap preview capture used to check whether the augment cards are open. */
-const PREVIEW_WIDTH = 640
+/** Bounding box of the cheap preview capture used to check whether the augment cards are open. */
+const PREVIEW = 640
+
+export interface ScanState {
+  /** augment cards are on screen (frame detection) */
+  visible: boolean
+  /** recognised cards (null while unreadable) */
+  offer: AugmentOffer | null
+  displayId: number | null
+}
+
+interface Shot {
+  display: Display
+  image: Electron.NativeImage
+}
+
+const toBitmap = (img: Electron.NativeImage): Bitmap => {
+  const { width, height } = img.getSize()
+  return { width, height, data: img.toBitmap(), order: 'bgra' }
+}
 
 /**
- * Recognises the ARAM: Mayhem augment choice on screen. To stay light on the game it only looks
- * while an augment is actually pending (levels 1/7/11/15 until it has been picked), uses a small
- * preview capture for the check and takes a full-resolution capture only when the cards are open
- * and their titles changed (first appearance or reroll). No game memory is read.
+ * Takes one screenshot of every screen (a single desktopCapturer call – Windows captures all
+ * screens per call anyway) and pairs each with its display. `display_id` is empty on some Windows
+ * setups, so fall back to the enumeration order / aspect ratio.
+ */
+async function captureAll(box: { width: number; height: number }): Promise<Shot[]> {
+  const displays = screen.getAllDisplays()
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: box })
+  return sources
+    .map((s, i) => {
+      const size = s.thumbnail.getSize()
+      const display =
+        displays.find((d) => String(d.id) === s.display_id) ??
+        (sources.length === displays.length ? displays[i] : undefined) ??
+        displays.find((d) => Math.abs(d.size.width / d.size.height - size.width / Math.max(1, size.height)) < 0.02) ??
+        screen.getPrimaryDisplay()
+      return { display, image: s.thumbnail }
+    })
+    .filter((s) => !s.image.isEmpty())
+}
+
+/**
+ * Recognises the ARAM: Mayhem augment choice on screen. It only looks while an augment is pending
+ * *and* the choice can actually be open (dead / fountain, see AugmentSchedule) – the rest of the
+ * game no screenshot is taken. The check itself uses a small preview capture; a full-resolution
+ * capture + OCR only happens when new cards appear (first time or reroll). No game memory is read.
  */
 export class AugmentScanner {
   private timer: NodeJS.Timeout | null = null
   private busy = false
   private active = false
   private lastKey = ''
-  private offer: AugmentOffer | null = null
+  private state: ScanState = { visible: false, offer: null, displayId: null }
+  /** signature of the last cards we ran OCR on (successful or not) */
   private signature: number[] | null = null
+  private gameDisplay: number | null = null
   private readonly ocr: TitleOcr
   readonly schedule = new AugmentSchedule()
 
   constructor(
     cacheDir: string,
     private readonly candidates: () => NameCandidate[],
-    private readonly emit: (offer: AugmentOffer | null) => void,
-    /** display the game runs on (null = unknown, check every display) */
-    private readonly preferredDisplay: () => number | null,
-    private readonly onPicked: () => void = () => undefined
+    private readonly emit: (state: ScanState) => void,
+    private readonly log: (msg: string) => void = () => undefined
   ) {
     this.ocr = new TitleOcr(cacheDir)
   }
@@ -48,45 +90,63 @@ export class AugmentScanner {
     return this.active
   }
 
+  get scanning(): boolean {
+    return this.timer !== null || this.busy
+  }
+
   /** Called with every live-game update (every ~2 s). */
-  update(level: number, dead: boolean): void {
-    this.schedule.update(level, dead)
+  update(tick: PlayerTick): void {
+    const before = this.schedule.pending
+    this.schedule.update(tick)
+    if (!before && this.schedule.pending) this.log(`augment pending (level ${tick.level})`)
     this.reschedule()
+  }
+
+  /** Hotkey: look right now and for the next seconds, even while alive. */
+  lookNow(ms: number): void {
+    this.schedule.openWindow(ms)
+    if (this.active && !this.busy) {
+      if (this.timer) clearTimeout(this.timer)
+      this.timer = null
+      void this.tick()
+    }
   }
 
   start(): void {
     this.active = true
+    this.log('scanner started')
     this.reschedule()
   }
 
   stop(): void {
+    if (this.active) this.log('scanner stopped')
     this.active = false
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     this.schedule.reset()
     this.signature = null
-    this.publish(null)
+    this.publish({ visible: false, offer: null, displayId: null })
     void this.ocr.dispose()
   }
 
   private reschedule(): void {
     if (!this.active) return
-    const interval = this.schedule.interval
+    const interval = this.schedule.interval()
     if (interval === null) {
       if (this.timer) clearTimeout(this.timer)
       this.timer = null
-      if (this.offer) this.publish(null)
+      if (this.state.visible) this.publish({ visible: false, offer: null, displayId: null })
       return
     }
-    if (!this.timer) this.timer = setTimeout(() => void this.tick(), interval)
+    if (!this.timer && !this.busy) this.timer = setTimeout(() => void this.tick(), interval)
   }
 
-  private publish(offer: AugmentOffer | null): void {
-    this.offer = offer
-    const key = JSON.stringify(offer)
+  private publish(state: ScanState): void {
+    this.state = state
+    const key = JSON.stringify(state)
     if (key === this.lastKey) return
     this.lastKey = key
-    this.emit(offer)
+    this.emit(state)
   }
 
   private async tick(): Promise<void> {
@@ -94,88 +154,135 @@ export class AugmentScanner {
     if (this.busy || !this.active) return this.reschedule()
     this.busy = true
     try {
-      const found = await this.look()
-      if (this.schedule.observe(!!found) === 'picked') {
+      const state = await this.look()
+      if (this.schedule.observe(state.visible) === 'picked') {
         this.signature = null
-        this.onPicked()
+        this.log('cards gone → augment picked')
       }
-      this.publish(found)
-    } catch {
-      this.publish(null)
+      this.publish(state)
+    } catch (e) {
+      this.log(`scan failed: ${e instanceof Error ? e.message : String(e)}`)
+      this.publish({ visible: false, offer: null, displayId: null })
     } finally {
       this.busy = false
       this.reschedule()
     }
   }
 
-  private async capture(display: Display, width: number): Promise<Electron.NativeImage | null> {
-    const height = Math.round((width * display.size.height) / display.size.width)
-    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } })
-    const src = sources.find((s) => s.display_id === String(display.id)) ?? (sources.length === 1 ? sources[0] : undefined)
-    return src?.thumbnail ?? null
+  private async look(): Promise<ScanState> {
+    const t0 = Date.now()
+    const shots = await captureAll({ width: PREVIEW, height: PREVIEW })
+    const ms = Date.now() - t0
+    if (!shots.length) {
+      this.log(`preview capture returned no screens (${ms} ms)`)
+      return { visible: false, offer: null, displayId: null }
+    }
+    // the screen the cards were last seen on first
+    if (this.gameDisplay !== null) shots.sort((a) => (a.display.id === this.gameDisplay ? -1 : 1))
+
+    for (const shot of shots) {
+      const small = toBitmap(shot.image)
+      if (!cardsVisible(small)) continue
+      const displayId = shot.display.id
+      const sig = titleSignature(small)
+      const same = this.state.visible && this.state.displayId === displayId && !signatureChanged(this.signature, sig)
+      if (same) return this.state // same cards as last time → nothing to read again
+
+      this.log(`cards visible on display ${displayId} (preview ${ms} ms) – reading titles`)
+      this.gameDisplay = displayId
+      this.signature = sig
+      const offer = await this.readDisplay(shot.display)
+      return { visible: true, offer, displayId }
+    }
+    return { visible: false, offer: null, displayId: null }
   }
 
-  private async look(): Promise<AugmentOffer | null> {
-    const displays = screen.getAllDisplays()
-    const preferred = this.preferredDisplay()
-    const ordered = preferred ? [...displays].sort((a) => (a.id === preferred ? -1 : 1)) : displays
-
-    for (const display of ordered) {
-      const preview = await this.capture(display, PREVIEW_WIDTH)
-      if (!preview) continue
-      const size = preview.getSize()
-      const small: Bitmap = { width: size.width, height: size.height, data: preview.toBitmap(), order: 'bgra' }
-      if (!cardsVisible(small)) continue
-
-      // same cards as last time → nothing to read again
-      const sig = titleSignature(small)
-      if (this.offer?.displayId === display.id && !signatureChanged(this.signature, sig)) return this.offer
-
-      const full = await this.capture(display, Math.round(display.size.width * display.scaleFactor))
-      if (!full) continue
-      const offer = await this.read(full, display)
-      if (offer) {
-        this.signature = sig
-        return offer
-      }
+  private async readDisplay(display: Display): Promise<AugmentOffer | null> {
+    const t0 = Date.now()
+    const px = (d: Display): { width: number; height: number } => ({
+      width: Math.round(d.size.width * d.scaleFactor),
+      height: Math.round(d.size.height * d.scaleFactor)
+    })
+    const all = screen.getAllDisplays().map(px)
+    const box = { width: Math.max(...all.map((s) => s.width)), height: Math.max(...all.map((s) => s.height)) }
+    const shot = (await captureAll(box)).find((s) => s.display.id === display.id)
+    if (!shot) {
+      this.log('full capture: display not found')
+      return null
     }
-    return null
+    const offer = await this.read(shot.image, display)
+    this.log(
+      `OCR ${Date.now() - t0} ms: ${offer ? offer.cards.map((c) => `"${c.text}"→${c.augmentId ?? '?'}`).join(', ') : 'unreadable'}`
+    )
+    return offer
+  }
+
+  private async readTitles(bitmap: Bitmap): Promise<string[]> {
+    const texts: string[] = []
+    for (const r of titleRects(bitmap.width, bitmap.height)) {
+      const p = prepareTitle(bitmap, r)
+      texts.push(await this.ocr.read(nativeImage.createFromBitmap(p.data, { width: p.width, height: p.height }).toPNG()))
+    }
+    return texts
   }
 
   private async read(img: Electron.NativeImage, display: Display): Promise<AugmentOffer | null> {
-    const size = img.getSize()
-    const bitmap: Bitmap = { width: size.width, height: size.height, data: img.toBitmap(), order: 'bgra' }
+    const bitmap = toBitmap(img)
     const candidates = this.candidates()
-    const titles = titleRects(size.width, size.height)
-    const cards = cardRects(size.width, size.height)
-    const scale = size.height / display.size.height // capture pixels → DIP
-
-    const result: AugmentOffer['cards'] = []
-    for (let i = 0; i < 3; i++) {
-      const p = prepareTitle(bitmap, titles[i])
-      const text = await this.ocr.read(nativeImage.createFromBitmap(p.data, { width: p.width, height: p.height }).toPNG())
+    const texts = await this.readTitles(bitmap)
+    const cards = cardRects(bitmap.width, bitmap.height)
+    const scale = bitmap.height / display.size.height // capture pixels → DIP
+    const result: AugmentOffer['cards'] = texts.map((text, i) => {
       const match = matchAugment(text, candidates)
       const r = cards[i]
-      result.push({
+      return {
         augmentId: match?.id ?? null,
         text,
         score: match?.score ?? 0,
         rect: { x: r.x / scale, y: r.y / scale, width: r.width / scale, height: r.height / scale }
-      })
-    }
+      }
+    })
     if (result.filter((c) => c.augmentId !== null).length < 2) return null
     return { displayId: display.id, cards: result }
   }
 
+  /** Settings → "Test screen recognition": capture every screen now, save it and report. */
+  async testScan(dir: string): Promise<ScanTestResult> {
+    await mkdir(dir, { recursive: true })
+    const t0 = Date.now()
+    const all = screen.getAllDisplays()
+    const box = {
+      width: Math.max(...all.map((d) => Math.round(d.size.width * d.scaleFactor))),
+      height: Math.max(...all.map((d) => Math.round(d.size.height * d.scaleFactor)))
+    }
+    const shots = await captureAll(box)
+    const captureMs = Date.now() - t0
+    const screens: ScanTestResult['screens'] = []
+    for (const [i, shot] of shots.entries()) {
+      const bitmap = toBitmap(shot.image)
+      const file = join(dir, `screen-${i + 1}.png`)
+      await writeFile(file, shot.image.toPNG())
+      const visible = cardsVisible(bitmap)
+      const titles = visible ? await this.readTitles(bitmap).catch((e) => [`OCR error: ${String(e)}`]) : []
+      const black = !bitmap.data.some((v, j) => j % 4 !== 3 && v > 12)
+      screens.push({
+        displayId: shot.display.id,
+        size: `${bitmap.width}×${bitmap.height}`,
+        visible,
+        black,
+        titles,
+        matches: titles.map((t) => matchAugment(t, this.candidates())?.id ?? null),
+        file
+      })
+    }
+    const res = { captureMs, screens }
+    this.log(`test scan: ${JSON.stringify(res)}`)
+    return res
+  }
+
   /** Diagnostics: OCR the three title areas of a screenshot (RC_OCR_SELFTEST=<png>). */
   async selfTest(img: Electron.NativeImage): Promise<{ visible: boolean; titles: string[] }> {
-    const size = img.getSize()
-    const bitmap: Bitmap = { width: size.width, height: size.height, data: img.toBitmap(), order: 'bgra' }
-    const titles: string[] = []
-    for (const r of titleRects(size.width, size.height)) {
-      const p = prepareTitle(bitmap, r)
-      titles.push(await this.ocr.read(nativeImage.createFromBitmap(p.data, { width: p.width, height: p.height }).toPNG()))
-    }
-    return { visible: cardsVisible(bitmap), titles }
+    const bitmap = toBitmap(img)
+    return { visible: cardsVisible(bitmap), titles: await this.readTitles(bitmap) }
   }
 }

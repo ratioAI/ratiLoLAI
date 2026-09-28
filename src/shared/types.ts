@@ -366,8 +366,10 @@ export interface LiveGameState {
   active: boolean
   gameTime: number
   gameMode: string
-  /** champion name of the local player */
+  /** champion name of the local player (localized) */
   activeChampion: string | null
+  /** Data Dragon id of the local player's champion (e.g. "MonkeyKing"), language independent */
+  activeChampionKey?: string | null
   activePlayer: string | null
   players: LivePlayer[]
   events: { name: string; time: number; text: string }[]
@@ -519,6 +521,9 @@ export interface RcApi {
   setOverlayInteractive(interactive: boolean): void
   appInfo(): Promise<{ version: string; update: UpdateState }>
   installUpdate(): Promise<void>
+  overlayDiagnostics(): Promise<OverlayDiagnostics>
+  overlayTestScan(): Promise<ScanTestResult>
+  openDiagnosticsFolder(): Promise<void>
   liveGame(): Promise<LiveGameState | null>
   lookupProfile(riotId: string, platform: Platform): Promise<ProfileData>
   scoutActiveGame(riotId: string, platform: Platform): Promise<ScoutResult | null>
@@ -531,6 +536,36 @@ export interface AugmentOffer {
   displayId: number
   /** card rectangles relative to the display, in DIP */
   cards: { augmentId: number | null; text: string; score: number; rect: { x: number; y: number; width: number; height: number } }[]
+}
+
+/** Live status of the overlay / screen recognition (Settings → Diagnostics). */
+export interface OverlayDiagnostics {
+  gameMode: string | null
+  queueId: number | null
+  mayhem: boolean
+  level: number
+  dead: boolean
+  augmentPending: boolean
+  canOpen: boolean
+  scanning: boolean
+  cardsVisible: boolean
+  overlayVisible: boolean
+  log: string[]
+}
+
+export interface ScanTestResult {
+  captureMs: number
+  screens: {
+    displayId: number
+    size: string
+    /** augment cards found on this screen */
+    visible: boolean
+    /** screenshot is completely black (exclusive fullscreen) */
+    black: boolean
+    titles: string[]
+    matches: (number | null)[]
+    file: string
+  }[]
 }
 
 export interface UpdateState {
@@ -549,6 +584,8 @@ export interface RcEvents {
   statsUpdated: { patch: string; mode: GameMode }
   overlayToggle: null
   augmentOffer: AugmentOffer | null
+  /** augment cards on screen (even when their titles could not be read) */
+  augmentCards: { visible: boolean }
   overlayPreview: { championId: number }
   update: UpdateState
 }

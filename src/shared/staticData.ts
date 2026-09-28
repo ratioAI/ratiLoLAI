@@ -148,3 +148,22 @@ export async function loadStaticData(
   ])
   return buildStaticData(version, language, champs.data, items.data, runes, spells.data)
 }
+
+const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+/**
+ * Numeric champion key of the local player in a live game. Prefers the language-independent
+ * Data Dragon id (from rawChampionName), then the (localized) display name.
+ */
+export function liveChampionKey(
+  statics: StaticData | null | undefined,
+  live: { activeChampion: string | null; activeChampionKey?: string | null } | null | undefined
+): number {
+  if (!statics || !live) return 0
+  const champs = Object.values(statics.champions)
+  const byId = live.activeChampionKey && champs.find((c) => norm(c.id) === norm(live.activeChampionKey!))
+  if (byId) return byId.key
+  const name = live.activeChampion
+  if (!name) return 0
+  return champs.find((c) => c.name === name || c.id === name || norm(c.name) === norm(name) || norm(c.id) === norm(name))?.key ?? 0
+}
