@@ -6,19 +6,19 @@ import { EmptyState } from '@/components/Layout'
 export function NoDataHint() {
   const { settings } = useApp()
   return (
-    <EmptyState icon={<Database size={34} />} title="Noch keine Statistiken für diesen Patch">
+    <EmptyState icon={<Database size={34} />} title="No statistics for this patch yet">
       <p>
-        Rift Companion berechnet Tierliste und Builds aus echten High-Elo-Matches, die der integrierte Crawler über die
-        offizielle Riot API sammelt.
+        Rift Companion computes tier lists and builds from real high-elo matches that the built-in crawler collects
+        through the official Riot API.
       </p>
       <div className="mt-5 flex justify-center gap-2">
         {!settings?.hasApiKey && (
           <Link to="/settings" className="btn btn-ghost">
-            API Key hinterlegen
+            Add API key
           </Link>
         )}
         <Link to="/data" className="btn btn-primary">
-          Crawler starten
+          Start crawler
         </Link>
       </div>
     </EmptyState>

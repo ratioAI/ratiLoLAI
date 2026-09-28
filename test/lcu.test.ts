@@ -104,7 +104,7 @@ describe('import payloads', () => {
       { id: '1056', count: 1 },
       { id: '2003', count: 2 }
     ])
-    expect(set.blocks.some((b) => b.type.startsWith('Kern-Build'))).toBe(true)
+    expect(set.blocks.some((b) => b.type.startsWith('Core build'))).toBe(true)
   })
 
   it('puts Flash on the preferred key', () => {

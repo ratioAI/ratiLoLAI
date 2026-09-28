@@ -1,19 +1,20 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import { Database, Gauge, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy } from 'lucide-react'
-import type { GameMode } from '@shared/types'
+import type { GameMode, UpdateState } from '@shared/types'
+import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { isDemo } from '@/lib/api'
 import { num } from '@/lib/format'
 
 const NAV = [
-  { to: '/', label: 'Übersicht', icon: Gauge, end: true },
-  { to: '/tierlist', label: 'Tierliste', icon: Trophy },
+  { to: '/', label: 'Home', icon: Gauge, end: true },
+  { to: '/tierlist', label: 'Tier list', icon: Trophy },
   { to: '/champions', label: 'Champions', icon: LayoutGrid },
   { to: '/live', label: 'Live', icon: Radio },
   { to: '/mayhem', label: 'Mayhem', icon: Sparkles },
-  { to: '/profile', label: 'Profil', icon: Search },
-  { to: '/data', label: 'Daten', icon: Database }
+  { to: '/profile', label: 'Profile', icon: Search },
+  { to: '/data', label: 'Data', icon: Database }
 ]
 
 function Logo() {
@@ -33,6 +34,11 @@ function Logo() {
 
 export function Layout({ children }: { children: ReactNode }) {
   const { client, patches, patch, setPatch, crawler, mode, setMode } = useApp()
+  const [update, setUpdate] = useState<UpdateState | null>(null)
+  useEffect(() => {
+    api.appInfo().then((i) => setUpdate(i.update))
+    return api.on('update', setUpdate)
+  }, [])
   return (
     <div className="flex h-full">
       <aside className="flex w-[76px] shrink-0 flex-col items-center border-r border-line bg-bg-2 pt-3 pb-4">
@@ -65,7 +71,7 @@ export function Layout({ children }: { children: ReactNode }) {
           }
         >
           <SettingsIcon size={20} />
-          Optionen
+          Settings
         </NavLink>
       </aside>
 
@@ -75,9 +81,14 @@ export function Layout({ children }: { children: ReactNode }) {
             RIFT <span className="text-accent">COMPANION</span>
           </span>
           {isDemo && (
-            <span className="rounded-md bg-gold/15 px-2 py-0.5 font-semibold text-gold">Web-Demo · synthetische Daten</span>
+            <span className="rounded-md bg-gold/15 px-2 py-0.5 font-semibold text-gold">Web demo · synthetic data</span>
           )}
           <div className="flex-1" />
+          {update?.status === 'ready' && (
+            <button className="no-drag rounded-md bg-accent/15 px-2 py-0.5 font-semibold text-accent" onClick={() => api.installUpdate()}>
+              Update {update.version} ready – restart
+            </button>
+          )}
           {crawler?.running && (
             <span className="flex items-center gap-2 text-muted">
               <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
@@ -112,7 +123,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </label>
           <span className="flex items-center gap-2 text-muted">
             <span className={`h-2 w-2 rounded-full ${client.connected ? 'bg-win' : 'bg-loss/70'}`} />
-            {client.connected ? (client.summoner ? `${client.summoner.gameName}#${client.summoner.tagLine}` : 'Client verbunden') : 'Client offline'}
+            {client.connected ? (client.summoner ? `${client.summoner.gameName}#${client.summoner.tagLine}` : 'Client connected') : 'Client offline'}
           </span>
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>

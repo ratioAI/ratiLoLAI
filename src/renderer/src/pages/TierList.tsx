@@ -26,7 +26,7 @@ export function RoleTabs({ value, onChange, withAll = true }: { value: Role | 'A
           }`}
         >
           <RoleIcon role={r} size={15} />
-          {r === 'ALL' ? 'Alle' : ROLE_LABELS[r]}
+          {r === 'ALL' ? 'All' : ROLE_LABELS[r]}
         </button>
       ))}
     </div>
@@ -88,14 +88,14 @@ export function TierList() {
   return (
     <div className="fade-in mx-auto max-w-6xl p-8">
       <PageHeader
-        title="Tierliste"
+        title="Tier list"
         subtitle={
           aram
-            ? `ARAM (Howling Abyss) · Patch ${patch ?? '–'} · auch als Build-Basis für ARAM: Mayhem`
-            : `Ranked Solo/Duo · Master+ · Patch ${patch ?? '–'} · basierend auf deinen gecrawlten Matches`
+            ? `ARAM (Howling Abyss) · patch ${patch ?? '–'} · also the build source for ARAM: Mayhem`
+            : `Ranked Solo/Duo · Master+ · patch ${patch ?? '–'} · based on your crawled matches`
         }
       >
-        <input className="input w-56" placeholder="Champion suchen …" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input className="input w-56" placeholder="Search champion …" value={query} onChange={(e) => setQuery(e.target.value)} />
       </PageHeader>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -116,7 +116,7 @@ export function TierList() {
       ) : !list?.length ? (
         <NoDataHint />
       ) : !rows.length ? (
-        <EmptyState icon={<Trophy size={32} />} title="Keine Treffer" />
+        <EmptyState icon={<Trophy size={32} />} title="No results" />
       ) : (
         <div className="panel overflow-hidden">
           <table className="w-full text-sm">
@@ -127,11 +127,11 @@ export function TierList() {
                 </Th>
                 <Th k="name">Champion</Th>
                 <Th k="tier">Tier</Th>
-                <Th k="winRate">Winrate</Th>
-                <Th k="pickRate">Pickrate</Th>
-                {!aram && <Th k="banRate">Banrate</Th>}
+                <Th k="winRate">Win rate</Th>
+                <Th k="pickRate">Pick rate</Th>
+                {!aram && <Th k="banRate">Ban rate</Th>}
                 <Th k="games" className="text-right">
-                  Spiele
+                  Games
                 </Th>
               </tr>
             </thead>
@@ -152,7 +152,7 @@ export function TierList() {
                           <div className="font-semibold">{c?.name}</div>
                           <div className="flex items-center gap-1 text-xs text-muted">
                             <RoleIcon role={e.role} size={12} /> {ROLE_LABELS[e.role]}
-                            {e.roleShare < 0.9 && <span className="text-muted/70">· {pct(e.roleShare, 0)} der Spiele</span>}
+                            {e.roleShare < 0.9 && <span className="text-muted/70">· {pct(e.roleShare, 0)} of games</span>}
                           </div>
                         </div>
                       </div>

@@ -11,15 +11,15 @@ export function isValidKeyFormat(key: string): boolean {
 
 /** Human readable explanation for a failed key check. */
 export function describeKeyError(status: number, riotMessage: string | null): string {
-  const detail = riotMessage ? ` – Riot: „${riotMessage}“` : ''
+  const detail = riotMessage ? ` – Riot: "${riotMessage}"` : ''
   switch (status) {
     case 401:
-      return `Riot kennt diesen Key nicht (401). Ist er vollständig kopiert?${detail}`
+      return `Riot does not know this key (401). Did you copy all of it?${detail}`
     case 403:
-      return `Key abgelehnt (403). Development-Keys laufen nach 24 h ab – im Developer-Portal auf „Regenerate API Key“ klicken und den neuen Key eintragen.${detail}`
+      return `Key rejected (403). Development keys expire after 24 h – click "Regenerate API Key" in the developer portal and paste the new key.${detail}`
     case 429:
-      return `Zu viele Anfragen (429) – kurz warten und erneut testen.${detail}`
+      return `Too many requests (429) – wait a moment and test again.${detail}`
     default:
-      return `Riot API antwortet mit Status ${status}.${detail}`
+      return `Riot API answered with status ${status}.${detail}`
   }
 }

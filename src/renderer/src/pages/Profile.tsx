@@ -40,7 +40,7 @@ export function Profile() {
 
   return (
     <div className="fade-in mx-auto max-w-6xl p-8">
-      <PageHeader title="Spielerprofil" subtitle="Rang, Match-Historie und Champion-Statistiken – wie auf op.gg, nur ohne Werbung">
+      <PageHeader title="Player profile" subtitle="Rank, match history and champion stats – like op.gg, just without ads">
         <form onSubmit={search} className="flex gap-2">
           <input className="input w-64" placeholder="Name#TAG" value={riotId} onChange={(e) => setRiotId(e.target.value)} />
           <select className="input" value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}>
@@ -51,7 +51,7 @@ export function Profile() {
             ))}
           </select>
           <button className="btn btn-primary" disabled={busy || !riotId.includes('#')}>
-            {busy ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />} Suchen
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />} Search
           </button>
         </form>
       </PageHeader>
@@ -63,8 +63,8 @@ export function Profile() {
         </div>
       )}
       {!profile && !busy && (
-        <EmptyState icon={<Search size={32} />} title="Suche einen Spieler">
-          Gib eine Riot ID im Format <b>Name#TAG</b> ein. Dein eigener Account wird automatisch eingetragen, sobald der League Client läuft.
+        <EmptyState icon={<Search size={32} />} title="Search for a player">
+          Enter a Riot ID like <b>Name#TAG</b>. Your own account is filled in automatically once the League client is running.
         </EmptyState>
       )}
       {profile && <ProfileView p={profile} />}
@@ -104,13 +104,13 @@ function ProfileView({ p }: { p: ProfileData }) {
         ))}
 
         <div className="panel p-5">
-          <h3 className="mb-3 text-xs font-bold tracking-wide text-muted uppercase">Letzte {games.length} Spiele</h3>
+          <h3 className="mb-3 text-xs font-bold tracking-wide text-muted uppercase">Last {games.length} games</h3>
           <div className="mb-4 flex items-baseline gap-3">
             <span className="text-2xl font-extrabold" style={{ color: wrColor(wins / Math.max(1, games.length)) }}>
               {pct(wins / Math.max(1, games.length), 0)}
             </span>
             <span className="text-sm text-muted">
-              {wins}S {games.length - wins}N · {((k + a) / Math.max(1, d)).toFixed(2)} KDA
+              {wins}W {games.length - wins}L · {((k + a) / Math.max(1, d)).toFixed(2)} KDA
             </span>
           </div>
           <div className="space-y-2">
@@ -131,7 +131,7 @@ function ProfileView({ p }: { p: ProfileData }) {
 
         {p.mastery.length > 0 && (
           <div className="panel p-5">
-            <h3 className="mb-3 text-xs font-bold tracking-wide text-muted uppercase">Meisterschaft</h3>
+            <h3 className="mb-3 text-xs font-bold tracking-wide text-muted uppercase">Mastery</h3>
             <div className="grid grid-cols-3 gap-3">
               {p.mastery.map((m) => (
                 <div key={m.championId} className="flex flex-col items-center gap-1 text-center">
@@ -181,7 +181,7 @@ function RankCard({ queue, entry }: { queue: string; entry?: RankedEntry }) {
           <span className="text-text">{entry.leaguePoints} LP</span>
         </div>
         <div className="text-xs text-muted">
-          {entry.wins}S {entry.losses}N ·{' '}
+          {entry.wins}W {entry.losses}L ·{' '}
           <span style={{ color: wrColor(wr) }} className="font-semibold">
             {pct(wr, 0)}
           </span>
@@ -202,7 +202,7 @@ function MatchRow({ m, puuid }: { m: MatchSummary; puuid: string }) {
     >
       <div className="w-24 shrink-0 text-xs whitespace-nowrap">
         <div className="font-bold" style={{ color }}>
-          {m.remake ? 'Remake' : m.win ? 'Sieg' : 'Niederlage'}
+          {m.remake ? 'Remake' : m.win ? 'Victory' : 'Defeat'}
         </div>
         <div className="text-muted">{QUEUES[m.queueId] ?? `Queue ${m.queueId}`}</div>
         <div className="text-muted">{timeAgo(m.gameCreation)}</div>
@@ -229,7 +229,7 @@ function MatchRow({ m, puuid }: { m: MatchSummary; puuid: string }) {
           {m.cs} CS ({(m.cs / minutes).toFixed(1)})
         </div>
         <div>KP {pct(m.killParticipation, 0)}</div>
-        <div>{num(m.damage)} Schaden</div>
+        <div>{num(m.damage)} damage</div>
       </div>
       <div className="flex shrink-0 gap-0.5">
         {m.items.map((id, i) => (

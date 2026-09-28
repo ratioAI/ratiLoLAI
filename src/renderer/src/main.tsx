@@ -13,21 +13,23 @@ import { Profile } from './pages/Profile'
 import { Data } from './pages/Data'
 import { Settings } from './pages/Settings'
 import { Mayhem } from './pages/Mayhem'
+import { Overlay } from './pages/Overlay'
 
 function Shell() {
   const { data, dataError } = useApp()
+  if (window.location.hash.startsWith('#/overlay')) return <Overlay />
   if (!data) {
     return (
       <div className="drag flex h-full flex-col items-center justify-center gap-4 text-sm text-muted">
         {dataError ? (
           <>
-            <b className="text-loss">Spieldaten konnten nicht geladen werden</b>
+            <b className="text-loss">Could not load game data</b>
             <span>{dataError}</span>
           </>
         ) : (
           <>
             <Spinner />
-            Lade Spieldaten (Data Dragon) …
+            Loading game data (Data Dragon) …
           </>
         )}
       </div>

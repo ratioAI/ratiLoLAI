@@ -74,11 +74,11 @@ export function ChampionPage() {
           </div>
           {build && (
             <div className="flex gap-6">
-              <Stat label="Winrate" value={pct(build.winRate, 2)} color={wrColor(build.winRate)} />
-              <Stat label="Pickrate" value={pct(build.pickRate)} />
-              {!aram && <Stat label="Banrate" value={pct(build.banRate)} />}
-              <Stat label="Spiele" value={num(build.games)} />
-              <Stat label="Ø Dauer" value={duration(build.avgDuration)} />
+              <Stat label="Win rate" value={pct(build.winRate, 2)} color={wrColor(build.winRate)} />
+              <Stat label="Pick rate" value={pct(build.pickRate)} />
+              {!aram && <Stat label="Ban rate" value={pct(build.banRate)} />}
+              <Stat label="Games" value={num(build.games)} />
+              <Stat label="Avg. length" value={duration(build.avgDuration)} />
             </div>
           )}
         </div>
@@ -93,8 +93,8 @@ export function ChampionPage() {
         <NoDataHint />
       ) : (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
-          <Card title="Runen" className="lg:row-span-2">
-            {build.runes[runeIdx] ? <RunePageView page={build.runes[runeIdx].value} /> : <Muted>Keine Runendaten</Muted>}
+          <Card title="Runes" className="lg:row-span-2">
+            {build.runes[runeIdx] ? <RunePageView page={build.runes[runeIdx].value} /> : <Muted>No rune data</Muted>}
             <div className="mt-5 space-y-1.5">
               {build.runes.map((r, i) => (
                 <button
@@ -119,7 +119,7 @@ export function ChampionPage() {
             </div>
           </Card>
 
-          <Card title="Beschwörerzauber & Skills">
+          <Card title="Summoner spells & skills">
             <div className="flex flex-wrap gap-6">
               <div className="space-y-2">
                 {build.spells.slice(0, 2).map((s, i) => (
@@ -135,7 +135,7 @@ export function ChampionPage() {
               </div>
               {build.skillMax[0] && (
                 <div>
-                  <div className="mb-2 text-xs text-muted">Skill-Priorität</div>
+                  <div className="mb-2 text-xs text-muted">Skill priority</div>
                   <div className="flex items-center gap-1.5">
                     {[...build.skillMax[0].value].map((k, i) => (
                       <span key={i} className="flex items-center gap-1.5">
@@ -154,14 +154,14 @@ export function ChampionPage() {
           </Card>
 
           <Card title="Items">
-            <Section label="Start">
+            <Section label="Starting items">
               {build.starters.slice(0, 2).map((s, i) => (
                 <Row key={i} o={s}>
                   <ItemList ids={s.value} />
                 </Row>
               ))}
             </Section>
-            <Section label="Kern-Build">
+            <Section label="Core build">
               {build.core.slice(0, 3).map((c, i) => (
                 <Row key={i} o={c}>
                   <div className="flex items-center gap-1">
@@ -175,7 +175,7 @@ export function ChampionPage() {
                 </Row>
               ))}
             </Section>
-            <Section label="Stiefel">
+            <Section label="Boots">
               <div className="flex flex-wrap gap-4">
                 {build.boots.slice(0, 3).map((b) => (
                   <div key={b.value} className="flex items-center gap-2">
@@ -187,11 +187,11 @@ export function ChampionPage() {
             </Section>
           </Card>
 
-          <Card title="Situative Items" className="lg:col-span-2">
+          <Card title="Situational items" className="lg:col-span-2">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               {build.late.map((slot, i) => (
                 <div key={i}>
-                  <div className="mb-2 text-xs font-semibold text-muted">{['4.', '5.', '6.'][i]} Item</div>
+                  <div className="mb-2 text-xs font-semibold text-muted">{['4th', '5th', '6th'][i]} item</div>
                   <div className="space-y-1.5">
                     {slot.length ? (
                       slot.map((o) => (
@@ -202,7 +202,7 @@ export function ChampionPage() {
                         </div>
                       ))
                     ) : (
-                      <Muted>Zu wenig Daten</Muted>
+                      <Muted>Not enough data</Muted>
                     )}
                   </div>
                 </div>
@@ -216,10 +216,10 @@ export function ChampionPage() {
             </Card>
           )}
 
-          <Card title={aram ? 'Schwere Gegner' : 'Schwere Matchups'} icon={<Swords size={15} className="text-loss" />}>
+          <Card title={aram ? 'Toughest opponents' : 'Hardest matchups'} icon={<Swords size={15} className="text-loss" />}>
             <MatchupList list={build.counters} />
           </Card>
-          <Card title={aram ? 'Gute Gegner' : 'Gute Matchups'} icon={<Swords size={15} className="text-win" />}>
+          <Card title={aram ? 'Easiest opponents' : 'Best matchups'} icon={<Swords size={15} className="text-win" />}>
             <MatchupList list={build.goodAgainst} />
           </Card>
         </div>
@@ -245,20 +245,20 @@ function ImportBar({ build, connected }: { build: ChampionBuild; connected: bool
   return (
     <div className="relative mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
       <button className="btn btn-primary" disabled={!connected || busy} onClick={() => run()}>
-        {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Alles in den Client importieren
+        {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Import everything into the client
       </button>
       <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => run(['runes'])}>
-        Runen
+        Runes
       </button>
       <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => run(['items'])}>
-        Item-Set
+        Item set
       </button>
       <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => run(['spells'])}>
-        Zauber
+        Spells
       </button>
       <span className="text-xs text-muted">
-        {!connected && 'League Client nicht gestartet'}
-        {result && !result.errors.length && `✔ Importiert: ${[result.runes, result.items, result.spells].filter(Boolean).join(' · ')}`}
+        {!connected && 'League client not running'}
+        {result && !result.errors.length && `✔ Imported: ${[result.runes, result.items, result.spells].filter(Boolean).join(' · ')}`}
         {result?.errors.length ? <span className="text-loss">{result.errors.join(' · ')}</span> : null}
       </span>
     </div>
@@ -362,7 +362,7 @@ function SkillPath({ path }: { path: string }) {
 function MatchupList({ list }: { list: Matchup[] }) {
   const navigate = useNavigate()
   const { data } = useApp()
-  if (!list.length) return <Muted>Zu wenig Daten für Matchups</Muted>
+  if (!list.length) return <Muted>Not enough data for matchups</Muted>
   return (
     <div className="grid grid-cols-2 gap-2">
       {list.map((m) => (

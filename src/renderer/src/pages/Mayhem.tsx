@@ -33,16 +33,16 @@ export function Mayhem() {
     <div className="fade-in mx-auto max-w-6xl p-8">
       <PageHeader
         title="ARAM: Mayhem"
-        subtitle="Augment-Tipps pro Champion, beliebteste Augments und deine eigene Mayhem-Statistik"
+        subtitle="Augment tiers per champion, most picked augments and your own Mayhem stats"
       />
 
       <div className="panel mb-5 flex gap-3 border-gold/30 p-4 text-sm text-muted">
         <Info size={18} className="mt-0.5 shrink-0 text-gold" />
         <p>
-          Riot stellt Mayhem-Matches nicht über die offizielle API bereit und bittet Entwickler, keine Augment-Winrates zu
-          veröffentlichen. Deshalb zeigt Rift Companion hier <b className="text-text">Pickraten und kuratierte Kombos</b> aus dem
-          offenen Datensatz von arammayhem.com (Server in China) – und deine <b className="text-text">eigenen</b> Mayhem-Ergebnisse
-          aus dem League Client. Items & Runen für Mayhem kommen aus deinen gecrawlten ARAM-Spielen.
+          Riot does not expose Mayhem matches in the official API and asks developers not to publish augment win rates.
+          Rift Companion therefore rates augments by <b className="text-text">curated combos, pick rates and champion fit</b> (open
+          dataset of arammayhem.com, China servers) and shows your <b className="text-text">own</b> Mayhem results from the
+          League client. Items & runes for Mayhem come from your crawled ARAM games.
         </p>
       </div>
 
@@ -53,13 +53,13 @@ export function Mayhem() {
             <div className="flex-1">
               <div className="text-lg font-extrabold">{statics?.champions[championId]?.name}</div>
               <div className="text-xs text-muted">
-                {picked ? 'ausgewählt' : currentChamp ? 'dein aktueller Champion' : 'Beispiel – wähle einen Champion'}
+                {picked ? 'selected' : currentChamp ? 'your current champion' : 'example – pick a champion'}
               </div>
             </div>
             <div className="relative">
               <input
                 className="input w-52"
-                placeholder="Champion wählen …"
+                placeholder="Pick champion …"
                 value={champQuery}
                 onChange={(e) => setChampQuery(e.target.value)}
               />
@@ -116,8 +116,8 @@ function AugmentBrowser() {
   return (
     <section className="panel p-5">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-bold tracking-wide text-muted uppercase">Alle Augments nach Beliebtheit</h2>
-        <input className="input w-44" placeholder="Suchen …" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <h2 className="text-sm font-bold tracking-wide text-muted uppercase">All augments by popularity</h2>
+        <input className="input w-44" placeholder="Search …" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
       <div className="mb-3 flex gap-1.5">
         {(['prismatic', 'gold', 'silver'] as AugmentRarity[]).map((r) => (
@@ -177,14 +177,14 @@ function PersonalStats({ connected }: { connected: boolean }) {
   return (
     <section className="panel p-5">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-bold tracking-wide text-muted uppercase">Deine Mayhem-Spiele</h2>
+        <h2 className="text-sm font-bold tracking-wide text-muted uppercase">Your Mayhem games</h2>
         <button className="btn btn-ghost" disabled={!connected || busy} onClick={load}>
-          <RefreshCw size={14} className={busy ? 'animate-spin' : ''} /> {stats ? 'Aktualisieren' : 'Laden'}
+          <RefreshCw size={14} className={busy ? 'animate-spin' : ''} /> {stats ? 'Refresh' : 'Load'}
         </button>
       </div>
-      {!connected && <p className="text-sm text-muted">Starte den League Client, um deine letzten Mayhem-Spiele auszuwerten.</p>}
+      {!connected && <p className="text-sm text-muted">Start the League client to analyse your recent Mayhem games.</p>}
       {err && <p className="text-sm text-loss">{err}</p>}
-      {stats && stats.games === 0 && <p className="text-sm text-muted">In deinen letzten 100 Spielen war kein Mayhem-Spiel.</p>}
+      {stats && stats.games === 0 && <p className="text-sm text-muted">No Mayhem game in your last 100 games.</p>}
       {stats && stats.games > 0 && (
         <>
           <div className="mb-4 flex items-baseline gap-3">
@@ -192,10 +192,10 @@ function PersonalStats({ connected }: { connected: boolean }) {
               {pct(stats.wins / stats.games, 0)}
             </span>
             <span className="text-sm text-muted">
-              {stats.wins}S {stats.games - stats.wins}N in {stats.games} Spielen
+              {stats.wins}W {stats.games - stats.wins}L in {stats.games} games
             </span>
           </div>
-          <h3 className="mb-2 text-xs font-semibold text-muted">Deine meistgewählten Augments</h3>
+          <h3 className="mb-2 text-xs font-semibold text-muted">Your most picked augments</h3>
           <div className="mb-4 space-y-1.5">
             {stats.augments.slice(0, 8).map((a) => (
               <div key={a.id} className="flex items-center gap-3 text-sm">
@@ -204,11 +204,11 @@ function PersonalStats({ connected }: { connected: boolean }) {
                 <span style={{ color: wrColor(a.wins / a.games) }} className="font-semibold">
                   {pct(a.wins / a.games, 0)}
                 </span>
-                <span className="w-16 text-right text-xs text-muted">{a.games} Spiele</span>
+                <span className="w-16 text-right text-xs text-muted">{a.games} games</span>
               </div>
             ))}
           </div>
-          <h3 className="mb-2 text-xs font-semibold text-muted">Letzte Spiele</h3>
+          <h3 className="mb-2 text-xs font-semibold text-muted">Recent games</h3>
           <div className="space-y-1.5">
             {stats.recent.slice(0, 6).map((g) => (
               <div key={g.gameId} className="flex items-center gap-2 rounded-lg bg-bg-2 p-1.5">

@@ -6,7 +6,7 @@ export function parseRiotId(input: string): { gameName: string; tagLine: string 
   const trimmed = input.trim()
   const idx = trimmed.lastIndexOf('#')
   if (idx <= 0 || idx === trimmed.length - 1) {
-    throw new RiotApiError(400, 'Bitte Riot ID im Format Name#TAG eingeben.')
+    throw new RiotApiError(400, 'Please enter a Riot ID like Name#TAG.')
   }
   return { gameName: trimmed.slice(0, idx).trim(), tagLine: trimmed.slice(idx + 1).trim() }
 }
@@ -58,7 +58,7 @@ export class ProfileService {
     const { gameName, tagLine } = parseRiotId(riotId)
     const regional = regionalOf(platform)
     const account = await this.client.accountByRiotId(regional, gameName, tagLine)
-    if (!account) throw new RiotApiError(404, `Spieler ${gameName}#${tagLine} nicht gefunden.`)
+    if (!account) throw new RiotApiError(404, `Player ${gameName}#${tagLine} not found.`)
 
     const [summoner, entries, mastery, ids] = await Promise.all([
       this.client.summonerByPuuid(platform, account.puuid),
@@ -66,7 +66,7 @@ export class ProfileService {
       this.client.topMastery(platform, account.puuid, 6),
       this.client.matchIds(regional, account.puuid, { count: matchCount })
     ])
-    if (!summoner) throw new RiotApiError(404, `Kein LoL-Account auf ${platform.toUpperCase()} für ${gameName}#${tagLine}.`)
+    if (!summoner) throw new RiotApiError(404, `No LoL account on ${platform.toUpperCase()} for ${gameName}#${tagLine}.`)
 
     const matches = (await Promise.all(ids.map((id) => this.client.match(regional, id))))
       .filter((m): m is MatchDTO => !!m)
@@ -105,7 +105,7 @@ export class ProfileService {
   async scout(riotId: string, platform: Platform): Promise<ScoutResult | null> {
     const { gameName, tagLine } = parseRiotId(riotId)
     const account = await this.client.accountByRiotId(regionalOf(platform), gameName, tagLine)
-    if (!account) throw new RiotApiError(404, `Spieler ${gameName}#${tagLine} nicht gefunden.`)
+    if (!account) throw new RiotApiError(404, `Player ${gameName}#${tagLine} not found.`)
     return this.scoutByPuuid(account.puuid, platform)
   }
 
@@ -118,7 +118,7 @@ export class ProfileService {
         const solo = entries.find((e) => e.queueType === 'RANKED_SOLO_5x5') ?? null
         return {
           puuid: p.puuid,
-          riotId: p.riotId ?? 'Unbekannt',
+          riotId: p.riotId ?? 'Unknown',
           championId: p.championId,
           teamId: p.teamId,
           spells: [p.spell1Id, p.spell2Id],

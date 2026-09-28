@@ -25,7 +25,7 @@ export function Live() {
     try {
       const r = await api.scoutActiveGame(id, p)
       setScout(r)
-      if (!r) setScoutErr('Dieser Spieler ist gerade in keinem Spiel.')
+      if (!r) setScoutErr('This player is not in a game right now.')
     } catch (e) {
       setScoutErr((e as Error).message)
     } finally {
@@ -40,12 +40,12 @@ export function Live() {
       <PageHeader
         title="Live"
         subtitle={
-          champSelect?.active ? 'Championauswahl läuft' : live?.active ? `Im Spiel · ${duration(live.gameTime)}` : 'Kein aktives Spiel'
+          champSelect?.active ? 'Champion select in progress' : live?.active ? `In game · ${duration(live.gameTime)}` : 'No active game'
         }
       >
         {me && (
           <button className="btn btn-ghost" onClick={scoutMe} disabled={busy}>
-            {busy ? <Loader2 size={15} className="animate-spin" /> : <Eye size={15} />} Ränge im aktuellen Spiel laden
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Eye size={15} />} Load ranks of current game
           </button>
         )}
       </PageHeader>
@@ -54,14 +54,14 @@ export function Live() {
       {live?.active && <LiveScoreboard live={live} />}
 
       {!champSelect?.active && !live?.active && !scout && (
-        <EmptyState icon={<Radio size={34} />} title="Warte auf Championauswahl …">
-          Sobald du im League Client eine Championauswahl betrittst, erscheinen hier dein Build, deine Mitspieler und die
-          gegnerischen Picks. Runen und Items werden beim Lock-in automatisch importiert.
+        <EmptyState icon={<Radio size={34} />} title="Waiting for champion select …">
+          As soon as you enter champion select in the League client, your build, your teammates and the enemy picks
+          show up here. Runes and items are imported automatically.
         </EmptyState>
       )}
 
       <section className="panel mt-6 p-5">
-        <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Spiel eines Spielers scouten</h2>
+        <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Scout a player's game</h2>
         <form
           className="flex flex-wrap gap-2"
           onSubmit={(e) => {
@@ -78,7 +78,7 @@ export function Live() {
             ))}
           </select>
           <button className="btn btn-primary" disabled={busy || !riotId.includes('#')}>
-            {busy ? <Loader2 size={15} className="animate-spin" /> : <Eye size={15} />} Scouten
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Eye size={15} />} Scout
           </button>
         </form>
         {scoutErr && <p className="mt-3 text-sm text-loss">{scoutErr}</p>}
@@ -101,11 +101,11 @@ function ChampSelectView() {
   return (
     <>
     <div className="mb-3 text-xs font-semibold text-muted">
-      Modus: <span className="text-accent">{MODE_LABELS[cs.mode]}</span>
-      {cs.mode === 'mayhem' && ' · Builds aus ARAM-Daten, Augments unten'}
+      Mode: <span className="text-accent">{MODE_LABELS[cs.mode]}</span>
+      {cs.mode === 'mayhem' && ' · builds from ARAM data, augments below'}
     </div>
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_1.3fr_1fr]">
-      <TeamColumn title="Dein Team" players={cs.allies} />
+      <TeamColumn title="Your team" players={cs.allies} />
       <div className="panel p-5">
         {cs.myChampionId ? (
           <>
@@ -116,8 +116,8 @@ function ChampSelectView() {
                 <div className="flex items-center gap-1.5 text-sm text-muted">
                   {cs.myRole && <RoleIcon role={cs.myRole} size={14} />}
                   {statsMode === 'aram'
-                    ? `${MODE_LABELS[cs.mode]} · zufälliger Champion`
-                    : `${cs.myRole ? ROLE_LABELS[cs.myRole] : 'Keine Rolle'} · ${cs.locked ? 'gelockt' : 'hovert'}`}
+                    ? `${MODE_LABELS[cs.mode]} · random champion`
+                    : `${cs.myRole ? ROLE_LABELS[cs.myRole] : 'No role'} · ${cs.locked ? 'locked in' : 'hovering'}`}
                 </div>
               </div>
               {build && <TierBadge tier={build.tier} size="lg" />}
@@ -125,9 +125,9 @@ function ChampSelectView() {
             {build ? (
               <>
                 <div className="mb-4 grid grid-cols-3 gap-2 text-center">
-                  <Mini label="Winrate" value={pct(build.winRate)} color={wrColor(build.winRate)} />
-                  <Mini label="Pickrate" value={pct(build.pickRate)} />
-                  <Mini label="Spiele" value={num(build.games)} />
+                  <Mini label="Win rate" value={pct(build.winRate)} color={wrColor(build.winRate)} />
+                  <Mini label="Pick rate" value={pct(build.pickRate)} />
+                  <Mini label="Games" value={num(build.games)} />
                 </div>
                 {build.runes[0] && (
                   <div className="mb-3 flex items-center gap-2">
@@ -148,24 +148,24 @@ function ChampSelectView() {
                 </div>
                 <div className="flex items-center justify-between">
                   <Link to={`/champion/${cs.myChampionId}/${build.role}`} className="text-sm font-semibold text-accent">
-                    Kompletter Build →
+                    Full build →
                   </Link>
                   <button className="btn btn-primary" onClick={() => api.importBuild(cs.myChampionId, role ?? null, undefined, statsMode)}>
-                    Importieren
+                    Import
                   </button>
                 </div>
                 {lastImport && lastImport.championId === cs.myChampionId && (
                   <p className={`mt-3 text-xs ${lastImport.errors.length ? 'text-loss' : 'text-win'}`}>
-                    {lastImport.errors.length ? lastImport.errors.join(' · ') : '✔ Runen & Items automatisch importiert'}
+                    {lastImport.errors.length ? lastImport.errors.join(' · ') : '✔ Runes & items imported automatically'}
                   </p>
                 )}
               </>
             ) : (
-              <p className="text-sm text-muted">Für diesen Champion gibt es noch keine Daten.</p>
+              <p className="text-sm text-muted">No data for this champion yet.</p>
             )}
           </>
         ) : (
-          <p className="text-sm text-muted">Wähle einen Champion …</p>
+          <p className="text-sm text-muted">Pick a champion …</p>
         )}
         {cs.bans.length > 0 && (
           <div className="mt-5 border-t border-line pt-4">
@@ -180,7 +180,7 @@ function ChampSelectView() {
           </div>
         )}
       </div>
-      <TeamColumn title="Gegner" players={cs.enemies} enemy />
+      <TeamColumn title="Enemies" players={cs.enemies} enemy />
     </div>
     {cs.mode === 'mayhem' && cs.myChampionId > 0 && (
       <section className="panel mt-5 p-5">
@@ -192,7 +192,7 @@ function ChampSelectView() {
   )
 }
 
-const MODE_LABELS = { ranked: "Summoner's Rift", aram: 'ARAM', mayhem: 'ARAM: Mayhem', other: 'Sonstiger Modus' } as const
+const MODE_LABELS = { ranked: "Summoner's Rift", aram: 'ARAM', mayhem: 'ARAM: Mayhem', other: 'Other mode' } as const
 
 function TeamColumn({ title, players, enemy = false }: { title: string; players: ChampSelectPlayer[]; enemy?: boolean }) {
   const { data } = useApp()
@@ -208,11 +208,11 @@ function TeamColumn({ title, players, enemy = false }: { title: string; players:
               <span className="h-10 w-10 rounded-lg bg-panel-2" />
             )}
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-semibold">{p.championId ? data?.champions[p.championId]?.name : 'Wählt …'}</div>
+              <div className="truncate text-sm font-semibold">{p.championId ? data?.champions[p.championId]?.name : 'Picking …'}</div>
               <div className="flex items-center gap-1 text-xs text-muted">
                 {p.role && <RoleIcon role={p.role} size={12} />}
-                {p.role ? ROLE_LABELS[p.role] : enemy ? 'Gegner' : ''}
-                {p.isLocal && ' · Du'}
+                {p.role ? ROLE_LABELS[p.role] : enemy ? 'Enemy' : ''}
+                {p.isLocal && ' · You'}
               </div>
             </div>
           </div>
@@ -233,7 +233,7 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
       <div className="space-y-4">
         {teams.map((players, ti) => (
           <div key={ti} className="panel p-4">
-            <h2 className={`mb-3 text-sm font-bold uppercase ${ti ? 'text-loss' : 'text-accent'}`}>{ti ? 'Rotes Team' : 'Blaues Team'}</h2>
+            <h2 className={`mb-3 text-sm font-bold uppercase ${ti ? 'text-loss' : 'text-accent'}`}>{ti ? 'Red team' : 'Blue team'}</h2>
             <div className="space-y-1.5">
               {players.map((p) => (
                 <div
@@ -268,12 +268,12 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
       <div className="space-y-4">
       {live.gameMode === 'KIWI' && myChamp > 0 && (
         <div className="panel p-4">
-          <h2 className="mb-3 text-sm font-bold text-gold uppercase">Augments für {live.activeChampion}</h2>
+          <h2 className="mb-3 text-sm font-bold text-gold uppercase">Augments for {live.activeChampion}</h2>
           <MayhemChampionPanel championId={myChamp} compact />
         </div>
       )}
       <div className="panel p-4">
-        <h2 className="mb-3 text-sm font-bold text-muted uppercase">Ereignisse</h2>
+        <h2 className="mb-3 text-sm font-bold text-muted uppercase">Events</h2>
         <div className="space-y-2 text-sm">
           {live.events.map((e, i) => (
             <div key={i} className="flex gap-3">
@@ -294,7 +294,7 @@ function ScoutView({ result }: { result: ScoutResult }) {
     <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
       {teams.map((players, ti) => (
         <div key={ti}>
-          <h3 className={`mb-2 text-xs font-bold uppercase ${ti ? 'text-loss' : 'text-accent'}`}>{ti ? 'Rotes Team' : 'Blaues Team'}</h3>
+          <h3 className={`mb-2 text-xs font-bold uppercase ${ti ? 'text-loss' : 'text-accent'}`}>{ti ? 'Red team' : 'Blue team'}</h3>
           <div className="space-y-1.5">
             {players.map((p) => {
               const r = p.ranked
@@ -315,7 +315,7 @@ function ScoutView({ result }: { result: ScoutResult }) {
                       </b>{' '}
                       {r.leaguePoints} LP
                       <span className="block" style={{ color: wrColor(wr) }}>
-                        {pct(wr, 0)} · {r.wins + r.losses} Spiele
+                        {pct(wr, 0)} · {r.wins + r.losses} games
                       </span>
                     </span>
                   ) : (

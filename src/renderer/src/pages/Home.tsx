@@ -8,16 +8,16 @@ import { ChampIcon, GameImage, RoleIcon, TierBadge } from '@/components/icons'
 import { img } from '@/lib/img'
 
 const PHASES: Record<string, string> = {
-  None: 'Im Hauptmenü',
-  Lobby: 'In der Lobby',
-  Matchmaking: 'In der Warteschlange',
-  ReadyCheck: 'Match gefunden!',
-  ChampSelect: 'Championauswahl',
-  GameStart: 'Spiel startet',
-  InProgress: 'Im Spiel',
-  WaitingForStats: 'Warte auf Statistiken',
-  PreEndOfGame: 'Spielende',
-  EndOfGame: 'Spielende'
+  None: 'In the main menu',
+  Lobby: 'In lobby',
+  Matchmaking: 'In queue',
+  ReadyCheck: 'Match found!',
+  ChampSelect: 'Champion select',
+  GameStart: 'Game starting',
+  InProgress: 'In game',
+  WaitingForStats: 'Waiting for stats',
+  PreEndOfGame: 'Game over',
+  EndOfGame: 'Game over'
 }
 
 export function Home() {
@@ -34,9 +34,9 @@ export function Home() {
         ) : null}
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">
-            {client.summoner ? `Willkommen zurück, ${client.summoner.gameName}` : 'Willkommen bei Rift Companion'}
+            {client.summoner ? `Welcome back, ${client.summoner.gameName}` : 'Welcome to Rift Companion'}
           </h1>
-          <p className="text-sm text-muted">Werbefrei. Deine Daten. Dein Crawler.</p>
+          <p className="text-sm text-muted">No ads. Your data. Your crawler.</p>
         </div>
       </div>
 
@@ -44,23 +44,23 @@ export function Home() {
         <StatusCard
           icon={<MonitorSmartphone size={18} />}
           title="League Client"
-          value={client.connected ? PHASES[client.phase] ?? client.phase : 'Nicht gestartet'}
+          value={client.connected ? PHASES[client.phase] ?? client.phase : 'Not running'}
           ok={client.connected}
         >
-          {client.connected ? 'Runen & Items werden beim Lock-in automatisch importiert.' : 'Starte den League Client – die Verbindung erfolgt automatisch.'}
+          {client.connected ? 'Runes & items are imported automatically when you lock in.' : 'Start the League client – Rift Companion connects automatically.'}
         </StatusCard>
         <StatusCard
           icon={<Database size={18} />}
-          title={`${mode === 'aram' ? 'ARAM' : 'Ranked'}-Daten Patch ${patch ?? '–'}`}
-          value={patchInfo ? `${num(patchInfo.matches)} Matches` : 'Keine Daten'}
+          title={`${mode === 'aram' ? 'ARAM' : 'Ranked'} data · patch ${patch ?? '–'}`}
+          value={patchInfo ? `${num(patchInfo.matches)} matches` : 'No data'}
           ok={!!patchInfo?.matches}
         >
-          {patchInfo?.matches ? `Aktualisiert ${timeAgo(patchInfo.updatedAt)}` : <Link to="/data" className="text-accent">Crawler starten →</Link>}
+          {patchInfo?.matches ? `Updated ${timeAgo(patchInfo.updatedAt)}` : <Link to="/data" className="text-accent">Start crawler →</Link>}
         </StatusCard>
         <StatusCard
           icon={<Activity size={18} />}
           title="Crawler"
-          value={crawler?.running ? 'Läuft' : crawler?.phase === 'error' ? 'Fehler' : 'Bereit'}
+          value={crawler?.running ? 'Running' : crawler?.phase === 'error' ? 'Error' : 'Ready'}
           ok={crawler?.phase !== 'error'}
         >
           {crawler?.message ?? '–'}
@@ -75,15 +75,15 @@ export function Home() {
           <Radio className="text-accent" size={20} />
           <ChampIcon id={champSelect.myChampionId} size={44} tooltip={false} />
           <div className="flex-1">
-            <div className="font-bold">Championauswahl läuft</div>
+            <div className="font-bold">Champion select in progress</div>
             <div className="text-sm text-muted">
               {data?.champions[champSelect.myChampionId]?.name}
-              {champSelect.myRole ? ` · ${ROLE_LABELS[champSelect.myRole]}` : ''} – Build & Gegner ansehen
+              {champSelect.myRole ? ` · ${ROLE_LABELS[champSelect.myRole]}` : ''} – view build & enemies
             </div>
           </div>
           {lastImport && lastImport.championId === champSelect.myChampionId && !lastImport.errors.length && (
             <span className="flex items-center gap-1.5 text-sm text-win">
-              <CheckCircle2 size={16} /> importiert
+              <CheckCircle2 size={16} /> imported
             </span>
           )}
         </button>
@@ -91,7 +91,7 @@ export function Home() {
 
       {mode === 'aram' ? (
         <>
-          <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Stärkste ARAM-Champions</h2>
+          <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Strongest ARAM champions</h2>
           <div className="panel grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 lg:grid-cols-5">
             {(tiers ?? [])
               .slice()
@@ -113,12 +113,12 @@ export function Home() {
                   <TierBadge tier={t.tier} size="sm" />
                 </button>
               ))}
-            {!tiers?.length && <p className="text-xs text-muted">Noch keine ARAM-Daten – starte den ARAM-Crawler unter „Daten“.</p>}
+            {!tiers?.length && <p className="text-xs text-muted">No ARAM data yet – start the ARAM crawler under "Data".</p>}
           </div>
         </>
       ) : (
       <>
-      <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Meta-Picks pro Rolle</h2>
+      <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Meta picks per role</h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {ROLES.map((role) => {
           const top = (tiers ?? []).filter((t) => t.role === role).sort((a, b) => a.rank - b.rank).slice(0, 5)
@@ -147,7 +147,7 @@ export function Home() {
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-muted">Noch keine Daten</p>
+                <p className="text-xs text-muted">No data yet</p>
               )}
             </div>
           )

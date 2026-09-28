@@ -55,7 +55,7 @@ export class RiotClient {
 
   async request<T>(host: string, path: string, opts: { allow404?: boolean; signal?: AbortSignal } = {}): Promise<T | null> {
     const key = this.getKey()
-    if (!key) throw new RiotApiError(401, 'Kein Riot API Key hinterlegt (Einstellungen).')
+    if (!key) throw new RiotApiError(401, 'No Riot API key configured (Settings).')
     const limiter = this.limiter(host)
 
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -95,9 +95,9 @@ export class RiotClient {
       if (res.status === 401 || res.status === 403) {
         throw new RiotApiError(res.status, describeKeyError(res.status, riotMessage), riotMessage)
       }
-      throw new RiotApiError(res.status, `Riot API Fehler ${res.status} bei ${path}${riotMessage ? ` (${riotMessage})` : ''}`, riotMessage)
+      throw new RiotApiError(res.status, `Riot API error ${res.status} for ${path}${riotMessage ? ` (${riotMessage})` : ''}`, riotMessage)
     }
-    throw new RiotApiError(503, `Riot API nicht erreichbar (${path})`)
+    throw new RiotApiError(503, `Riot API unreachable (${path})`)
   }
 
   // --- account / summoner -------------------------------------------------

@@ -30,4 +30,8 @@ linux:
   target: [AppImage]
   category: Game
   icon: build/icon.png
-publish: null
+publish:
+  provider: github
+  owner: ratioAI
+  repo: ratiLoLAI
+  releaseType: release

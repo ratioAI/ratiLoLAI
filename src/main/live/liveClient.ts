@@ -49,23 +49,23 @@ interface RawLive {
 function describe(e: { EventName: string; KillerName?: string; VictimName?: string; DragonType?: string }): string {
   switch (e.EventName) {
     case 'ChampionKill':
-      return `${e.KillerName ?? '?'} hat ${e.VictimName ?? '?'} getötet`
+      return `${e.KillerName ?? '?'} killed ${e.VictimName ?? '?'}`
     case 'DragonKill':
-      return `${e.KillerName ?? '?'} hat den ${e.DragonType ?? ''}-Drachen erlegt`
+      return `${e.KillerName ?? '?'} slew the ${e.DragonType ?? ''} dragon`
     case 'BaronKill':
-      return `${e.KillerName ?? '?'} hat Baron Nashor erlegt`
+      return `${e.KillerName ?? '?'} slew Baron Nashor`
     case 'HeraldKill':
-      return `${e.KillerName ?? '?'} hat den Herold erlegt`
+      return `${e.KillerName ?? '?'} slew the Rift Herald`
     case 'TurretKilled':
-      return `Turm zerstört (${e.KillerName ?? '?'})`
+      return `Turret destroyed (${e.KillerName ?? '?'})`
     case 'InhibKilled':
-      return `Inhibitor zerstört (${e.KillerName ?? '?'})`
+      return `Inhibitor destroyed (${e.KillerName ?? '?'})`
     case 'FirstBlood':
       return 'First Blood!'
     case 'GameStart':
-      return 'Spiel gestartet'
+      return 'Game started'
     case 'MinionsSpawning':
-      return 'Vasallen erscheinen'
+      return 'Minions spawned'
     default:
       return e.EventName
   }

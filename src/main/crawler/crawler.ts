@@ -57,7 +57,7 @@ export class Crawler {
       running: false,
       mode,
       phase: 'idle',
-      message: 'Bereit',
+      message: 'Ready',
       patch: null,
       players: 0,
       playersDone: 0,
@@ -81,7 +81,7 @@ export class Crawler {
 
   stop(): void {
     if (this.abort) {
-      this.update({ phase: 'stopping', message: 'Wird gestoppt …' })
+      this.update({ phase: 'stopping', message: 'Stopping …' })
       this.abort.abort()
     }
   }
@@ -98,7 +98,7 @@ export class Crawler {
       ...Crawler.idleStatus(mode),
       running: true,
       phase: 'seeding',
-      message: 'Lade High-Elo-Spieler …',
+      message: 'Loading high-elo players …',
       patch: opts.patch,
       matchesTotal: stored.stats.matches,
       startedAt: Date.now()
@@ -129,7 +129,7 @@ export class Crawler {
       // ARAM: apex players rarely queue up, so every crawled game adds its players to the pool
       const snowball = mode === 'aram'
 
-      this.update({ phase: 'crawling', players: players.length, message: `${players.length} Spieler gefunden` })
+      this.update({ phase: 'crawling', players: players.length, message: `${players.length} players found` })
 
       // 2) crawl their recent ranked games
       let cursor = 0
@@ -169,7 +169,7 @@ export class Crawler {
                 matchesThisRun: this.status.matchesThisRun + 1,
                 matchesTotal: stored.stats.matches,
                 players: players.length,
-                message: `Analysiere ${GAME_MODES[mode].label}-Matches (${platform.toUpperCase()})`
+                message: `Analysing ${GAME_MODES[mode].label} matches (${platform.toUpperCase()})`
               })
               if (++sinceFlush >= FLUSH_EVERY) {
                 sinceFlush = 0
@@ -185,11 +185,11 @@ export class Crawler {
 
       this.update({
         phase: 'done',
-        message: signal.aborted ? 'Gestoppt' : `Fertig – ${this.status.matchesThisRun} neue Matches`
+        message: signal.aborted ? 'Stopped' : `Done – ${this.status.matchesThisRun} new matches`
       })
     } catch (e) {
       if (signal.aborted) {
-        this.update({ phase: 'done', message: 'Gestoppt' })
+        this.update({ phase: 'done', message: 'Stopped' })
       } else {
         const msg = e instanceof Error ? e.message : String(e)
         this.update({ phase: 'error', message: msg, lastError: msg })

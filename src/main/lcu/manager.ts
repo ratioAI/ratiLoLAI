@@ -281,9 +281,9 @@ export class LcuManager {
   ): Promise<ImportResult> {
     const result: ImportResult = { errors: [] }
     const client = this.client
-    if (!client) return { errors: ['League Client ist nicht verbunden.'] }
+    if (!client) return { errors: ['League client is not connected.'] }
     const build = await this.deps.build(championId, role, mode)
-    if (!build) return { errors: ['Noch keine Daten für diesen Champion – starte den Crawler.'] }
+    if (!build) return { errors: ['No data for this champion yet – start the crawler.'] }
     const data = await this.deps.staticData()
     const champName = data.champions[championId]?.name ?? String(championId)
 
@@ -291,7 +291,7 @@ export class LcuManager {
       try {
         result.runes = await this.importRunes(client, build, champName)
       } catch (e) {
-        result.errors.push(`Runen: ${(e as Error).message}`)
+        result.errors.push(`Runes: ${(e as Error).message}`)
       }
     }
     if (what.includes('items')) {
@@ -309,7 +309,7 @@ export class LcuManager {
           result.spells = order.map((id) => data.spells[id]?.name ?? id).join(' + ')
         }
       } catch (e) {
-        result.errors.push(`Beschwörerzauber: ${(e as Error).message}`)
+        result.errors.push(`Summoner spells: ${(e as Error).message}`)
       }
     }
     return result
@@ -326,7 +326,7 @@ export class LcuManager {
 
   private async importRunes(client: LcuClient, build: ChampionBuild, champName: string): Promise<string> {
     const payload = buildRunePagePayload(build, champName)
-    if (!payload) throw new Error('keine Runendaten')
+    if (!payload) throw new Error('no rune data')
     const pages = await client.get<PerkPage[]>('/lol-perks/v1/pages')
     for (const p of pages.filter((p) => p.name.startsWith(RUNE_PAGE_PREFIX) && p.isDeletable)) {
       await client.request('DELETE', `/lol-perks/v1/pages/${p.id}`)
@@ -336,7 +336,7 @@ export class LcuManager {
     } catch {
       // page limit reached – replace the currently selected editable page (same as other companion apps)
       const current = pages.find((p) => p.current && p.isDeletable && !p.name.startsWith(RUNE_PAGE_PREFIX))
-      if (!current) throw new Error('Keine freie Runenseite verfügbar.')
+      if (!current) throw new Error('No free rune page available.')
       await client.request('DELETE', `/lol-perks/v1/pages/${current.id}`)
       await client.request('POST', '/lol-perks/v1/pages', payload)
     }

@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import type { ChampionBuild, GameMode, PatchStats, Platform, RcEvents, Settings, StatRole, TierEntry } from '@shared/types'
+import { autoUpdater } from 'electron-updater'
+import type { ChampionBuild, GameMode, LiveGameState, PatchStats, Platform, RcEvents, Settings, StatRole, TierEntry, UpdateState } from '@shared/types'
 import { PLATFORMS } from '@shared/types'
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { Crawler } from './crawler/crawler'
@@ -8,6 +9,7 @@ import { StatsStore } from './crawler/statsStore'
 import { DataDragon, makeClassifier } from './ddragon'
 import { LcuManager } from './lcu/manager'
 import { MayhemService } from './mayhem'
+import { OverlayManager } from './overlay'
 import { ProfileService } from './profile'
 import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
 import { RiotClient } from './riot/client'
@@ -26,7 +28,48 @@ const mayhem = new MayhemService(join(userData, 'mayhem.json'), settings.get().l
 let win: BrowserWindow | null = null
 
 function emit<K extends keyof RcEvents>(event: K, payload: RcEvents[K]): void {
-  win?.webContents.send('rc:event', event, payload)
+  for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('rc:event', event, payload)
+}
+
+function loadRenderer(w: BrowserWindow, hash = ''): void {
+  if (process.env.ELECTRON_RENDERER_URL) void w.loadURL(`${process.env.ELECTRON_RENDERER_URL}#${hash}`)
+  else void w.loadFile(join(__dirname, '../renderer/index.html'), { hash })
+}
+
+// --- in-game overlay -------------------------------------------------------------
+
+const overlay = new OverlayManager(join(__dirname, '../preload/index.js'), loadRenderer, () => {
+  overlay.show()
+  emit('overlayToggle', null)
+})
+
+function updateOverlay(live: LiveGameState | null): void {
+  const mayhem = !!live?.active && live.gameMode === 'KIWI'
+  if (mayhem && settings.get().overlay.enabled) overlay.show()
+  else overlay.hide()
+}
+
+// --- auto update ---------------------------------------------------------------------
+
+let updateState: UpdateState = { status: app.isPackaged ? 'idle' : 'dev' }
+function setUpdate(s: UpdateState): void {
+  updateState = s
+  emit('update', s)
+}
+
+function initAutoUpdate(): void {
+  if (!app.isPackaged) return
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.on('checking-for-update', () => setUpdate({ status: 'checking' }))
+  autoUpdater.on('update-available', (i) => setUpdate({ status: 'downloading', version: i.version, progress: 0 }))
+  autoUpdater.on('update-not-available', () => setUpdate({ status: 'none' }))
+  autoUpdater.on('download-progress', (p) => setUpdate({ ...updateState, status: 'downloading', progress: p.percent }))
+  autoUpdater.on('update-downloaded', (i) => setUpdate({ status: 'ready', version: i.version }))
+  autoUpdater.on('error', (e) => setUpdate({ status: 'error', message: e?.message ?? String(e) }))
+  const check = (): void => void autoUpdater.checkForUpdates().catch(() => undefined)
+  check()
+  setInterval(check, 4 * 3600 * 1000)
 }
 
 // --- statistics helpers ------------------------------------------------------
@@ -86,13 +129,16 @@ const lcu = new LcuManager({
   emit: {
     client: (s) => emit('client', s),
     champSelect: (s) => emit('champSelect', s),
-    live: (s) => emit('live', s),
+    live: (s) => {
+      emit('live', s)
+      updateOverlay(s)
+    },
     imported: (r) => emit('imported', r)
   }
 })
 
 function assertPlatform(p: string): Platform {
-  if (!(p in PLATFORMS)) throw new Error(`Unbekannte Region: ${p}`)
+  if (!(p in PLATFORMS)) throw new Error(`Unknown region: ${p}`)
   return p as Platform
 }
 
@@ -115,6 +161,8 @@ function registerIpc(): void {
     const next = settings.update(patch)
     ddragon.setLanguage(next.language)
     mayhem.setLanguage(next.language)
+    overlay.setHotkey(next.overlay.hotkey)
+    updateOverlay(lcu.getLive())
     tierCache.clear()
     return next
   })
@@ -122,18 +170,18 @@ function registerIpc(): void {
     const clean = sanitizeApiKey(key)
     if (!clean) {
       settings.setApiKey('')
-      return { ok: true, message: 'API Key entfernt.' }
+      return { ok: true, message: 'API key removed.' }
     }
     if (!isValidKeyFormat(clean)) {
-      return { ok: false, message: 'Das sieht nicht wie ein Riot API Key aus (Format: RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).' }
+      return { ok: false, message: 'This does not look like a Riot API key (format: RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).' }
     }
     settings.setApiKey(clean)
     try {
       // the Challenger league endpoint is available for every key type (dev, personal, production)
       await riot.request(settings.get().platform, '/lol/league/v4/challengerleagues/by-queue/RANKED_SOLO_5x5')
-      return { ok: true, message: 'API Key gespeichert und gültig ✔' }
+      return { ok: true, message: 'API key saved and valid ✔' }
     } catch (e) {
-      return { ok: false, message: `Key gespeichert, aber der Test ist fehlgeschlagen: ${(e as Error).message}` }
+      return { ok: false, message: `Key saved, but the test failed: ${(e as Error).message}` }
     }
   })
   handle('getPatches', (mode: GameMode) => store.patches(assertMode(mode)))
@@ -172,6 +220,13 @@ function registerIpc(): void {
   )
   handle('getMayhemData', () => mayhem.get())
   handle('getMayhemPersonal', () => lcu.personalMayhem())
+  handle('overlayPreview', (championId: number) => {
+    overlay.preview(() => emit('overlayPreview', { championId }))
+  })
+  handle('appInfo', () => ({ version: app.getVersion(), update: updateState }))
+  handle('installUpdate', () => {
+    if (updateState.status === 'ready') autoUpdater.quitAndInstall()
+  })
   handle('lookupProfile', (riotId: string, platform: string) => profiles.lookup(riotId, assertPlatform(platform)))
   handle('scoutActiveGame', (riotId: string, platform: string) => profiles.scout(riotId, assertPlatform(platform)))
   handle('openExternal', (url: string) => {
@@ -202,13 +257,18 @@ function createWindow(): void {
     }
   })
   win.once('ready-to-show', () => win?.show())
+  // the (hidden) overlay window would otherwise keep the app alive
+  win.on('closed', () => {
+    win = null
+    overlay.destroy()
+    if (process.platform !== 'darwin') app.quit()
+  })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
-  if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL)
-  else void win.loadFile(join(__dirname, '../renderer/index.html'))
+  loadRenderer(win)
 }
 
 app.on('second-instance', () => {
@@ -223,12 +283,15 @@ void app.whenReady().then(() => {
   registerIpc()
   createWindow()
   lcu.start()
+  overlay.setHotkey(settings.get().overlay.hotkey)
+  initAutoUpdate()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
 app.on('window-all-closed', () => {
+  overlay.destroy()
   lcu.stop()
   crawler.stop()
   if (process.platform !== 'darwin') app.quit()

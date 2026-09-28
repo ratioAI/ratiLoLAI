@@ -35,7 +35,7 @@ describe('RiotClient', () => {
 
   it('refuses to run without a key', async () => {
     const client = new RiotClient(() => null, async () => res(200, {}))
-    await expect(client.request('euw1', '/z')).rejects.toThrow(/API Key/)
+    await expect(client.request('euw1', '/z')).rejects.toThrow(/API key/)
   })
 })
 

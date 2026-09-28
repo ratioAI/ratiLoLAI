@@ -60,7 +60,7 @@ export class DataDragon {
     } catch {
       const cached = await this.latestCached()
       if (cached) return cached
-      throw new Error('Data Dragon nicht erreichbar und kein Cache vorhanden.')
+      throw new Error('Data Dragon unreachable and no cache available.')
     }
 
     const file = join(this.cacheDir, `${version}-${this.language}.json`)

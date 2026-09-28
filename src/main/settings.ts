@@ -3,11 +3,14 @@ import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
 import type { Settings } from '@shared/types'
 
-type Stored = Omit<Settings, 'hasApiKey'> & { apiKeyEnc?: string; apiKeyPlain?: string }
+type Stored = Omit<Settings, 'hasApiKey'> & { apiKeyEnc?: string; apiKeyPlain?: string; schema?: number }
+
+/** bump to migrate stored settings (2: UI switched to English → game data defaults to en_US) */
+const SCHEMA = 2
 
 export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
   platform: 'euw1',
-  language: 'de_DE',
+  language: 'en_US',
   leaguePath: '',
   crawler: {
     seedTiers: ['CHALLENGER', 'GRANDMASTER', 'MASTER'],
@@ -15,6 +18,11 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
     maxMatchesPerRun: 1500,
     matchesPerPlayer: 10,
     minGamesForTierList: 20
+  },
+  overlay: {
+    enabled: true,
+    hotkey: 'Alt+Shift+A',
+    autoExpand: true
   },
   client: {
     autoImportRunes: true,
@@ -43,12 +51,16 @@ export class SettingsStore {
       ...DEFAULT_SETTINGS,
       ...loaded,
       crawler: { ...DEFAULT_SETTINGS.crawler, ...loaded.crawler },
+      overlay: { ...DEFAULT_SETTINGS.overlay, ...loaded.overlay },
       client: { ...DEFAULT_SETTINGS.client, ...loaded.client }
     }
+    if ((loaded.schema ?? 1) < 2) this.data.language = 'en_US'
+    this.data.schema = SCHEMA
   }
 
   get(): Settings {
-    const { apiKeyEnc, apiKeyPlain, ...rest } = this.data
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { apiKeyEnc, apiKeyPlain, schema, ...rest } = this.data
     return { ...rest, hasApiKey: !!(apiKeyEnc || apiKeyPlain) }
   }
 
@@ -57,6 +69,7 @@ export class SettingsStore {
       ...this.data,
       ...patch,
       crawler: { ...this.data.crawler, ...patch.crawler },
+      overlay: { ...this.data.overlay, ...patch.overlay },
       client: { ...this.data.client, ...patch.client }
     }
     this.save()

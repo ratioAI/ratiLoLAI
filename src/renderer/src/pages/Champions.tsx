@@ -34,8 +34,8 @@ export function Champions() {
 
   return (
     <div className="fade-in mx-auto max-w-6xl p-8">
-      <PageHeader title="Champions" subtitle={`${champs.length} Champions · klicke für Builds, Runen & Matchups`}>
-        <input autoFocus className="input w-64" placeholder="Champion suchen …" value={query} onChange={(e) => setQuery(e.target.value)} />
+      <PageHeader title="Champions" subtitle={`${champs.length} champions · click for builds, runes & matchups`}>
+        <input autoFocus className="input w-64" placeholder="Search champion …" value={query} onChange={(e) => setQuery(e.target.value)} />
       </PageHeader>
       {mode === 'ranked' && (
         <div className="mb-5">

@@ -1,7 +1,7 @@
 import type { Tier } from '@shared/types'
 
 export const pct = (n: number, digits = 1): string => `${(n * 100).toFixed(digits)}%`
-export const num = (n: number): string => n.toLocaleString('de-DE')
+export const num = (n: number): string => n.toLocaleString('en-US')
 
 export function duration(seconds: number): string {
   const m = Math.floor(seconds / 60)
@@ -11,11 +11,11 @@ export function duration(seconds: number): string {
 
 export function timeAgo(ts: number): string {
   const diff = (Date.now() - ts) / 1000
-  if (diff < 60) return 'gerade eben'
-  if (diff < 3600) return `vor ${Math.floor(diff / 60)} Min.`
-  if (diff < 86400) return `vor ${Math.floor(diff / 3600)} Std.`
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`
   const days = Math.floor(diff / 86400)
-  return days === 1 ? 'vor 1 Tag' : `vor ${days} Tagen`
+  return days === 1 ? '1 day ago' : `${days} days ago`
 }
 
 export const TIER_COLORS: Record<Tier, string> = {

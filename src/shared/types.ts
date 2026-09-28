@@ -264,6 +264,14 @@ export interface Settings {
     matchesPerPlayer: number
     minGamesForTierList: number
   }
+  overlay: {
+    /** show the in-game augment overlay in ARAM: Mayhem */
+    enabled: boolean
+    /** Electron accelerator, e.g. "Alt+Shift+A" */
+    hotkey: string
+    /** pop the panel open automatically at augment levels (3/7/11/15) */
+    autoExpand: boolean
+  }
   client: {
     autoImportRunes: boolean
     autoImportItems: boolean
@@ -503,11 +511,22 @@ export interface RcApi {
   ): Promise<ImportResult>
   getMayhemData(): Promise<MayhemData>
   getMayhemPersonal(): Promise<MayhemPersonal | null>
+  overlayPreview(championId: number): Promise<void>
+  setOverlayInteractive(interactive: boolean): void
+  appInfo(): Promise<{ version: string; update: UpdateState }>
+  installUpdate(): Promise<void>
   liveGame(): Promise<LiveGameState | null>
   lookupProfile(riotId: string, platform: Platform): Promise<ProfileData>
   scoutActiveGame(riotId: string, platform: Platform): Promise<ScoutResult | null>
   openExternal(url: string): Promise<void>
   on<K extends keyof RcEvents>(event: K, cb: (payload: RcEvents[K]) => void): () => void
+}
+
+export interface UpdateState {
+  status: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'none' | 'error' | 'dev'
+  version?: string
+  progress?: number
+  message?: string
 }
 
 export interface RcEvents {
@@ -517,4 +536,7 @@ export interface RcEvents {
   live: LiveGameState | null
   imported: ImportResult & { championId: number }
   statsUpdated: { patch: string; mode: GameMode }
+  overlayToggle: null
+  overlayPreview: { championId: number }
+  update: UpdateState
 }

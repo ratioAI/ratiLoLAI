@@ -152,17 +152,17 @@ export function buildItemSet(build: ChampionBuild, data: StaticData) {
     if (items.length) blocks.push({ type, items })
   }
 
-  build.starters.slice(0, 2).forEach((s, i) => block(`${i ? 'Alternativer Start' : 'Start'} (${pct(s.winRate)} WR)`, s.value))
-  if (build.core[0]) block(`Kern-Build (${pct(build.core[0].winRate)} WR, ${build.core[0].g} Spiele)`, build.core[0].value)
-  block('Stiefel', build.boots.slice(0, 2).map((b) => b.value))
+  build.starters.slice(0, 2).forEach((s, i) => block(`${i ? 'Alternative start' : 'Starting items'} (${pct(s.winRate)} WR)`, s.value))
+  if (build.core[0]) block(`Core build (${pct(build.core[0].winRate)} WR, ${build.core[0].g} games)`, build.core[0].value)
+  block('Boots', build.boots.slice(0, 2).map((b) => b.value))
   const seen = new Set(build.core[0]?.value ?? [])
   const late = build.late
     .flat()
     .map((o) => o.value)
     .filter((id) => !seen.has(id) && (seen.add(id), true))
-  block('Situativ', late.slice(0, 8))
-  if (build.core.length > 1) block('Alternative Kern-Builds', [...new Set(build.core.slice(1, 4).flatMap((c) => c.value))])
-  block('Verbrauchsgegenstände & Trinkets', build.mode === 'aram' ? [2003] : [2003, 2055, 3340, 3364])
+  block('Situational', late.slice(0, 8))
+  if (build.core.length > 1) block('Alternative core builds', [...new Set(build.core.slice(1, 4).flatMap((c) => c.value))])
+  block('Consumables & trinkets', build.mode === 'aram' ? [2003] : [2003, 2055, 3340, 3364])
 
   return {
     title: `RC ${champ?.name ?? build.championId} ${ROLE_LABELS[build.role]} ${build.patch}`,

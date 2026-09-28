@@ -1,14 +1,15 @@
-import { useState, type ReactNode } from 'react'
-import { ExternalLink, KeyRound, Loader2 } from 'lucide-react'
-import type { Platform, SeedTier, Settings as SettingsT } from '@shared/types'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Download, ExternalLink, KeyRound, Loader2, MonitorPlay } from 'lucide-react'
+import type { Platform, SeedTier, Settings as SettingsT, UpdateState } from '@shared/types'
 import { PLATFORMS } from '@shared/types'
 import { api, isDemo } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { PageHeader } from '@/components/Layout'
 
 const LANGUAGES = [
-  ['de_DE', 'Deutsch'],
   ['en_US', 'English'],
+  ['en_GB', 'English (UK)'],
+  ['de_DE', 'Deutsch'],
   ['fr_FR', 'Français'],
   ['es_ES', 'Español'],
   ['pl_PL', 'Polski'],
@@ -17,10 +18,17 @@ const LANGUAGES = [
 ]
 
 export function Settings() {
-  const { settings, setSettings } = useApp()
+  const { settings, setSettings, champSelect, live, data } = useApp()
   const [key, setKey] = useState('')
   const [keyMsg, setKeyMsg] = useState<{ ok: boolean; message: string } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [info, setInfo] = useState<{ version: string; update: UpdateState } | null>(null)
+
+  useEffect(() => {
+    api.appInfo().then(setInfo)
+    return api.on('update', (update) => setInfo((i) => (i ? { ...i, update } : i)))
+  }, [])
+
   if (!settings) return null
 
   const save = async (patch: Partial<Omit<SettingsT, 'hasApiKey'>>) => setSettings(await api.saveSettings(patch))
@@ -32,15 +40,20 @@ export function Settings() {
     setSaving(false)
     if (res.ok) setKey('')
   }
+  const previewChampion = (): number => {
+    if (champSelect?.myChampionId) return champSelect.myChampionId
+    const byName = data && Object.values(data.champions).find((c) => c.name === live?.activeChampion)
+    return byName?.key ?? 99 // Lux
+  }
 
   return (
     <div className="fade-in mx-auto max-w-3xl p-8">
-      <PageHeader title="Einstellungen" />
+      <PageHeader title="Settings" />
 
       <Group title="Riot API">
         <p className="mb-3 text-sm text-muted">
-          Der Key wird verschlüsselt (Windows DPAPI / macOS Keychain) lokal gespeichert und nur für Anfragen an die offizielle Riot API genutzt.
-          {settings.hasApiKey && <span className="ml-1 font-semibold text-win">Ein Key ist hinterlegt.</span>}
+          The key is stored encrypted (Windows DPAPI / macOS Keychain) and only used for requests to the official Riot API.
+          {settings.hasApiKey && <span className="ml-1 font-semibold text-win">A key is saved.</span>}
         </p>
         <div className="flex gap-2">
           <input
@@ -52,7 +65,7 @@ export function Settings() {
           />
           <button className="btn btn-primary" disabled={saving || (!key && !settings.hasApiKey)} onClick={saveKey}>
             {saving ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
-            {key ? 'Speichern & testen' : 'Key entfernen'}
+            {key ? 'Save & test' : 'Remove key'}
           </button>
         </div>
         {keyMsg && <p className={`mt-2 text-sm ${keyMsg.ok ? 'text-win' : 'text-loss'}`}>{keyMsg.message}</p>}
@@ -60,9 +73,9 @@ export function Settings() {
           className="mt-3 inline-flex items-center gap-1 text-sm text-accent"
           onClick={() => api.openExternal('https://developer.riotgames.com/')}
         >
-          Key auf developer.riotgames.com holen <ExternalLink size={13} />
+          Get a key at developer.riotgames.com <ExternalLink size={13} />
         </button>
-        <Field label="Region (Server)">
+        <Field label="Region (server)">
           <select className="input" value={settings.platform} onChange={(e) => save({ platform: e.target.value as Platform })}>
             {Object.entries(PLATFORMS).map(([k, v]) => (
               <option key={k} value={k}>
@@ -71,7 +84,7 @@ export function Settings() {
             ))}
           </select>
         </Field>
-        <Field label="Sprache der Spieldaten">
+        <Field label="Language of game data (champion, item & augment names)">
           <select className="input" value={settings.language} onChange={(e) => save({ language: e.target.value })}>
             {LANGUAGES.map(([k, v]) => (
               <option key={k} value={k}>
@@ -82,11 +95,37 @@ export function Settings() {
         </Field>
       </Group>
 
-      <Group title="League Client">
-        <Toggle label="Runen beim Lock-in automatisch importieren" value={settings.client.autoImportRunes} onChange={(v) => save({ client: { ...settings.client, autoImportRunes: v } })} />
-        <Toggle label="Item-Set beim Lock-in automatisch importieren" value={settings.client.autoImportItems} onChange={(v) => save({ client: { ...settings.client, autoImportItems: v } })} />
-        <Toggle label="Beschwörerzauber automatisch setzen" value={settings.client.autoImportSpells} onChange={(v) => save({ client: { ...settings.client, autoImportSpells: v } })} />
-        <Field label="Flash auf Taste">
+      <Group title="In-game overlay (ARAM: Mayhem)">
+        <p className="mb-2 text-sm text-muted">
+          Shows the augment tiers for your champion on top of the game. The panel opens automatically when an augment choice
+          appears (level 3, 7, 11, 15). League must run in <b className="text-text">Borderless</b> or <b className="text-text">Windowed</b>{' '}
+          mode – exclusive fullscreen cannot be overlaid.
+        </p>
+        <Toggle label="Enable overlay" value={settings.overlay.enabled} onChange={(v) => save({ overlay: { ...settings.overlay, enabled: v } })} />
+        <Toggle
+          label="Open automatically at augment levels"
+          value={settings.overlay.autoExpand}
+          onChange={(v) => save({ overlay: { ...settings.overlay, autoExpand: v } })}
+        />
+        <Field label="Hotkey to show / hide">
+          <input
+            className="input w-44 text-center"
+            defaultValue={settings.overlay.hotkey}
+            onBlur={(e) => save({ overlay: { ...settings.overlay, hotkey: e.target.value.trim() } })}
+          />
+        </Field>
+        <div className="pt-3">
+          <button className="btn btn-ghost" onClick={() => api.overlayPreview(previewChampion())}>
+            <MonitorPlay size={15} /> Preview overlay (20 s)
+          </button>
+        </div>
+      </Group>
+
+      <Group title="League client">
+        <Toggle label="Import runes automatically" value={settings.client.autoImportRunes} onChange={(v) => save({ client: { ...settings.client, autoImportRunes: v } })} />
+        <Toggle label="Import item set automatically" value={settings.client.autoImportItems} onChange={(v) => save({ client: { ...settings.client, autoImportItems: v } })} />
+        <Toggle label="Set summoner spells automatically" value={settings.client.autoImportSpells} onChange={(v) => save({ client: { ...settings.client, autoImportSpells: v } })} />
+        <Field label="Flash on key">
           <div className="flex rounded-xl border border-line bg-bg-2 p-1">
             {(['D', 'F'] as const).map((k) => (
               <button
@@ -99,8 +138,8 @@ export function Settings() {
             ))}
           </div>
         </Field>
-        <Toggle label="Match automatisch annehmen" value={settings.client.autoAccept} onChange={(v) => save({ client: { ...settings.client, autoAccept: v } })} />
-        <Field label="Installationsordner (optional)">
+        <Toggle label="Auto-accept match" value={settings.client.autoAccept} onChange={(v) => save({ client: { ...settings.client, autoAccept: v } })} />
+        <Field label="Install folder (optional)">
           <input
             className="input w-80"
             placeholder="C:\Riot Games\League of Legends"
@@ -111,7 +150,7 @@ export function Settings() {
       </Group>
 
       <Group title="Crawler">
-        <Field label="Spieler-Pool">
+        <Field label="Player pool">
           <div className="flex gap-2">
             {(['CHALLENGER', 'GRANDMASTER', 'MASTER'] as SeedTier[]).map((t) => {
               const on = settings.crawler.seedTiers.includes(t)
@@ -134,7 +173,7 @@ export function Settings() {
             })}
           </div>
         </Field>
-        <Field label="Zusätzliche Regionen">
+        <Field label="Additional regions">
           <div className="flex max-w-md flex-wrap justify-end gap-1.5">
             {(Object.keys(PLATFORMS) as Platform[])
               .filter((p) => p !== settings.platform)
@@ -159,16 +198,48 @@ export function Settings() {
               })}
           </div>
         </Field>
-        <NumberField label="Max. neue Matches pro Lauf" value={settings.crawler.maxMatchesPerRun} min={50} max={100000} onChange={(v) => save({ crawler: { ...settings.crawler, maxMatchesPerRun: v } })} />
-        <NumberField label="Matches pro Spieler" value={settings.crawler.matchesPerPlayer} min={1} max={100} onChange={(v) => save({ crawler: { ...settings.crawler, matchesPerPlayer: v } })} />
-        <NumberField label="Mindestspiele für Tierliste" value={settings.crawler.minGamesForTierList} min={1} max={5000} onChange={(v) => save({ crawler: { ...settings.crawler, minGamesForTierList: v } })} />
+        <NumberField label="Max. new matches per run" value={settings.crawler.maxMatchesPerRun} min={50} max={100000} onChange={(v) => save({ crawler: { ...settings.crawler, maxMatchesPerRun: v } })} />
+        <NumberField label="Matches per player" value={settings.crawler.matchesPerPlayer} min={1} max={100} onChange={(v) => save({ crawler: { ...settings.crawler, matchesPerPlayer: v } })} />
+        <NumberField label="Min. games for the tier list" value={settings.crawler.minGamesForTierList} min={1} max={5000} onChange={(v) => save({ crawler: { ...settings.crawler, minGamesForTierList: v } })} />
+      </Group>
+
+      <Group title="Updates">
+        <UpdateRow info={info} />
       </Group>
 
       <p className="mt-8 text-xs leading-relaxed text-muted">
-        Rift Companion {isDemo ? '(Web-Demo)' : ''} isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone
+        Rift Companion {isDemo ? '(web demo)' : ''} isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone
         officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered
         trademarks of Riot Games, Inc.
       </p>
+    </div>
+  )
+}
+
+function UpdateRow({ info }: { info: { version: string; update: UpdateState } | null }) {
+  if (!info) return null
+  const u = info.update
+  const text: Record<UpdateState['status'], string> = {
+    idle: 'Waiting for update check …',
+    checking: 'Checking for updates …',
+    available: `Update ${u.version} available`,
+    downloading: `Downloading update ${u.version ?? ''} … ${u.progress ? Math.round(u.progress) + '%' : ''}`,
+    ready: `Update ${u.version} is ready – it installs when you close the app.`,
+    none: 'You are on the latest version.',
+    error: `Update check failed: ${u.message ?? ''}`,
+    dev: 'Development build – updates are disabled.'
+  }
+  return (
+    <div className="flex items-center justify-between gap-4 text-sm">
+      <div>
+        <div className="font-semibold">Version {info.version}</div>
+        <div className={u.status === 'error' ? 'text-loss' : 'text-muted'}>{text[u.status]}</div>
+      </div>
+      {u.status === 'ready' && (
+        <button className="btn btn-primary" onClick={() => api.installUpdate()}>
+          <Download size={15} /> Restart & update
+        </button>
+      )}
     </div>
   )
 }
@@ -198,7 +269,7 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
         role="switch"
         aria-checked={value}
         onClick={() => onChange(!value)}
-        className={`relative h-6 w-11 rounded-full transition ${value ? 'bg-accent' : 'bg-panel-2 ring-1 ring-line'}`}
+        className={`relative h-6 w-11 shrink-0 rounded-full transition ${value ? 'bg-accent' : 'bg-panel-2 ring-1 ring-line'}`}
       >
         <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${value ? 'left-[22px]' : 'left-0.5'}`} />
       </button>
