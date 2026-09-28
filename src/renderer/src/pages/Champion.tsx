@@ -1,0 +1,449 @@
+import { useEffect, useState, type ReactNode } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { ChevronRight, Download, Loader2, Swords } from 'lucide-react'
+import type { ChampionBuild, ImportResult, Matchup, Option, Role, RunePage } from '@shared/types'
+import { ROLE_LABELS } from '@shared/types'
+import { api } from '@/lib/api'
+import { duration, num, pct, wrColor } from '@/lib/format'
+import { useApp, useAsync } from '@/lib/store'
+import { ChampIcon, ItemIcon, RoleIcon, RuneIcon, SpellIcon, TierBadge } from '@/components/icons'
+import { Spinner } from '@/components/Layout'
+import { NoDataHint } from './NoDataHint'
+
+const SHARD_ROWS = [
+  [5008, 5005, 5007],
+  [5008, 5010, 5001],
+  [5011, 5013, 5001]
+]
+
+export function ChampionPage() {
+  const params = useParams()
+  const championId = Number(params.id)
+  const role = params.role as Role | undefined
+  const { data, patch, statsVersion, client } = useApp()
+  const navigate = useNavigate()
+  const { value: build, loading } = useAsync(
+    () => (patch ? api.getChampionBuild(patch, championId, role) : Promise.resolve(null)),
+    [patch, championId, role, statsVersion]
+  )
+  const [runeIdx, setRuneIdx] = useState(0)
+  useEffect(() => setRuneIdx(0), [championId, role])
+
+  const champ = data?.champions[championId]
+  if (!data) return null
+  if (!champ) return <div className="p-8">Unbekannter Champion.</div>
+
+  return (
+    <div className="fade-in mx-auto max-w-6xl p-8">
+      {/* header */}
+      <div className="panel relative mb-6 overflow-hidden p-6">
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.13]"
+          style={{
+            backgroundImage: `url(https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${champ.id}_0.jpg)`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center 20%'
+          }}
+        />
+        <div className="relative flex flex-wrap items-center gap-6">
+          <ChampIcon id={championId} size={84} className="rounded-2xl ring-2 ring-line" tooltip={false} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-extrabold tracking-tight">{champ.name}</h1>
+              {build && <TierBadge tier={build.tier} size="lg" />}
+            </div>
+            <p className="text-sm text-muted capitalize">{champ.title}</p>
+            {build && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {build.availableRoles.map((r) => (
+                  <button
+                    key={r.role}
+                    onClick={() => navigate(`/champion/${championId}/${r.role}`, { replace: true })}
+                    className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${
+                      r.role === build.role ? 'border-accent/50 bg-accent/10 text-accent' : 'border-line text-muted hover:text-text'
+                    }`}
+                  >
+                    <RoleIcon role={r.role} size={13} /> {ROLE_LABELS[r.role]}
+                    <span className="font-normal opacity-60">{num(r.games)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {build && (
+            <div className="flex gap-6">
+              <Stat label="Winrate" value={pct(build.winRate, 2)} color={wrColor(build.winRate)} />
+              <Stat label="Pickrate" value={pct(build.pickRate)} />
+              <Stat label="Banrate" value={pct(build.banRate)} />
+              <Stat label="Spiele" value={num(build.games)} />
+              <Stat label="Ø Dauer" value={duration(build.avgDuration)} />
+            </div>
+          )}
+        </div>
+        {build && <ImportBar build={build} connected={client.connected} />}
+      </div>
+
+      {loading && !build ? (
+        <div className="flex justify-center p-16">
+          <Spinner />
+        </div>
+      ) : !build ? (
+        <NoDataHint />
+      ) : (
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+          <Card title="Runen" className="lg:row-span-2">
+            {build.runes[runeIdx] ? <RunePageView page={build.runes[runeIdx].value} /> : <Muted>Keine Runendaten</Muted>}
+            <div className="mt-5 space-y-1.5">
+              {build.runes.map((r, i) => (
+                <button
+                  key={i}
+                  onClick={() => setRuneIdx(i)}
+                  className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left text-xs ${
+                    i === runeIdx ? 'border-accent/40 bg-accent/5' : 'border-transparent hover:bg-panel-2'
+                  }`}
+                >
+                  <RuneIcon id={r.value.primary[0]} size={28} />
+                  <RuneIcon id={r.value.subStyle} size={18} />
+                  <span className="flex-1 truncate text-muted">
+                    {r.value.primary
+                      .slice(1)
+                      .concat(r.value.secondary)
+                      .map((id) => data.runes[id]?.name)
+                      .join(' · ')}
+                  </span>
+                  <OptionStats o={r} />
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          <Card title="Beschwörerzauber & Skills">
+            <div className="flex flex-wrap gap-6">
+              <div className="space-y-2">
+                {build.spells.slice(0, 2).map((s, i) => (
+                  <div key={i} className={`flex items-center gap-3 ${i ? 'opacity-70' : ''}`}>
+                    <div className="flex gap-1">
+                      {s.value.map((id) => (
+                        <SpellIcon key={id} id={id} size={34} />
+                      ))}
+                    </div>
+                    <OptionStats o={s} />
+                  </div>
+                ))}
+              </div>
+              {build.skillMax[0] && (
+                <div>
+                  <div className="mb-2 text-xs text-muted">Skill-Priorität</div>
+                  <div className="flex items-center gap-1.5">
+                    {[...build.skillMax[0].value].map((k, i) => (
+                      <span key={i} className="flex items-center gap-1.5">
+                        <SkillKey k={k} big />
+                        {i < 2 && <ChevronRight size={14} className="text-muted" />}
+                      </span>
+                    ))}
+                    <span className="ml-3">
+                      <OptionStats o={build.skillMax[0]} />
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+            {build.skillPath[0] && <SkillPath path={build.skillPath[0].value} />}
+          </Card>
+
+          <Card title="Items">
+            <Section label="Start">
+              {build.starters.slice(0, 2).map((s, i) => (
+                <Row key={i} o={s}>
+                  <ItemList ids={s.value} />
+                </Row>
+              ))}
+            </Section>
+            <Section label="Kern-Build">
+              {build.core.slice(0, 3).map((c, i) => (
+                <Row key={i} o={c}>
+                  <div className="flex items-center gap-1">
+                    {c.value.map((id, j) => (
+                      <span key={j} className="flex items-center gap-1">
+                        <ItemIcon id={id} size={i ? 32 : 40} />
+                        {j < c.value.length - 1 && <ChevronRight size={14} className="text-muted" />}
+                      </span>
+                    ))}
+                  </div>
+                </Row>
+              ))}
+            </Section>
+            <Section label="Stiefel">
+              <div className="flex flex-wrap gap-4">
+                {build.boots.slice(0, 3).map((b) => (
+                  <div key={b.value} className="flex items-center gap-2">
+                    <ItemIcon id={b.value} size={32} />
+                    <OptionStats o={b} vertical />
+                  </div>
+                ))}
+              </div>
+            </Section>
+          </Card>
+
+          <Card title="Situative Items" className="lg:col-span-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              {build.late.map((slot, i) => (
+                <div key={i}>
+                  <div className="mb-2 text-xs font-semibold text-muted">{['4.', '5.', '6.'][i]} Item</div>
+                  <div className="space-y-1.5">
+                    {slot.length ? (
+                      slot.map((o) => (
+                        <div key={o.value} className="flex items-center gap-2.5">
+                          <ItemIcon id={o.value} size={30} />
+                          <span className="flex-1 truncate text-xs">{data.items[o.value]?.name}</span>
+                          <OptionStats o={o} />
+                        </div>
+                      ))
+                    ) : (
+                      <Muted>Zu wenig Daten</Muted>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card title="Schwere Matchups" icon={<Swords size={15} className="text-loss" />}>
+            <MatchupList list={build.counters} />
+          </Card>
+          <Card title="Gute Matchups" icon={<Swords size={15} className="text-win" />}>
+            <MatchupList list={build.goodAgainst} />
+          </Card>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ImportBar({ build, connected }: { build: ChampionBuild; connected: boolean }) {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<ImportResult | null>(null)
+  const run = async (what?: ('runes' | 'items' | 'spells')[]) => {
+    setBusy(true)
+    setResult(null)
+    try {
+      setResult(await api.importBuild(build.championId, build.role, what))
+    } catch (e) {
+      setResult({ errors: [(e as Error).message] })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="relative mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+      <button className="btn btn-primary" disabled={!connected || busy} onClick={() => run()}>
+        {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Alles in den Client importieren
+      </button>
+      <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => run(['runes'])}>
+        Runen
+      </button>
+      <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => run(['items'])}>
+        Item-Set
+      </button>
+      <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => run(['spells'])}>
+        Zauber
+      </button>
+      <span className="text-xs text-muted">
+        {!connected && 'League Client nicht gestartet'}
+        {result && !result.errors.length && `✔ Importiert: ${[result.runes, result.items, result.spells].filter(Boolean).join(' · ')}`}
+        {result?.errors.length ? <span className="text-loss">{result.errors.join(' · ')}</span> : null}
+      </span>
+    </div>
+  )
+}
+
+function RunePageView({ page }: { page: RunePage }) {
+  const { data } = useApp()
+  if (!data) return null
+  const prim = data.runeTrees.find((t) => t.id === page.primaryStyle)
+  const sub = data.runeTrees.find((t) => t.id === page.subStyle)
+  return (
+    <div className="grid grid-cols-[1fr_1fr_auto] gap-6">
+      <div>
+        <TreeHeader id={page.primaryStyle} name={prim?.name} />
+        {prim?.slots.map((slot, i) => (
+          <div key={i} className={`flex justify-center gap-3 ${i === 0 ? 'mb-4' : 'mb-3'}`}>
+            {slot.map((r) => (
+              <RuneIcon key={r.id} id={r.id} size={i === 0 ? 46 : 34} dim={!page.primary.includes(r.id)} />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div>
+        <TreeHeader id={page.subStyle} name={sub?.name} />
+        {sub?.slots.slice(1).map((slot, i) => (
+          <div key={i} className="mb-3 flex justify-center gap-3">
+            {slot.map((r) => (
+              <RuneIcon key={r.id} id={r.id} size={30} dim={!page.secondary.includes(r.id)} />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="pt-9">
+        {SHARD_ROWS.map((row, i) => (
+          <div key={i} className="mb-3 flex gap-2">
+            {row.map((id, j) => (
+              <RuneIcon key={j} id={id} size={22} dim={page.shards[i] !== id} />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TreeHeader({ id, name }: { id: number; name?: string }) {
+  return (
+    <div className="mb-4 flex items-center justify-center gap-2 text-sm font-semibold">
+      <RuneIcon id={id} size={22} />
+      {name}
+    </div>
+  )
+}
+
+const SKILL_COLORS: Record<string, string> = { Q: '#4ea3ff', W: '#3dd68c', E: '#f5c451', R: '#ff5d6c' }
+
+function SkillKey({ k, big = false }: { k: string; big?: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center justify-center rounded-md font-extrabold ${big ? 'h-9 w-9 text-base' : 'h-6 w-6 text-[11px]'}`}
+      style={{ color: SKILL_COLORS[k], background: `color-mix(in srgb, ${SKILL_COLORS[k]} 15%, transparent)` }}
+    >
+      {k}
+    </span>
+  )
+}
+
+function SkillPath({ path }: { path: string }) {
+  return (
+    <div className="mt-5 overflow-x-auto">
+      <table className="text-center text-[11px]">
+        <tbody>
+          {['Q', 'W', 'E', 'R'].map((k) => (
+            <tr key={k}>
+              <td className="pr-2">
+                <SkillKey k={k} />
+              </td>
+              {[...path].map((p, i) => (
+                <td key={i} className="p-[2px]">
+                  {p === k ? (
+                    <span
+                      className="inline-flex h-[22px] w-[22px] items-center justify-center rounded font-bold text-bg"
+                      style={{ background: SKILL_COLORS[k] }}
+                    >
+                      {i + 1}
+                    </span>
+                  ) : (
+                    <span className="inline-block h-[22px] w-[22px] rounded bg-bg-2" />
+                  )}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function MatchupList({ list }: { list: Matchup[] }) {
+  const navigate = useNavigate()
+  const { data } = useApp()
+  if (!list.length) return <Muted>Zu wenig Daten für Matchups</Muted>
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {list.map((m) => (
+        <button
+          key={m.championId}
+          onClick={() => navigate(`/champion/${m.championId}`)}
+          className="flex items-center gap-2.5 rounded-xl bg-bg-2 p-2 text-left hover:bg-panel-2"
+        >
+          <ChampIcon id={m.championId} size={34} tooltip={false} />
+          <div className="min-w-0">
+            <div className="truncate text-xs font-semibold">{data?.champions[m.championId]?.name}</div>
+            <div className="text-xs">
+              <span style={{ color: wrColor(m.winRate) }} className="font-bold">
+                {pct(m.winRate)}
+              </span>{' '}
+              <span className="text-muted">· {num(m.games)}</span>
+            </div>
+          </div>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function Card({ title, icon, children, className = '' }: { title: string; icon?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <section className={`panel p-5 ${className}`}>
+      <h2 className="mb-4 flex items-center gap-2 text-sm font-bold tracking-wide text-muted uppercase">
+        {icon}
+        {title}
+      </h2>
+      {children}
+    </section>
+  )
+}
+
+function Section({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="mb-4 last:mb-0">
+      <div className="mb-2 text-xs font-semibold text-muted">{label}</div>
+      <div className="space-y-2">{children}</div>
+    </div>
+  )
+}
+
+function Row({ o, children }: { o: Option<unknown>; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      {children}
+      <OptionStats o={o} />
+    </div>
+  )
+}
+
+function ItemList({ ids }: { ids: number[] }) {
+  const counts = new Map<number, number>()
+  ids.forEach((id) => counts.set(id, (counts.get(id) ?? 0) + 1))
+  return (
+    <div className="flex gap-1">
+      {[...counts.entries()].map(([id, count]) => (
+        <ItemIcon key={id} id={id} size={34} count={count} />
+      ))}
+    </div>
+  )
+}
+
+function OptionStats({ o, vertical = false }: { o: Option<unknown>; vertical?: boolean }) {
+  return (
+    <span className={`flex shrink-0 text-xs tabular-nums ${vertical ? 'flex-col' : 'items-baseline gap-2 text-right'}`}>
+      <b style={{ color: wrColor(o.winRate) }}>{pct(o.winRate)} WR</b>
+      <span className="text-muted">
+        {pct(o.pickRate, 0)} · {num(o.g)}
+      </span>
+    </span>
+  )
+}
+
+function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="text-center">
+      <div className="text-lg font-extrabold tabular-nums" style={{ color }}>
+        {value}
+      </div>
+      <div className="text-[11px] text-muted">{label}</div>
+    </div>
+  )
+}
+
+function Muted({ children }: { children: ReactNode }) {
+  return <p className="text-sm text-muted">{children}</p>
+}
+
