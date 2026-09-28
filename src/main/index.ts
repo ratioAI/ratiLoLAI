@@ -40,39 +40,64 @@ function loadRenderer(w: BrowserWindow, hash = ''): void {
 }
 
 // --- in-game overlay -------------------------------------------------------------
+//
+// The overlay window is only visible while an augment choice is on screen (or opened with the
+// hotkey). A transparent always-on-top window costs frames, so it stays hidden the rest of the game.
+
+let inMayhem = false
+let manualOpen = false
+let offerOnScreen = false
 
 const overlay = new OverlayManager(join(__dirname, '../preload/index.js'), loadRenderer, () => {
-  overlay.show()
+  manualOpen = !manualOpen
+  refreshOverlay()
   emit('overlayToggle', null)
 })
 
-// screen recognition of the offered augment cards (only while a Mayhem game is running)
+function refreshOverlay(): void {
+  const s = settings.get().overlay
+  if (inMayhem && s.enabled && (offerOnScreen || manualOpen)) overlay.show()
+  else overlay.hide()
+}
+
+// screen recognition of the offered augment cards (only while an augment is pending)
 let candidates: NameCandidate[] = []
 const scanner = new AugmentScanner(
   join(userData, 'ocr'),
   () => candidates,
   (offer) => {
     if (offer) overlay.moveToDisplay(offer.displayId)
+    offerOnScreen = !!offer
+    if (!offer) manualOpen = false // augment picked → overlay goes away
     emit('augmentOffer', offer)
+    refreshOverlay()
   },
   () => overlay.currentDisplayId
 )
 
 function updateOverlay(live: LiveGameState | null): void {
-  const inMayhem = !!live?.active && live.gameMode === 'KIWI'
+  const nowMayhem = !!live?.active && live.gameMode === 'KIWI'
   const s = settings.get().overlay
-  if (inMayhem && s.enabled) {
-    overlay.show()
-    if (s.cardFrames && !scanner.running) {
-      void mayhem.get().then((d) => {
-        candidates = Object.values(d.augments).map((a) => ({ id: a.id, names: [a.name, a.nameEn] }))
+  if (nowMayhem && s.enabled) {
+    if (!inMayhem) overlay.prepare() // create the (hidden) window early so it appears instantly
+    inMayhem = true
+    const me = live!.players.find((p) => p.riotId === live!.activePlayer)
+    if (s.cardFrames) {
+      if (!scanner.running) {
         scanner.start()
-      })
+        void mayhem.get().then((d) => {
+          candidates = Object.values(d.augments).map((a) => ({ id: a.id, names: [a.name, a.nameEn] }))
+        })
+      }
+      scanner.update(me?.level ?? 0, me?.isDead ?? false)
     }
   } else {
-    overlay.hide()
+    inMayhem = false
+    manualOpen = false
+    offerOnScreen = false
     if (scanner.running) scanner.stop()
   }
+  refreshOverlay()
 }
 
 // --- auto update ---------------------------------------------------------------------

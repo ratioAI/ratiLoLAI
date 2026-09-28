@@ -6,7 +6,7 @@
  * title baseline around y = 444 px). All geometry is expressed as a fraction of the height.
  */
 
-import { cardCentres, LAYOUT, type Rect } from '@shared/cardLayout'
+import { cardCentres, LAYOUT, titleRects, type Rect } from '@shared/cardLayout'
 export { cardCentres, cardRects, titleRects, LAYOUT, type Rect } from '@shared/cardLayout'
 
 /** Minimal view on a BGRA/RGBA bitmap. */
@@ -122,4 +122,102 @@ export function matchAugment(text: string, candidates: NameCandidate[], min = 0.
     }
   }
   return best && best.score >= min ? best : null
+}
+
+/**
+ * Coarse fingerprint of the three title areas (mean brightness per cell). Used on the small
+ * preview capture to notice a reroll without running OCR every time.
+ */
+export function titleSignature(b: Bitmap, cols = 16, rows = 3): number[] {
+  const sig: number[] = []
+  for (const r of titleRects(b.width, b.height)) {
+    for (let cy = 0; cy < rows; cy++) {
+      for (let cx = 0; cx < cols; cx++) {
+        let sum = 0
+        let n = 0
+        const x0 = r.x + (cx * r.width) / cols
+        const y0 = r.y + (cy * r.height) / rows
+        for (let y = y0; y < y0 + r.height / rows; y += 1) {
+          for (let x = x0; x < x0 + r.width / cols; x += 1) {
+            if (x < 0 || y < 0 || x >= b.width || y >= b.height) continue
+            sum += brightness(b, x, y)
+            n++
+          }
+        }
+        sig.push(n ? sum / n : 0)
+      }
+    }
+  }
+  return sig
+}
+
+export function signatureChanged(a: number[] | null, b: number[], tolerance = 18): boolean {
+  if (!a || a.length !== b.length) return true
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff += Math.abs(a[i] - b[i])
+  return diff / a.length > tolerance
+}
+
+// ---------------------------------------------------------------------------
+// When to look at the screen at all
+// ---------------------------------------------------------------------------
+
+/** Levels at which ARAM: Mayhem grants an augment. */
+export const AUGMENT_LEVELS = [1, 7, 11, 15]
+
+/**
+ * Decides whether an augment choice can be open right now. A choice becomes pending when the
+ * player reaches an augment level and is resolved once its cards disappear from the screen.
+ * The selection only opens while dead or in the fountain, so scanning is slow while alive.
+ */
+export class AugmentSchedule {
+  private picked = 0
+  private level = 0
+  private dead = false
+  private seen = false
+  private misses = 0
+
+  update(level: number, dead: boolean): void {
+    this.level = level
+    this.dead = dead
+  }
+
+  get earned(): number {
+    return AUGMENT_LEVELS.filter((l) => this.level >= l).length
+  }
+
+  get pending(): boolean {
+    return this.level > 0 && this.earned > this.picked
+  }
+
+  /** Scan interval in ms, or null when there is nothing to look for. */
+  get interval(): number | null {
+    if (!this.pending) return null
+    return this.dead || this.seen ? 900 : 2500
+  }
+
+  /** Feed the scan result: cards disappearing after being visible means the augment was picked. */
+  observe(cardsOnScreen: boolean): 'picked' | null {
+    if (cardsOnScreen) {
+      this.seen = true
+      this.misses = 0
+      return null
+    }
+    // two misses in a row, so a single bad frame (animation, hover effect) doesn't count as a pick
+    if (this.seen && ++this.misses >= 2) {
+      this.seen = false
+      this.misses = 0
+      this.picked = Math.min(this.earned, this.picked + 1)
+      return 'picked'
+    }
+    return null
+  }
+
+  reset(): void {
+    this.picked = 0
+    this.level = 0
+    this.dead = false
+    this.seen = false
+    this.misses = 0
+  }
 }

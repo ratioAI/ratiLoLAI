@@ -3,7 +3,19 @@ import { dirname, join } from 'node:path'
 import { PNG } from 'pngjs'
 import { createWorker, PSM } from 'tesseract.js'
 import { describe, expect, it } from 'vitest'
-import { cardRects, cardsVisible, matchAugment, normName, prepareTitle, similarity, titleRects, type Bitmap } from '../src/main/scanner/detect'
+import {
+  AugmentSchedule,
+  cardRects,
+  cardsVisible,
+  matchAugment,
+  normName,
+  prepareTitle,
+  signatureChanged,
+  similarity,
+  titleRects,
+  titleSignature,
+  type Bitmap
+} from '../src/main/scanner/detect'
 
 // Real 1920×1080 screenshot of the Mayhem augment selection (Thresh, level 3)
 const png = PNG.sync.read(readFileSync(join(__dirname, 'fixtures/mayhem-augment-select-1080p.png')))
@@ -75,4 +87,79 @@ describe('OCR of the card titles (bundled Tesseract model)', () => {
     await worker.terminate()
     expect(ids).toEqual([1011, 2107, 1349])
   }, 30_000)
+})
+
+/** nearest-neighbour downscale, like the small preview capture */
+function downscale(b: Bitmap, width: number): Bitmap {
+  const height = Math.round((width * b.height) / b.width)
+  const data = Buffer.alloc(width * height * 4)
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const sx = Math.floor((x * b.width) / width)
+      const sy = Math.floor((y * b.height) / height)
+      const src = (sy * b.width + sx) * 4
+      ;(b.data as Buffer).copy(data, (y * width + x) * 4, src, src + 4)
+    }
+  return { width, height, data, order: b.order }
+}
+
+describe('cheap preview check', () => {
+  const small = downscale(shot, 640)
+  it('still detects the cards on a 640×360 preview', () => {
+    expect(cardsVisible(small)).toBe(true)
+  })
+  it('title signature is stable for the same frame and changes after a reroll', () => {
+    const sig = titleSignature(small)
+    expect(signatureChanged(sig, titleSignature(small))).toBe(false)
+    const rerolled = downscale(shot, 640)
+    // wipe the middle title (as if the card was rerolled into another augment)
+    const r = titleRects(640, 360)[1]
+    for (let y = r.y; y < r.y + r.height; y++)
+      for (let x = r.x; x < r.x + r.width; x++) (rerolled.data as Buffer).fill(0, (y * 640 + x) * 4, (y * 640 + x) * 4 + 3)
+    expect(signatureChanged(sig, titleSignature(rerolled), 1)).toBe(true)
+    expect(signatureChanged(null, sig)).toBe(true)
+  })
+})
+
+describe('AugmentSchedule', () => {
+  it('only looks for cards while an augment is pending', () => {
+    const s = new AugmentSchedule()
+    expect(s.interval).toBeNull() // no game yet
+    s.update(1, false)
+    expect(s.pending).toBe(true) // level-1 augment at game start (in the fountain)
+    expect(s.interval).toBe(2500) // alive → slow checks
+    s.update(1, true)
+    expect(s.interval).toBe(900) // dead → the choice may open
+  })
+
+  it('counts a pick when the cards disappear (twice in a row)', () => {
+    const s = new AugmentSchedule()
+    s.update(1, false)
+    expect(s.observe(true)).toBeNull()
+    expect(s.interval).toBe(900) // cards on screen → fast
+    expect(s.observe(false)).toBeNull() // one missing frame is not a pick
+    expect(s.observe(true)).toBeNull()
+    expect(s.observe(false)).toBeNull()
+    expect(s.observe(false)).toBe('picked')
+    expect(s.pending).toBe(false)
+    expect(s.interval).toBeNull() // nothing to do until level 7
+    s.update(6, true)
+    expect(s.interval).toBeNull()
+    s.update(7, false)
+    expect(s.pending).toBe(true)
+  })
+
+  it('handles several unpicked augments', () => {
+    const s = new AugmentSchedule()
+    s.update(11, false)
+    expect(s.earned).toBe(3)
+    for (let i = 0; i < 3; i++) {
+      s.observe(true)
+      s.observe(false)
+      s.observe(false)
+    }
+    expect(s.pending).toBe(false)
+    s.update(15, false)
+    expect(s.pending).toBe(true)
+  })
 })

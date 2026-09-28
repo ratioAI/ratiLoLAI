@@ -9,7 +9,6 @@ import { ChampIcon } from '@/components/icons'
 import { AugmentFrame } from '@/components/AugmentFrame'
 import { RARITY_COLORS, RARITY_LABELS, useMayhemData } from '@/components/mayhem'
 
-const AUGMENT_LEVELS = [3, 7, 11, 15]
 const SHOWN_TIERS: Tier[] = ['S+', 'S', 'A', 'B']
 
 /** In-game overlay (separate transparent window) for ARAM: Mayhem augment picks. */
@@ -30,13 +29,17 @@ export function Overlay() {
     return { displayId: 0, cards: ids.split(',').map((id, i) => ({ augmentId: Number(id), text: '', score: 1, rect: rects[i] })) }
   })
   const hovered = useRef(false)
-  const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const autoExpandRef = useRef(true)
 
   useEffect(() => {
     document.documentElement.classList.add('overlay-mode')
     const offs = [
       api.on('overlayToggle', () => setExpanded((e) => !e)),
-      api.on('augmentOffer', setOffer),
+      api.on('augmentOffer', (o) => {
+        setOffer(o)
+        // the panel opens together with the card frames and closes once an augment is picked
+        setExpanded(!!o && autoExpandRef.current)
+      }),
       api.on('overlayPreview', ({ championId }) => {
         setPreviewChamp(championId)
         setExpanded(true)
@@ -51,14 +54,8 @@ export function Overlay() {
     return Object.values(statics.champions).find((c) => c.name === live.activeChampion || c.id === live.activeChampion)?.key ?? 0
   }, [previewChamp, live, statics])
 
-  // pop open when an augment choice appears (levels 3/7/11/15), close again after a while
+  autoExpandRef.current = settings?.overlay.autoExpand ?? true
   const level = live?.players.find((p) => p.riotId === live.activePlayer)?.level ?? 0
-  useEffect(() => {
-    if (!settings?.overlay.autoExpand || !AUGMENT_LEVELS.includes(level)) return
-    setExpanded(true)
-    if (collapseTimer.current) clearTimeout(collapseTimer.current)
-    collapseTimer.current = setTimeout(() => !hovered.current && setExpanded(false), 40_000)
-  }, [level, settings?.overlay.autoExpand])
 
   const tiers = useMemo(
     () => (data && statics && championId ? augmentTiersForChampion(data, statics, championId) : []),

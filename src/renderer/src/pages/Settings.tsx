@@ -97,13 +97,14 @@ export function Settings() {
 
       <Group title="In-game overlay (ARAM: Mayhem)">
         <p className="mb-2 text-sm text-muted">
-          Shows the augment tiers for your champion on top of the game. The panel opens automatically when an augment choice
-          appears (level 3, 7, 11, 15). League must run in <b className="text-text">Borderless</b> or <b className="text-text">Windowed</b>{' '}
+          Frames the augment cards by tier right in the game. It only looks at the screen while an augment is waiting to be
+          picked (level 1, 7, 11, 15 – the choice opens when you are dead or in the fountain) and disappears as soon as you
+          have picked one. League must run in <b className="text-text">Borderless</b> or <b className="text-text">Windowed</b>{' '}
           mode – exclusive fullscreen cannot be overlaid.
         </p>
         <Toggle label="Enable overlay" value={settings.overlay.enabled} onChange={(v) => save({ overlay: { ...settings.overlay, enabled: v } })} />
         <Toggle
-          label="Open automatically at augment levels"
+          label="Also show the tier list panel next to the cards"
           value={settings.overlay.autoExpand}
           onChange={(v) => save({ overlay: { ...settings.overlay, autoExpand: v } })}
         />

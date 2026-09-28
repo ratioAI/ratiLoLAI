@@ -1,7 +1,7 @@
 {
   "name": "rift-companion",
   "productName": "Rift Companion",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Ad-free League of Legends companion app – tier lists, builds, runes, auto-import, ARAM & ARAM: Mayhem augments, live game scouting. Powered by your own Riot API crawler.",
   "main": "./out/main/index.js",
   "author": "Alexander Fink",

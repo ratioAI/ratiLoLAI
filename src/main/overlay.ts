@@ -64,6 +64,11 @@ export class OverlayManager {
     return this.win
   }
 
+  /** Creates the window hidden, so showing it later is instant. */
+  prepare(): void {
+    this.win ??= this.create()
+  }
+
   show(): void {
     this.win ??= this.create()
     if (!this.win.isVisible()) this.win.showInactive()
