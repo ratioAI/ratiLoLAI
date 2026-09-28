@@ -1,0 +1,33 @@
+appId: dev.riftcompanion.app
+productName: Rift Companion
+directories:
+  buildResources: build
+  output: release/${version}
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - '!**/*.map'
+asarUnpack:
+  - resources/**
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+  artifactName: RiftCompanion-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Rift Companion
+mac:
+  target: [dmg]
+  category: public.app-category.games
+  icon: build/icon.png
+linux:
+  target: [AppImage]
+  category: Game
+  icon: build/icon.png
+publish: null

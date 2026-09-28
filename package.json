@@ -1,0 +1,58 @@
+{
+  "name": "rift-companion",
+  "productName": "Rift Companion",
+  "version": "0.1.0",
+  "description": "Ad-free League of Legends companion app – tier lists, builds, runes, auto-import, live game scouting. Powered by your own Riot API crawler.",
+  "main": "./out/main/index.js",
+  "author": "Alexander Fink",
+  "license": "MIT",
+  "homepage": "https://github.com/ratioAI/ratiLoLAI",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "build:web": "vite build -c vite.web.config.ts",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.5.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0",
+    "electron-vite": "^5.0.0",
+    "lucide-react": "^1.48.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "~5.9.0",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ratioAI/ratiLoLAI.git"
+  },
+  "keywords": [
+    "league-of-legends",
+    "electron",
+    "react",
+    "typescript",
+    "riot-api",
+    "lcu",
+    "tier-list",
+    "companion-app"
+  ]
+}
