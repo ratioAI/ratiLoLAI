@@ -8,6 +8,7 @@ import { StatsStore } from './crawler/statsStore'
 import { DataDragon, makeClassifier } from './ddragon'
 import { LcuManager } from './lcu/manager'
 import { ProfileService } from './profile'
+import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
 import { RiotClient } from './riot/client'
 import { SettingsStore } from './settings'
 
@@ -105,15 +106,21 @@ function registerIpc(): void {
     return next
   })
   handle('setApiKey', async (key: string) => {
-    const trimmed = key.trim()
-    settings.setApiKey(trimmed)
-    if (!trimmed) return { ok: true, message: 'API Key entfernt.' }
+    const clean = sanitizeApiKey(key)
+    if (!clean) {
+      settings.setApiKey('')
+      return { ok: true, message: 'API Key entfernt.' }
+    }
+    if (!isValidKeyFormat(clean)) {
+      return { ok: false, message: 'Das sieht nicht wie ein Riot API Key aus (Format: RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).' }
+    }
+    settings.setApiKey(clean)
     try {
-      const platform = settings.get().platform
-      await riot.request(platform, '/lol/status/v4/platform-data')
+      // the Challenger league endpoint is available for every key type (dev, personal, production)
+      await riot.request(settings.get().platform, '/lol/league/v4/challengerleagues/by-queue/RANKED_SOLO_5x5')
       return { ok: true, message: 'API Key gespeichert und gültig ✔' }
     } catch (e) {
-      return { ok: false, message: (e as Error).message }
+      return { ok: false, message: `Key gespeichert, aber der Test ist fehlgeschlagen: ${(e as Error).message}` }
     }
   })
   handle('getPatches', () => store.patches())

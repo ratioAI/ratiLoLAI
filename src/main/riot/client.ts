@@ -1,5 +1,6 @@
 import type { Platform, Regional, SeedTier } from '@shared/types'
 import { PLATFORMS } from '@shared/types'
+import { describeKeyError } from './apiKey'
 import { parseRateLimitHeader, RateLimiter } from './rateLimiter'
 import type {
   AccountDTO,
@@ -15,7 +16,9 @@ import type {
 export class RiotApiError extends Error {
   constructor(
     public readonly status: number,
-    message: string
+    message: string,
+    /** status.message from Riot's error body, if any */
+    public readonly riotMessage: string | null = null
   ) {
     super(message)
     this.name = 'RiotApiError'
@@ -85,10 +88,14 @@ export class RiotClient {
         await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)))
         continue
       }
+      const riotMessage = await res
+        .json()
+        .then((b: { status?: { message?: string } }) => b?.status?.message ?? null)
+        .catch(() => null)
       if (res.status === 401 || res.status === 403) {
-        throw new RiotApiError(res.status, 'Riot API Key ungültig oder abgelaufen (Dev-Keys laufen nach 24 h ab).')
+        throw new RiotApiError(res.status, describeKeyError(res.status, riotMessage), riotMessage)
       }
-      throw new RiotApiError(res.status, `Riot API Fehler ${res.status} bei ${path}`)
+      throw new RiotApiError(res.status, `Riot API Fehler ${res.status} bei ${path}${riotMessage ? ` (${riotMessage})` : ''}`, riotMessage)
     }
     throw new RiotApiError(503, `Riot API nicht erreichbar (${path})`)
   }
