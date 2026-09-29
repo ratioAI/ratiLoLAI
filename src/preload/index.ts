@@ -30,6 +30,7 @@ const api: RcApi = {
   appInfo: () => call('appInfo'),
   installUpdate: () => call('installUpdate'),
   overlayDiagnostics: () => call('overlayDiagnostics'),
+  overlayScanNow: () => call('overlayScanNow'),
   overlayTestScan: () => call('overlayTestScan'),
   openDiagnosticsFolder: () => call('openDiagnosticsFolder'),
   liveGame: () => call('liveGame'),

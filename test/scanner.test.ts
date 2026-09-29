@@ -132,60 +132,51 @@ describe('AugmentSchedule', () => {
     expect(s.interval(T)).toBeNull() // no game yet
     s.update(tick(7, false), T)
     expect(s.pending).toBe(true)
-    expect(s.interval(T)).toBeNull() // alive in lane → nothing, however long the augment is pending
+    expect(s.interval(T)).toBeNull() // alive in lane → nothing
     s.update(tick(7, true), T)
-    expect(s.interval(T)).toBe(1200) // dead → the choice may open
+    expect(s.interval(T)).toBe(1000) // dead with an augment waiting → look often
   })
 
   it('looks at game start, after respawn, after shopping and on the hotkey', () => {
     const s = new AugmentSchedule()
     s.update(tick(1, false, 20), T)
-    expect(s.interval(T)).toBe(1200) // standing on the spawn at the start
+    expect(s.interval(T)).not.toBeNull() // standing on the spawn at the start
     s.update(tick(1, false, 150), T)
     expect(s.interval(T)).toBeNull()
 
     s.update(tick(7, true), T) // died
     s.update(tick(7, false), T + 5000) // respawned in the fountain
-    expect(s.interval(T + 10_000)).toBe(1200)
+    expect(s.interval(T + 10_000)).not.toBeNull()
     expect(s.interval(T + 5000 + WINDOWS.respawn + 1)).toBeNull()
 
     const later = T + 100_000
     s.update(tick(7, false, 600, '1,2,3'), later) // bought an item → in the fountain
-    expect(s.interval(later + 1000)).toBe(1200)
+    expect(s.interval(later + 1000)).not.toBeNull()
     expect(s.interval(later + WINDOWS.shopping + 1)).toBeNull()
 
     s.openWindow(WINDOWS.manual, later + 60_000)
-    expect(s.interval(later + 61_000)).toBe(1200)
+    expect(s.interval(later + 61_000)).not.toBeNull()
   })
 
-  it('counts a pick when the cards disappear (twice in a row)', () => {
+  it('keeps looking after the selection was closed without a pick (regression)', () => {
     const s = new AugmentSchedule()
     s.update(tick(1, false, 10), T)
-    expect(s.observe(true)).toBeNull()
-    expect(s.interval(T)).toBe(1000) // cards on screen → keep watching
-    expect(s.observe(false)).toBeNull() // one missing frame is not a pick
-    expect(s.observe(true)).toBeNull()
-    expect(s.observe(false)).toBeNull()
-    expect(s.observe(false)).toBe('picked')
+    s.observe(true) // level-1 cards seen
     expect(s.pending).toBe(false)
-    expect(s.interval(T)).toBeNull() // nothing to do until level 7
-    s.update(tick(6, true), T)
-    expect(s.interval(T)).toBeNull()
+    s.observe(false)
+    expect(s.observe(false)).toBe('gone') // closed (or picked) – can't tell
+    s.observe(true) // reopened
+    s.observe(false)
+    s.observe(false)
+    // level 7, dead: must be watched no matter how often cards came and went before
     s.update(tick(7, true), T)
     expect(s.pending).toBe(true)
-  })
-
-  it('handles several unpicked augments', () => {
-    const s = new AugmentSchedule()
-    s.update(tick(11, true), T)
-    expect(s.earned).toBe(3)
-    for (let i = 0; i < 3; i++) {
-      s.observe(true)
-      s.observe(false)
-      s.observe(false)
-    }
+    expect(s.interval(T)).toBe(1000)
+    s.observe(true)
     expect(s.pending).toBe(false)
-    s.update(tick(15, false), T)
-    expect(s.pending).toBe(true)
+    s.observe(false)
+    s.observe(false)
+    // still dead, nothing pending: keep an eye on it, just less often
+    expect(s.interval(T)).toBe(2000)
   })
 })

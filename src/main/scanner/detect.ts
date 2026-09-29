@@ -179,18 +179,21 @@ export interface PlayerTick {
 export const WINDOWS = { respawn: 20_000, shopping: 15_000, manual: 20_000, gameStart: 100 }
 
 /**
- * Decides when the screen is worth looking at. A choice becomes pending when the player reaches an
- * augment level and is resolved once its cards disappear from the screen. The selection only opens
- * while dead or in the fountain, so outside of those moments **no screenshot is taken at all**:
+ * Decides when the screen is worth looking at. The augment choice only opens while dead or in the
+ * fountain, so outside of those moments **no picture is taken at all**:
  *  - while dead,
  *  - in the first 100 s of the game (spawn, level-1 augment),
  *  - 20 s after respawning (standing in the fountain),
  *  - 15 s after an inventory change (shopping is only possible in the fountain),
  *  - 20 s after pressing the overlay hotkey,
- *  - while the cards are on screen (to notice the pick).
+ *  - while the cards are on screen.
+ *
+ * Inside those windows it always looks – it does not try to count picks, because the selection
+ * can be closed and reopened (leaving the fountain, the toggle button) and a miscounted pick used
+ * to switch recognition off for the rest of the game. `pending` (an augment level reached whose
+ * cards haven't been seen yet) only makes it look more often and shows the "augment ready" pill.
  */
 export class AugmentSchedule {
-  private picked = 0
   private level = 0
   private dead = false
   private gameTime = 0
@@ -198,6 +201,8 @@ export class AugmentSchedule {
   private windowUntil = 0
   private seen = false
   private misses = 0
+  /** number of augment levels whose cards have been on screen */
+  private handled = 0
 
   update(t: PlayerTick, now = Date.now()): void {
     if (this.dead && !t.dead) this.openWindow(WINDOWS.respawn, now)
@@ -216,44 +221,45 @@ export class AugmentSchedule {
     return AUGMENT_LEVELS.filter((l) => this.level >= l).length
   }
 
+  /** An augment level was reached whose cards haven't been seen yet. */
   get pending(): boolean {
-    return this.level > 0 && this.earned > this.picked
+    return this.level > 0 && this.earned > this.handled
   }
 
   /** True while the choice can actually be open (dead, fountain, cards on screen). */
   canOpen(now = Date.now()): boolean {
-    return this.dead || this.seen || this.gameTime < WINDOWS.gameStart || now < this.windowUntil
+    return this.level > 0 && (this.dead || this.seen || this.gameTime < WINDOWS.gameStart || now < this.windowUntil)
   }
 
-  /** Scan interval in ms, or null when there is nothing to look for right now. */
+  /** Scan interval in ms, or null when the choice can't be open right now. */
   interval(now = Date.now()): number | null {
-    if (!this.pending || !this.canOpen(now)) return null
-    return this.seen ? 1000 : 1200
+    if (!this.canOpen(now)) return null
+    if (this.seen) return 1000
+    return this.pending ? 1000 : 2000
   }
 
   get cardsSeen(): boolean {
     return this.seen
   }
 
-  /** Feed the scan result: cards disappearing after being visible means the augment was picked. */
-  observe(cardsOnScreen: boolean): 'picked' | null {
+  /** Feed the scan result. Returns 'gone' when visible cards disappeared (picked or closed). */
+  observe(cardsOnScreen: boolean): 'gone' | null {
     if (cardsOnScreen) {
       this.seen = true
       this.misses = 0
+      this.handled = this.earned
       return null
     }
-    // two misses in a row, so a single bad frame (animation, hover effect) doesn't count as a pick
+    // two misses in a row, so a single bad frame (animation, hover effect) doesn't count
     if (this.seen && ++this.misses >= 2) {
       this.seen = false
       this.misses = 0
-      this.picked = Math.min(this.earned, this.picked + 1)
-      return 'picked'
+      return 'gone'
     }
     return null
   }
 
   reset(): void {
-    this.picked = 0
     this.level = 0
     this.dead = false
     this.gameTime = 0
@@ -261,5 +267,6 @@ export class AugmentSchedule {
     this.windowUntil = 0
     this.seen = false
     this.misses = 0
+    this.handled = 0
   }
 }

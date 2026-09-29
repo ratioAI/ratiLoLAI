@@ -99,9 +99,17 @@ export class AugmentScanner {
     )
   }
 
-  /** Screens to watch: the known game screen if it still exists, otherwise all of them. */
+  /** Consecutive looks at the known game screen without finding cards while an augment is pending. */
+  private knownMisses = 0
+
+  /**
+   * Screens to watch: the known game screen if it still exists, otherwise all of them. If the
+   * known screen keeps coming up empty while an augment is waiting (game moved to the other
+   * monitor, wrong screen remembered), all screens are watched again.
+   */
   private watchedDisplays(): Display[] {
     const all = screen.getAllDisplays()
+    if (this.knownMisses >= 6) return all
     const id = this.gameDisplay ?? this.knownDisplay.get()
     const known = all.find((d) => d.id === id)
     return known ? [known] : all
@@ -178,9 +186,14 @@ export class AugmentScanner {
     this.busy = true
     try {
       const state = await this.look()
-      if (this.schedule.observe(state.visible) === 'picked') {
+      if (state.visible) this.knownMisses = 0
+      else if (this.schedule.pending && ++this.knownMisses === 6 && screen.getAllDisplays().length > 1) {
+        this.log('no cards on the remembered screen – watching all screens')
+        this.reschedule()
+      }
+      if (this.schedule.observe(state.visible) === 'gone') {
         this.signature = null
-        this.log('cards gone → augment picked')
+        this.log('cards gone (picked or closed)')
       }
       this.publish(state)
     } catch (e) {

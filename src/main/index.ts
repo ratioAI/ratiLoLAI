@@ -416,6 +416,10 @@ function registerIpc(): void {
     }
   })
   handle('overlayDiagnostics', () => overlayDiagnostics())
+  handle('overlayScanNow', () => {
+    diag.log('scan requested from the overlay')
+    if (scanner.running) scanner.lookNow(WINDOWS.manual)
+  })
   handle('overlayTestScan', async () => {
     if (!candidates.length) await loadCandidates()
     return scanner.testScan(join(userData, 'logs'))
@@ -482,6 +486,21 @@ void app.whenReady().then(async () => {
     const { nativeImage } = await import('electron')
     const res = await scanner.selfTest(nativeImage.createFromPath(process.env.RC_OCR_SELFTEST))
     console.log('RC_OCR_SELFTEST ' + JSON.stringify(res))
+    app.exit(0)
+    return
+  }
+  if (process.env.RC_BLINK_SELFTEST) {
+    const d = screen.getPrimaryDisplay()
+    const w = new BrowserWindow({ ...d.bounds, frame: false, show: true })
+    await w.loadFile(process.env.RC_BLINK_SELFTEST)
+    capture.demand('t', { displays: [d.id], fps: 2 })
+    const out: string[] = []
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 700))
+      const f = await capture.grab(d, [{ x: 0.5, y: 0.5, w: 0.01, h: 0.01, outW: 1, outH: 1 }])
+      out.push(f ? Array.from(f[0].data.slice(0, 3)).join('/') : 'null')
+    }
+    console.log('RC_BLINK ' + out.join('  '))
     app.exit(0)
     return
   }

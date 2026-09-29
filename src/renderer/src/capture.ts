@@ -12,8 +12,18 @@ interface Stream {
   sourceId: string
   video: HTMLVideoElement
   stream: MediaStream
+  /** newest frame straight from the track (independent of whether this hidden page paints) */
+  latest: VideoFrame | null
+  latestAt: number
+  stop: () => void
 }
 
+// Chromium exposes MediaStreamTrackProcessor on window; not (yet) in TypeScript's DOM lib
+declare const MediaStreamTrackProcessor:
+  | (new (init: { track: MediaStreamTrack }) => { readable: ReadableStream<VideoFrame> })
+  | undefined
+
+const noop = (): void => undefined
 const streams = new Map<number, Stream>()
 const canvas = new OffscreenCanvas(1, 1)
 const ctx = canvas.getContext('2d', { willReadFrequently: true })!
@@ -45,31 +55,57 @@ async function open(displayId: number, sourceId: string, width: number, height: 
   video.muted = true
   video.srcObject = stream
   await video.play()
-  streams.set(displayId, { sourceId, video, stream })
+  const entry: Stream = { sourceId, video, stream, latest: null, latestAt: 0, stop: noop }
+  const track = stream.getVideoTracks()[0]
+  if (typeof MediaStreamTrackProcessor !== 'undefined' && track) {
+    // read frames off the track and keep only the newest one
+    const reader = new MediaStreamTrackProcessor({ track }).readable.getReader()
+    let running = true
+    entry.stop = () => {
+      running = false
+      void reader.cancel().catch(() => undefined)
+    }
+    void (async () => {
+      while (running) {
+        const { value, done } = await reader.read().catch(() => ({ value: undefined, done: true }))
+        if (done || !value) break
+        entry.latest?.close()
+        entry.latest = value
+        entry.latestAt = performance.now()
+      }
+    })()
+  }
+  streams.set(displayId, entry)
 }
 
 function close(displayId: number): void {
   const s = streams.get(displayId)
   if (!s) return
+  s.stop()
+  s.latest?.close()
+  s.latest = null
   s.stream.getTracks().forEach((t) => t.stop())
   s.video.srcObject = null
   streams.delete(displayId)
 }
 
-async function waitForFrame(video: HTMLVideoElement): Promise<void> {
+/** The newest frame (VideoFrame from the track, or the video element as fallback). */
+async function currentFrame(s: Stream): Promise<{ source: CanvasImageSource; W: number; H: number; age: number }> {
   const start = performance.now()
-  while (video.readyState < 2 || !video.videoWidth) {
+  for (;;) {
+    if (s.latest) return { source: s.latest, W: s.latest.displayWidth, H: s.latest.displayHeight, age: performance.now() - s.latestAt }
+    if (s.stop === noop && s.video.readyState >= 2 && s.video.videoWidth)
+      return { source: s.video, W: s.video.videoWidth, H: s.video.videoHeight, age: 0 }
     if (performance.now() - start > 3000) throw new Error('no frame from the screen stream')
-    await new Promise((r) => setTimeout(r, 50))
+    await new Promise((r) => setTimeout(r, 40))
   }
 }
+
 
 async function grab(displayId: number, regions: CaptureRegion[]): Promise<CaptureReply> {
   const s = streams.get(displayId)
   if (!s) throw new Error(`no stream for display ${displayId}`)
-  await waitForFrame(s.video)
-  const W = s.video.videoWidth
-  const H = s.video.videoHeight
+  const { source, W, H, age } = await currentFrame(s)
   const frames = regions.map((r) => {
     const sx = r.x * W
     const sy = r.y * H
@@ -81,11 +117,11 @@ async function grab(displayId: number, regions: CaptureRegion[]): Promise<Captur
     canvas.height = oh
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'medium'
-    ctx.drawImage(s.video, sx, sy, sw, sh, 0, 0, ow, oh)
+    ctx.drawImage(source, sx, sy, sw, sh, 0, 0, ow, oh)
     const img = ctx.getImageData(0, 0, ow, oh)
     return { width: ow, height: oh, data: new Uint8Array(img.data.buffer) }
   })
-  return { ok: true, frameWidth: W, frameHeight: H, frames }
+  return { ok: true, frameWidth: W, frameHeight: H, frameAge: Math.round(age), frames }
 }
 
 async function handle(cmd: CaptureCommand): Promise<CaptureReply> {

@@ -468,6 +468,7 @@ export function createMockApi(): RcApi {
       captureStream: 'off',
       log: ['web demo – no game running']
     }),
+    overlayScanNow: async () => undefined,
     overlayTestScan: async () => ({ captureMs: 0, screens: [] }),
     openDiagnosticsFolder: async () => undefined,
     getMayhemPersonal: async (): Promise<MayhemPersonal> => {

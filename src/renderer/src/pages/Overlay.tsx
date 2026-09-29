@@ -77,7 +77,7 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
   if (!championId)
     return (
       <div className="pointer-events-none fixed inset-0 select-none">
-        <div className="overlay-panel absolute right-3 top-[14%] flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#f0e6d2]">
+        <div className={`overlay-panel absolute ${part === 'panel' ? 'right-1 top-1' : 'right-3 top-[14%]'} flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#f0e6d2]`}>
           <Sparkles size={14} className="text-gold" /> Augments
           <span className="text-[10px] font-medium text-muted">waiting for your champion…</span>
         </div>
@@ -98,7 +98,10 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
       >
         {!expanded ? (
           <button
-            onClick={() => setExpanded(true)}
+            onClick={() => {
+              setExpanded(true)
+              void api.overlayScanNow()
+            }}
             className="overlay-panel flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#f0e6d2]"
           >
             <Sparkles size={14} className="text-gold" /> Augments

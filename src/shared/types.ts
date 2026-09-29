@@ -550,6 +550,8 @@ export interface RcApi {
   appInfo(): Promise<{ version: string; update: UpdateState }>
   installUpdate(): Promise<void>
   overlayDiagnostics(): Promise<OverlayDiagnostics>
+  /** look for augment cards right now (and for the next 20 s), e.g. from the overlay pill */
+  overlayScanNow(): Promise<void>
   overlayTestScan(): Promise<ScanTestResult>
   openDiagnosticsFolder(): Promise<void>
   liveGame(): Promise<LiveGameState | null>

@@ -27,6 +27,8 @@ export interface CaptureReply {
   error?: string
   frameWidth?: number
   frameHeight?: number
+  /** ms since the frame was captured – a large value means the stream stalled */
+  frameAge?: number
   frames?: CaptureFrame[]
 }
 
