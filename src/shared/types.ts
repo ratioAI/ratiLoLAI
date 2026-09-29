@@ -22,7 +22,7 @@ export const GAME_MODES: Record<GameMode, { label: string; queue: number; roles:
 }
 
 /** Queue ids of the modes the app recognises in champion select. */
-export const QUEUE_IDS = { ranked: [420, 440, 400, 430, 490], aram: [450, 100], mayhem: [2400] } as const
+export const QUEUE_IDS = { ranked: [420, 440, 400, 430, 490], aram: [450, 100], mayhem: [2400, 3270] } as const
 export type SelectMode = 'ranked' | 'aram' | 'mayhem' | 'other'
 
 export function selectModeOfQueue(queueId: number | null | undefined, gameMode?: string | null): SelectMode {

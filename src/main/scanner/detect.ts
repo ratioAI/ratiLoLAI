@@ -28,12 +28,20 @@ function brightness(b: Bitmap, x: number, y: number): number {
  * Returns true when at least two of the three cards look like an augment card.
  */
 export function cardsVisible(b: Bitmap): boolean {
+  return cardMetrics(b).filter((m) => m.bright > 0.8 && m.dark > 0.6).length >= 2
+}
+
+/** Per card: share of rows with a bright frame pixel, share of dark samples in the card body. */
+export function cardMetrics(b: Bitmap): { bright: number; dark: number }[] {
   const H = b.height
-  let cards = 0
+  const out: { bright: number; dark: number }[] = []
   for (const cx of cardCentres(b.width, H)) {
     const x0 = Math.max(0, Math.round(cx + LAYOUT.frameFrom * H))
     const x1 = Math.min(b.width - 1, Math.round(cx + LAYOUT.frameTo * H))
-    if (x1 <= x0) continue
+    if (x1 <= x0) {
+      out.push({ bright: 0, dark: 0 })
+      continue
+    }
     let rows = 0
     let bright = 0
     for (let y = Math.round(0.25 * H); y < 0.62 * H; y += Math.max(2, Math.round(H / 270))) {
@@ -53,9 +61,22 @@ export function cardsVisible(b: Bitmap): boolean {
       samples++
       if (brightness(b, cx + dx, ey) < 90) dark++
     }
-    if (rows && bright / rows > 0.8 && dark / samples > 0.6) cards++
+    out.push({ bright: rows ? bright / rows : 0, dark: samples ? dark / samples : 0 })
   }
-  return cards >= 2
+  return out
+}
+
+/** Mean brightness 0–255 (sparse sample) – ~0 means the capture is black. */
+export function meanBrightness(b: Bitmap): number {
+  let sum = 0
+  let n = 0
+  for (let y = 0; y < b.height; y += 8) {
+    for (let x = 0; x < b.width; x += 8) {
+      sum += brightness(b, x, y)
+      n++
+    }
+  }
+  return n ? sum / n : 0
 }
 
 /**

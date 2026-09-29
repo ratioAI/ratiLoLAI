@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { MayhemData, MayhemPersonal } from '@shared/types'
+import { QUEUE_IDS } from '@shared/types'
 import {
   buildMayhemData,
   type AmAugmentRow,
@@ -93,7 +94,7 @@ export interface LcuHistory {
 }
 
 export function isMayhemGame(g: { queueId: number; gameMode: string }): boolean {
-  return g.queueId === 2400 || g.gameMode === 'KIWI'
+  return (QUEUE_IDS.mayhem as readonly number[]).includes(g.queueId) || g.gameMode === 'KIWI'
 }
 
 /** Aggregates the player's own Mayhem games (augments are the playerAugmentN fields). */

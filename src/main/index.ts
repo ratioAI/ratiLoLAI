@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { ChampionBuild, GameMode, LiveGameState, PatchStats, Platform, RcEvents, Settings, StatRole, TierEntry, UpdateState, OverlayDiagnostics, MinimapState, AugmentOffer } from '@shared/types'
-import { PLATFORMS } from '@shared/types'
+import { PLATFORMS, QUEUE_IDS } from '@shared/types'
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { Crawler } from './crawler/crawler'
 import { StatsStore } from './crawler/statsStore'
@@ -119,6 +119,8 @@ const scanner = new AugmentScanner(
   gameDisplay
 )
 
+scanner.snapshotDir = join(userData, 'logs')
+
 // inhibitor timers on the minimap (ARAM) – health relic timers are shown by the game itself
 const minimap = new MinimapWatcher(
   () => settings.get().minimap,
@@ -139,7 +141,7 @@ function updateOverlay(live: LiveGameState | null): void {
   const wasInGame = inGame
   inGame = !!live?.active
   const queueId = lcu.getGameQueueId()
-  const nowMayhem = inGame && (live!.gameMode === 'KIWI' || queueId === 2400)
+  const nowMayhem = inGame && (live!.gameMode === 'KIWI' || (queueId !== null && (QUEUE_IDS.mayhem as readonly number[]).includes(queueId)))
   const aram = inGame && (nowMayhem || live!.gameMode === 'ARAM' || queueId === 450)
   if (inGame && (!wasInGame || live!.gameMode !== lastTick.gameMode)) {
     diag.log(`game detected: gameMode=${live!.gameMode} queue=${queueId ?? '?'} → mayhem=${nowMayhem}`)

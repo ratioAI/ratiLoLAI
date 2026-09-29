@@ -1,11 +1,13 @@
-import { writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { desktopCapturer, nativeImage, screen, type Display } from 'electron'
 import type { AugmentOffer, ScanTestResult } from '@shared/types'
 import {
   AugmentSchedule,
   cardRects,
+  cardMetrics,
   cardsVisible,
+  meanBrightness,
   matchAugment,
   prepareTitle,
   signatureChanged,
@@ -142,6 +144,9 @@ export class AugmentScanner {
   }
 
   start(): void {
+    this.snapshots = 0
+    this.missStreak = 0
+    void this.clearSnapshots()
     this.active = true
     this.log('scanner started')
     this.reschedule()
@@ -186,6 +191,7 @@ export class AugmentScanner {
     this.busy = true
     try {
       const state = await this.look()
+      void this.maybeSnapshot(state.visible)
       if (state.visible) this.knownMisses = 0
       else if (this.schedule.pending && ++this.knownMisses === 6 && screen.getAllDisplays().length > 1) {
         this.log('no cards on the remembered screen – watching all screens')
@@ -205,6 +211,63 @@ export class AugmentScanner {
     }
   }
 
+  /** folder for diagnostic snapshots (Settings → Diagnostics → Open log folder) */
+  snapshotDir: string | null = null
+  private missStreak = 0
+  private snapshots = 0
+  private lastSnapshot = 0
+  private lastPreviews: { display: Display; bitmap: Bitmap }[] = []
+
+  /**
+   * An augment is waiting and the choice should be openable, but no cards were found for a while:
+   * save what the recognition saw (a few per game, 1280 px JPEG) plus the numbers it measured, so a
+   * failure can be diagnosed from the log folder instead of guessed.
+   */
+  private async maybeSnapshot(visible: boolean): Promise<void> {
+    if (visible || !this.schedule.pending || !this.snapshotDir) {
+      this.missStreak = 0
+      return
+    }
+    if (++this.missStreak < 5 || this.snapshots >= 4 || Date.now() - this.lastSnapshot < 25_000) return
+    this.snapshots++
+    this.lastSnapshot = Date.now()
+    try {
+      await mkdir(this.snapshotDir, { recursive: true })
+      for (const { display, bitmap } of this.lastPreviews) {
+        const m = cardMetrics(bitmap)
+          .map((c) => `${Math.round(c.bright * 100)}/${Math.round(c.dark * 100)}`)
+          .join(' ')
+        const name = `miss-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}-${display.id}.jpg`
+        let img: Bitmap | null = null
+        if (this.capture && !this.capture.failed) {
+          const f = await this.capture.grab(display, [{ x: 0, y: 0, w: 1, h: 1, outW: 1280 }])
+          if (f?.[0]) img = { ...f[0], order: 'rgba' }
+        }
+        img ??= bitmap
+        const bgra = Buffer.from(img.data)
+        if (img.order === 'rgba')
+          for (let i = 0; i < bgra.length; i += 4) {
+            const r = bgra[i]
+            bgra[i] = bgra[i + 2]
+            bgra[i + 2] = r
+          }
+        await writeFile(join(this.snapshotDir, name), nativeImage.createFromBitmap(bgra, { width: img.width, height: img.height }).toJPEG(80))
+        this.log(
+          `no cards found for ${this.missStreak} looks – saved ${name} (${bitmap.width}×${bitmap.height}, brightness ${Math.round(meanBrightness(bitmap))}, frame/body % per card: ${m})`
+        )
+      }
+    } catch (e) {
+      this.log(`snapshot failed: ${String(e)}`)
+    }
+  }
+
+  /** Removes the snapshots of earlier games. */
+  private async clearSnapshots(): Promise<void> {
+    if (!this.snapshotDir) return
+    const files = await readdir(this.snapshotDir).catch(() => [] as string[])
+    await Promise.all(files.filter((f) => /^miss-.*\.jpg$/.test(f)).map((f) => unlink(join(this.snapshotDir!, f)).catch(() => undefined)))
+  }
+
   /** Small previews of the watched screens – from the running stream, or getSources() as fallback. */
   private async previews(): Promise<{ display: Display; bitmap: Bitmap }[]> {
     if (this.capture && !this.capture.failed) {
@@ -222,6 +285,7 @@ export class AugmentScanner {
   private async look(): Promise<ScanState> {
     const t0 = Date.now()
     const shots = await this.previews()
+    this.lastPreviews = shots
     const ms = Date.now() - t0
     if (!shots.length) {
       this.log(`preview capture returned no screens (${ms} ms)`)
