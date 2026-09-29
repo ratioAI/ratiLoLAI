@@ -349,6 +349,7 @@ export function createMockApi(): RcApi {
     },
     overlay: { enabled: true, hotkey: 'Alt+Shift+A', autoExpand: true, cardFrames: true, animation: 'smooth', gameDisplayId: null },
     minimap: { enabled: true, inhibitors: true, scale: 1 },
+    ui: { background: 'animated' },
     client: { autoImportRunes: true, autoImportItems: true, autoImportSpells: false, flashOn: 'F', autoAccept: true, acceptDelay: 'human' }
   }
 
@@ -517,7 +518,7 @@ export function createMockApi(): RcApi {
     importBuild: async (championId) => {
       const d = await getStatic()
       return {
-        runes: `RC: ${d.champions[championId]?.name}`,
+        runes: `ratioAI: ${d.champions[championId]?.name}`,
         items: `RC ${d.champions[championId]?.name}`,
         errors: []
       }

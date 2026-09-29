@@ -278,6 +278,10 @@ export interface Settings {
     /** screen the game was last seen on (set automatically) */
     gameDisplayId: number | null
   }
+  ui: {
+    /** animated background: animated (24 fps), calm (10 fps) or static */
+    background: 'animated' | 'calm' | 'static'
+  }
   minimap: {
     /** timers on the minimap in ARAM / ARAM: Mayhem */
     enabled: boolean

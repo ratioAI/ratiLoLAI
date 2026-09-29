@@ -33,7 +33,7 @@ class OverlayWindow {
       hasShadow: false,
       show: false,
       backgroundColor: '#00000000',
-      title: `Rift Companion ${this.part}`,
+      title: `ratioAI ${this.part}`,
       webPreferences: { preload: this.preload, contextIsolation: true, sandbox: false, nodeIntegration: false }
     })
     win.setAlwaysOnTop(true, 'screen-saver')

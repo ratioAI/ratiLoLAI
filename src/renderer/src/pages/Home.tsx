@@ -33,8 +33,10 @@ export function Home() {
           <GameImage src={img.profileIcon(data, client.summoner.profileIconId)} size={56} alt="icon" rounded="rounded-2xl" />
         ) : null}
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">
-            {client.summoner ? `Welcome back, ${client.summoner.gameName}` : 'Welcome to Rift Companion'}
+          <h1 className="font-display text-[28px] leading-tight font-extrabold tracking-tight">
+            <span className="iridescent-text">
+              {client.summoner ? `Welcome back, ${client.summoner.gameName}` : 'Welcome to ratioAI'}
+            </span>
           </h1>
           <p className="text-sm text-muted">No ads. Your data. Your crawler.</p>
         </div>
@@ -47,7 +49,7 @@ export function Home() {
           value={client.connected ? PHASES[client.phase] ?? client.phase : 'Not running'}
           ok={client.connected}
         >
-          {client.connected ? 'Runes & items are imported automatically when you lock in.' : 'Start the League client – Rift Companion connects automatically.'}
+          {client.connected ? 'Runes & items are imported automatically when you lock in.' : 'Start the League client – ratioAI connects automatically.'}
         </StatusCard>
         <StatusCard
           icon={<Database size={18} />}

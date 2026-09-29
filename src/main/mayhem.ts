@@ -17,7 +17,7 @@ const AM = 'https://arammayhem.com/data/v1/latest'
 const MAX_AGE_MS = 12 * 3600 * 1000
 
 async function json<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: { 'User-Agent': 'RiftCompanion (github.com/ratioAI/ratiLoLAI)' } })
+  const res = await fetch(url, { headers: { 'User-Agent': 'ratioAI (github.com/ratioAI/ratiLoLAI)' } })
   if (!res.ok) throw new Error(`${res.status} ${url}`)
   return (await res.json()) as T
 }

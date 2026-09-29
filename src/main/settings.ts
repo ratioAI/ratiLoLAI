@@ -27,6 +27,9 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
     animation: 'smooth',
     gameDisplayId: null
   },
+  ui: {
+    background: 'animated'
+  },
   minimap: {
     enabled: true,
     inhibitors: true,
@@ -62,6 +65,7 @@ export class SettingsStore {
       crawler: { ...DEFAULT_SETTINGS.crawler, ...loaded.crawler },
       overlay: { ...DEFAULT_SETTINGS.overlay, ...loaded.overlay },
       minimap: { ...DEFAULT_SETTINGS.minimap, ...loaded.minimap },
+      ui: { ...DEFAULT_SETTINGS.ui, ...loaded.ui },
       client: { ...DEFAULT_SETTINGS.client, ...loaded.client }
     }
     if ((loaded.schema ?? 1) < 2) this.data.language = 'en_US'
@@ -83,6 +87,7 @@ export class SettingsStore {
       crawler: { ...this.data.crawler, ...patch.crawler },
       overlay: { ...this.data.overlay, ...patch.overlay },
       minimap: { ...this.data.minimap, ...patch.minimap },
+      ui: { ...this.data.ui, ...patch.ui },
       client: { ...this.data.client, ...patch.client }
     }
     this.save()

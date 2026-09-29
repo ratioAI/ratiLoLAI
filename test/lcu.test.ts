@@ -93,7 +93,7 @@ describe('import payloads', () => {
   it('creates a rune page with 9 perks', () => {
     const page = buildRunePagePayload(build, 'Ahri')!
     expect(page.selectedPerkIds).toHaveLength(9)
-    expect(page.name.startsWith('RC: ')).toBe(true)
+    expect(page.name.startsWith('ratioAI: ')).toBe(true)
     expect(page.name.length).toBeLessThanOrEqual(25)
   })
 

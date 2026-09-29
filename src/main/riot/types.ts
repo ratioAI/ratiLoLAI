@@ -1,4 +1,4 @@
-// Minimal subsets of the Riot API DTOs that Rift Companion uses.
+// Minimal subsets of the Riot API DTOs that ratioAI uses.
 
 export interface LeagueListDTO {
   tier: string

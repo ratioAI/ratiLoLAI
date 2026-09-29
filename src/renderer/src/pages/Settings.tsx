@@ -95,6 +95,31 @@ export function Settings() {
         </Field>
       </Group>
 
+      <Group title="Appearance">
+        <Field label="Background">
+          <div className="flex rounded-xl border border-line bg-bg-2 p-1">
+            {(
+              [
+                ['animated', 'Flowing'],
+                ['calm', 'Calm'],
+                ['static', 'Still']
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => save({ ui: { ...settings.ui, background: k } })}
+                className={`rounded-lg px-3 py-1 text-xs font-bold ${settings.ui.background === k ? 'bg-panel-2 text-accent' : 'text-muted'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <p className="pt-1 text-xs text-muted">
+          While a game is running the background automatically slows down, so it never competes with League for your graphics card.
+        </p>
+      </Group>
+
       <Group title="In-game overlay (ARAM: Mayhem)">
         <p className="mb-2 text-sm text-muted">
           Frames the augment cards by tier right in the game. It only looks at the screen while an augment is waiting to be
@@ -282,7 +307,7 @@ export function Settings() {
       </Group>
 
       <p className="mt-8 text-xs leading-relaxed text-muted">
-        Rift Companion {isDemo ? '(web demo)' : ''} isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone
+        ratioAI {isDemo ? '(web demo)' : ''} isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone
         officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered
         trademarks of Riot Games, Inc.
       </p>

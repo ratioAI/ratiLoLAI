@@ -1,5 +1,5 @@
 appId: dev.riftcompanion.app
-productName: Rift Companion
+productName: ratioAI
 directories:
   buildResources: build
   output: release/${version}
@@ -22,13 +22,13 @@ win:
     - target: nsis
       arch: [x64]
   icon: build/icon.png
-  artifactName: RiftCompanion-Setup-${version}.${ext}
+  artifactName: ratioAI-Setup-${version}.${ext}
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
-  shortcutName: Rift Companion
+  shortcutName: ratioAI
 mac:
   target: [dmg]
   category: public.app-category.games

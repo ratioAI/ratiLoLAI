@@ -1,6 +1,13 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter, Route, Routes } from 'react-router-dom'
+import '@fontsource/inter/400.css'
+import '@fontsource/inter/500.css'
+import '@fontsource/inter/600.css'
+import '@fontsource/inter/700.css'
+import '@fontsource/inter/800.css'
+import '@fontsource/syne/700.css'
+import '@fontsource/syne/800.css'
 import './styles.css'
 import { AppProvider, useApp } from './lib/store'
 import { Layout, Spinner } from './components/Layout'
@@ -14,16 +21,27 @@ import { Data } from './pages/Data'
 import { Settings } from './pages/Settings'
 import { Mayhem } from './pages/Mayhem'
 import { Overlay } from './pages/Overlay'
+import { TripBackground } from './components/TripBackground'
 import { OverlayFrames } from './pages/OverlayFrames'
 import { OverlayMinimap } from './pages/OverlayMinimap'
 
 function Shell() {
-  const { data, dataError } = useApp()
+  const { settings, live } = useApp()
   const hash = window.location.hash
   if (hash.startsWith('#/overlay/panel')) return <Overlay part="panel" />
   if (hash.startsWith('#/overlay/frames')) return <OverlayFrames />
   if (hash.startsWith('#/overlay/minimap')) return <OverlayMinimap />
   if (hash.startsWith('#/overlay')) return <Overlay />
+  return (
+    <>
+      <TripBackground mode={settings?.ui.background ?? 'animated'} inGame={!!live?.active} />
+      <MainShell />
+    </>
+  )
+}
+
+function MainShell() {
+  const { data, dataError } = useApp()
   if (!data) {
     return (
       <div className="drag flex h-full flex-col items-center justify-center gap-4 text-sm text-muted">

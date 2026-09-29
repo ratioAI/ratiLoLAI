@@ -39,7 +39,7 @@ export function Mayhem() {
         <Info size={18} className="mt-0.5 shrink-0 text-gold" />
         <p>
           Riot does not expose Mayhem matches in the official API and asks developers not to publish augment win rates.
-          Rift Companion therefore rates augments by <b className="text-text">curated combos, pick rates and champion fit</b> (open
+          ratioAI therefore rates augments by <b className="text-text">curated combos, pick rates and champion fit</b> (open
           dataset of arammayhem.com, China servers) and shows your <b className="text-text">own</b> Mayhem results from the
           League client. Items & runes for Mayhem come from your crawled ARAM games.
         </p>

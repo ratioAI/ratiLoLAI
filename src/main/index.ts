@@ -1,3 +1,4 @@
+import { existsSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
@@ -21,6 +22,21 @@ import { ProfileService } from './profile'
 import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
 import { RiotClient } from './riot/client'
 import { SettingsStore } from './settings'
+
+// The app was called "Rift Companion" before – move its data (settings, encrypted API key, crawled
+// stats, caches) to the new folder once, or keep using the old folder if moving isn't possible.
+{
+  const legacy = join(app.getPath('appData'), 'Rift Companion')
+  const current = app.getPath('userData')
+  if (legacy !== current && existsSync(legacy) && !existsSync(join(current, 'settings.json'))) {
+    try {
+      if (existsSync(current)) rmSync(current, { recursive: true, force: true })
+      renameSync(legacy, current)
+    } catch {
+      app.setPath('userData', legacy)
+    }
+  }
+}
 
 if (!app.requestSingleInstanceLock()) app.quit()
 
@@ -469,11 +485,11 @@ function createWindow(): void {
     minWidth: 1024,
     minHeight: 640,
     show: false,
-    backgroundColor: '#0b0e14',
-    title: 'Rift Companion',
+    backgroundColor: '#07050f',
+    title: 'ratioAI',
     icon: join(__dirname, '../../resources/icon.png'),
     titleBarStyle: 'hidden',
-    titleBarOverlay: process.platform === 'darwin' ? true : { color: '#0b0e14', symbolColor: '#9aa4b2', height: 40 },
+    titleBarOverlay: process.platform === 'darwin' ? true : { color: '#0c0818', symbolColor: '#c9b8f0', height: 40 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

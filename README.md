@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="build/icon.png" width="96" alt="Rift Companion logo" />
+<img src="build/icon.png" width="96" alt="ratioAI logo" />
 
-# Rift Companion
+# ratioAI
 
-**An ad-free League of Legends companion app – tier lists, builds, runes, auto-import, ARAM & ARAM: Mayhem augments and live-game scouting, powered by your own Riot API crawler.**
+**A psychedelic, ad-free League of Legends companion app – tier lists, builds, runes, auto-import, ARAM & ARAM: Mayhem augments and live-game scouting, powered by your own Riot API crawler.**
 
 [![CI](https://github.com/ratioAI/ratiLoLAI/actions/workflows/ci.yml/badge.svg)](https://github.com/ratioAI/ratiLoLAI/actions/workflows/ci.yml)
 ![Electron](https://img.shields.io/badge/Electron-38-47848F?logo=electron&logoColor=white)
@@ -22,7 +22,7 @@
 
 ## Why?
 
-Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. Rift Companion does the same job as a small, open-source desktop app **without any ads, tracking or third-party backend**. Instead of scraping someone else's statistics it ships its own **match crawler** that talks to the official Riot API and computes every number locally on your machine.
+Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. ratioAI does the same job as a small, open-source desktop app **without any ads, tracking or third-party backend**. Instead of scraping someone else's statistics it ships its own **match crawler** that talks to the official Riot API and computes every number locally on your machine.
 
 ## Features
 
@@ -35,7 +35,7 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. Ri
 | ✅ **Auto-accept** | Optionally accepts the ready check for you – after a random 2–6 s (or 4–8 s) delay like a person would, not the instant it pops. Accepting or declining yourself cancels it. |
 | 🔴 **Live game** | Champion-select overview (allies, enemies, bans), in-game scoreboard via the Live Client Data API, and loading-screen scouting (ranks of all 10 players). |
 | ❄️ **ARAM** | Separate ARAM crawler (queue 450) with its own tier list, builds, runes and auto-import. Champion select on the Howling Abyss is detected automatically; since there is no lock-in, the build is imported once your champion has stayed the same for 1.5 s (bench swaps included). |
-| 🖼️ **In-game overlay** | When the augment choice appears in ARAM: Mayhem, Rift Companion **recognises the three offered cards on screen** (frame detection + OCR of the card titles with a bundled Tesseract model – no memory reading, no injection) and draws a **psychedelic, wobbling tier frame** around each card (a small WebGL shader: full colour flow for S+, purple/pink for S, blue for A … dull bronze for D) with a crest, a *Best pick* marker and a one-line note. Built to stay out of the game's way: screenshots only while an augment is pending **and** the choice can open (dead, game start, after respawn/shopping), a single low-fps screen stream instead of repeated full-screen grabs, three small overlay windows instead of one full-screen surface, the animation capped at 30 fps (15 fps or static selectable), the OCR engine loaded during champion select, and the overlay excluded from screen capture. The augment you click is remembered, so later choices are rated **with the augments you already own**: a card that completes a proven combo is lifted (and labelled *Completes combo*), one that gets you closer is lifted one tier, a known trap sinks to D. Rerolls are picked up within half a second and the frames vanish as soon as the selection is closed. An optional side panel lists all augment tiers for your champion; <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> makes it look for the cards right away; League must run in borderless or windowed mode. |
+| 🖼️ **In-game overlay** | When the augment choice appears in ARAM: Mayhem, ratioAI **recognises the three offered cards on screen** (frame detection + OCR of the card titles with a bundled Tesseract model – no memory reading, no injection) and draws a **psychedelic, wobbling tier frame** around each card (a small WebGL shader: full colour flow for S+, purple/pink for S, blue for A … dull bronze for D) with a crest, a *Best pick* marker and a one-line note. Built to stay out of the game's way: screenshots only while an augment is pending **and** the choice can open (dead, game start, after respawn/shopping), a single low-fps screen stream instead of repeated full-screen grabs, three small overlay windows instead of one full-screen surface, the animation capped at 30 fps (15 fps or static selectable), the OCR engine loaded during champion select, and the overlay excluded from screen capture. The augment you click is remembered, so later choices are rated **with the augments you already own**: a card that completes a proven combo is lifted (and labelled *Completes combo*), one that gets you closer is lifted one tier, a known trap sinks to D. Rerolls are picked up within half a second and the frames vanish as soon as the selection is closed. An optional side panel lists all augment tiers for your champion; <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> makes it look for the cards right away; League must run in borderless or windowed mode. |
 | ⏱️ **Minimap timers** | Inhibitor respawn countdowns right under the inhibitor icons on the ARAM minimap – from the Live Client API event feed, no screen capture. (Health relic countdowns are drawn by the game itself.) |
 | ✨ **ARAM: Mayhem** | Augment tips per champion (top combos, strong picks, *traps*), proven multi-augment combinations and the most picked augments per rarity – shown in champion select, **in game** next to the scoreboard and on a dedicated page. Items & runes come from ARAM data, and your **own** Mayhem history (augments you picked, win rate) is read from the League client. |
 | 👤 **Profiles** | op.gg-style player lookup: ranks, mastery, last 15 games with KDA, CS/min, items, runes and champion stats. |
@@ -59,7 +59,7 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. Ri
 
 ### A note on ARAM: Mayhem
 
-Riot deliberately **blocks Mayhem matches in the public API** (they return `403`) and asks developers **not to publish augment win rates**, so that the mode isn't "solved" by stat sites ([developer-relations #1109](https://github.com/RiotGames/developer-relations/issues/1109)). Rift Companion respects that:
+Riot deliberately **blocks Mayhem matches in the public API** (they return `403`) and asks developers **not to publish augment win rates**, so that the mode isn't "solved" by stat sites ([developer-relations #1109](https://github.com/RiotGames/developer-relations/issues/1109)). ratioAI respects that:
 
 - Augment names, rarities and icons come from the game client data on [CommunityDragon](https://www.communitydragon.org/).
 - Pick rates and curated combos come from the open dataset of [arammayhem.com](https://arammayhem.com/data/) (CC BY 4.0, China servers) – *Data: arammayhem.com*.
@@ -71,7 +71,7 @@ Riot deliberately **blocks Mayhem matches in the public API** (they return `403`
 
 ### 1. Install
 
-Download the latest `RiftCompanion-Setup-x.y.z.exe` from [Releases](https://github.com/ratioAI/ratiLoLAI/releases) – or build it yourself:
+Download the latest `ratioAI-Setup-x.y.z.exe` from [Releases](https://github.com/ratioAI/ratiLoLAI/releases) – or build it yourself:
 
 ```bash
 git clone https://github.com/ratioAI/ratiLoLAI.git
@@ -99,7 +99,7 @@ Installed builds update themselves: on start (and every 4 h) the app checks GitH
 
 ### 4. Play
 
-Start the League client. Rift Companion connects automatically; when you lock in a champion your runes and item set are imported.
+Start the League client. ratioAI connects automatically; when you lock in a champion your runes and item set are imported.
 
 ## Architecture
 
@@ -159,10 +159,10 @@ CI runs type checks, tests and both builds on every push. Tagging `v*` builds th
 
 ## Is this allowed?
 
-Rift Companion only uses **official, documented interfaces**: the public Riot API, the League Client API (LCU – the same interface Blitz, Porofessor, Mobalytics etc. use for rune import) and the in-game Live Client Data API. It does not read game memory or inject anything into the game, so it is not affected by Vanguard. For personal use a development or personal API key is sufficient; if you want to distribute the app publicly with a shared key you have to register it as a product with Riot.
+ratioAI only uses **official, documented interfaces**: the public Riot API, the League Client API (LCU – the same interface Blitz, Porofessor, Mobalytics etc. use for rune import) and the in-game Live Client Data API. It does not read game memory or inject anything into the game, so it is not affected by Vanguard. For personal use a development or personal API key is sufficient; if you want to distribute the app publicly with a shared key you have to register it as a product with Riot.
 
 ## Legal
 
-Rift Companion isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
+ratioAI isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
 
 Code licensed under [MIT](LICENSE).

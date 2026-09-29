@@ -22,7 +22,7 @@ import {
   orderSpells,
   parseChampSelect,
   regionToPlatform,
-  RUNE_PAGE_PREFIX,
+  isOurRunePage,
   type RawSession
 } from './champSelect'
 import { findCredentials } from './credentials'
@@ -376,14 +376,14 @@ export class LcuManager {
     const payload = buildRunePagePayload(build, champName)
     if (!payload) throw new Error('no rune data')
     const pages = await client.get<PerkPage[]>('/lol-perks/v1/pages')
-    for (const p of pages.filter((p) => p.name.startsWith(RUNE_PAGE_PREFIX) && p.isDeletable)) {
+    for (const p of pages.filter((p) => isOurRunePage(p.name) && p.isDeletable)) {
       await client.request('DELETE', `/lol-perks/v1/pages/${p.id}`)
     }
     try {
       await client.request('POST', '/lol-perks/v1/pages', payload)
     } catch {
       // page limit reached – replace the currently selected editable page (same as other companion apps)
-      const current = pages.find((p) => p.current && p.isDeletable && !p.name.startsWith(RUNE_PAGE_PREFIX))
+      const current = pages.find((p) => p.current && p.isDeletable && !isOurRunePage(p.name))
       if (!current) throw new Error('No free rune page available.')
       await client.request('DELETE', `/lol-perks/v1/pages/${current.id}`)
       await client.request('POST', '/lol-perks/v1/pages', payload)

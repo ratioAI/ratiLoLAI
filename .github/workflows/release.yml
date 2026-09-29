@@ -25,8 +25,8 @@ jobs:
         with:
           name: windows-installer
           path: |
-            release/*/RiftCompanion-Setup-*.exe
-            release/*/RiftCompanion-Setup-*.exe.blockmap
+            release/*/ratioAI-Setup-*.exe
+            release/*/ratioAI-Setup-*.exe.blockmap
             release/*/latest.yml
       - name: Attach installer to the GitHub release
         if: startsWith(github.ref, 'refs/tags/')
@@ -34,6 +34,6 @@ jobs:
         with:
           fail_on_unmatched_files: true
           files: |
-            release/*/RiftCompanion-Setup-*.exe
-            release/*/RiftCompanion-Setup-*.exe.blockmap
+            release/*/ratioAI-Setup-*.exe
+            release/*/ratioAI-Setup-*.exe.blockmap
             release/*/latest.yml

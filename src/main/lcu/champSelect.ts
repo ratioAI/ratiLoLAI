@@ -115,7 +115,10 @@ export function parseChampSelect(
 // Payload builders for importing a build into the client
 // ---------------------------------------------------------------------------
 
-export const RUNE_PAGE_PREFIX = 'RC: '
+export const RUNE_PAGE_PREFIX = 'ratioAI: '
+/** pages created by versions before the rename */
+export const LEGACY_RUNE_PAGE_PREFIXES = ['RC: ']
+export const isOurRunePage = (name: string): boolean => [RUNE_PAGE_PREFIX, ...LEGACY_RUNE_PAGE_PREFIXES].some((p) => name.startsWith(p))
 export const ITEM_SET_UID_PREFIX = 'rift-companion-'
 const FLASH = 4
 
@@ -165,7 +168,7 @@ export function buildItemSet(build: ChampionBuild, data: StaticData) {
   block('Consumables & trinkets', build.mode === 'aram' ? [2003] : [2003, 2055, 3340, 3364])
 
   return {
-    title: `RC ${champ?.name ?? build.championId} ${ROLE_LABELS[build.role]} ${build.patch}`,
+    title: `ratioAI ${champ?.name ?? build.championId} ${ROLE_LABELS[build.role]} ${build.patch}`,
     uid: `${ITEM_SET_UID_PREFIX}${build.mode === 'aram' ? 'aram-' : ''}${build.championId}`,
     type: 'custom',
     map: build.mode === 'aram' ? 'HA' : 'SR',

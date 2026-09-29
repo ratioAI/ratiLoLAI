@@ -17,18 +17,38 @@ const NAV = [
   { to: '/data', label: 'Data', icon: Database }
 ]
 
-function Logo() {
+/** ratioAI mark: an iridescent mushroom cap with glowing spores over a hexagon (static). */
+export function Logo({ size = 30 }: { size?: number }) {
   return (
-    <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden>
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
       <defs>
-        <linearGradient id="rcg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#2ee6c5" />
-          <stop offset="1" stopColor="#4ea3ff" />
+        <linearGradient id="rai-g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ff7ad9" />
+          <stop offset="0.5" stopColor="#b58bff" />
+          <stop offset="1" stopColor="#6fe8ff" />
         </linearGradient>
+        <radialGradient id="rai-cap" cx="0.5" cy="0.35" r="0.7">
+          <stop offset="0" stopColor="#ffd3f4" />
+          <stop offset="0.55" stopColor="#e58bff" />
+          <stop offset="1" stopColor="#7b5cff" />
+        </radialGradient>
       </defs>
-      <path d="M16 2 29 9.5v13L16 30 3 22.5v-13z" fill="none" stroke="url(#rcg)" strokeWidth="2.4" />
-      <path d="M11 22V10h6.2a3.8 3.8 0 0 1 .8 7.5L21.5 22H18l-3.1-4.2H14V22zm3-6.6h3a1.5 1.5 0 0 0 0-3h-3z" fill="url(#rcg)" />
+      <path d="M16 1.8 29 9.3v13.4L16 30.2 3 22.7V9.3z" fill="#120a24" stroke="url(#rai-g)" strokeWidth="1.8" />
+      <path d="M7.5 16.2C7.5 10.9 11.3 7.6 16 7.6s8.5 3.3 8.5 8.6c0 .8-.6 1.3-1.4 1.3H8.9c-.8 0-1.4-.5-1.4-1.3z" fill="url(#rai-cap)" />
+      <path d="M13.6 17.5h4.8l.7 6.6c.1.9-.6 1.6-1.5 1.6h-3.2c-.9 0-1.6-.7-1.5-1.6z" fill="#f1edfb" />
+      <circle cx="12.2" cy="12.4" r="1.25" fill="#fff" opacity=".9" />
+      <circle cx="17.6" cy="10.8" r="0.95" fill="#fff" opacity=".85" />
+      <circle cx="20.6" cy="13.9" r="1.1" fill="#fff" opacity=".8" />
     </svg>
+  )
+}
+
+/** "ratioAI" word mark */
+export function Wordmark({ className = '' }: { className?: string }) {
+  return (
+    <span className={`font-display font-extrabold tracking-tight ${className}`}>
+      ratio<span className="iridescent-text">AI</span>
+    </span>
   )
 }
 
@@ -53,7 +73,7 @@ export function Layout({ children }: { children: ReactNode }) {
               end={end}
               className={({ isActive }) =>
                 `group flex w-[60px] flex-col items-center gap-1 rounded-xl py-2 text-[10px] font-semibold transition ${
-                  isActive ? 'bg-accent/12 text-accent' : 'text-muted hover:bg-panel hover:text-text'
+                  isActive ? 'nav-active text-text' : 'text-muted hover:bg-panel hover:text-text'
                 }`
               }
             >
@@ -66,7 +86,7 @@ export function Layout({ children }: { children: ReactNode }) {
           to="/settings"
           className={({ isActive }) =>
             `flex w-[60px] flex-col items-center gap-1 rounded-xl py-2 text-[10px] font-semibold ${
-              isActive ? 'bg-accent/12 text-accent' : 'text-muted hover:bg-panel hover:text-text'
+              isActive ? 'nav-active text-text' : 'text-muted hover:bg-panel hover:text-text'
             }`
           }
         >
@@ -77,9 +97,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="drag flex h-10 shrink-0 items-center gap-4 border-b border-line pr-40 pl-5 text-xs">
-          <span className="font-bold tracking-wide text-text">
-            RIFT <span className="text-accent">COMPANION</span>
-          </span>
+          <Wordmark className="text-[15px] text-text" />
           {isDemo && (
             <span className="rounded-md bg-gold/15 px-2 py-0.5 font-semibold text-gold">Web demo · synthetic data</span>
           )}
@@ -136,7 +154,9 @@ export function PageHeader({ title, subtitle, children }: { title: ReactNode; su
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">{title}</h1>
+        <h1 className="font-display text-[28px] leading-tight font-extrabold tracking-tight">
+          <span className="iridescent-text">{title}</span>
+        </h1>
         {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
       </div>
       {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}

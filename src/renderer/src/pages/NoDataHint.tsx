@@ -8,7 +8,7 @@ export function NoDataHint() {
   return (
     <EmptyState icon={<Database size={34} />} title="No statistics for this patch yet">
       <p>
-        Rift Companion computes tier lists and builds from real high-elo matches that the built-in crawler collects
+        ratioAI computes tier lists and builds from real high-elo matches that the built-in crawler collects
         through the official Riot API.
       </p>
       <div className="mt-5 flex justify-center gap-2">
