@@ -6,7 +6,7 @@ import type { Settings } from '@shared/types'
 type Stored = Omit<Settings, 'hasApiKey'> & { apiKeyEnc?: string; apiKeyPlain?: string; schema?: number }
 
 /** bump to migrate stored settings (2: UI switched to English → game data defaults to en_US) */
-const SCHEMA = 2
+const SCHEMA = 3
 
 export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
   platform: 'euw1',
@@ -22,7 +22,7 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
   overlay: {
     enabled: true,
     hotkey: 'Alt+Shift+A',
-    autoExpand: true,
+    autoExpand: false,
     cardFrames: true,
     animation: 'smooth',
     gameDisplayId: null
@@ -65,6 +65,8 @@ export class SettingsStore {
       client: { ...DEFAULT_SETTINGS.client, ...loaded.client }
     }
     if ((loaded.schema ?? 1) < 2) this.data.language = 'en_US'
+    // 3: only the card frames by default – the tier list panel is opt-in
+    if ((loaded.schema ?? 1) < 3) this.data.overlay.autoExpand = false
     this.data.schema = SCHEMA
   }
 

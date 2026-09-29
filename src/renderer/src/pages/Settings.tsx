@@ -133,7 +133,7 @@ export function Settings() {
             ))}
           </div>
         </Field>
-        <Field label="Hotkey to show / hide">
+        <Field label="Hotkey: look for the augment cards now">
           <input
             className="input w-44 text-center"
             defaultValue={settings.overlay.hotkey}

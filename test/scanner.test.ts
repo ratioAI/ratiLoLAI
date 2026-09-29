@@ -44,9 +44,22 @@ describe('augment card layout', () => {
   })
 })
 
+const preview = (name: string): Bitmap => {
+  const p = PNG.sync.read(readFileSync(join(__dirname, 'fixtures/preview', name)))
+  return { width: p.width, height: p.height, data: p.data, order: 'rgba' }
+}
+
 describe('cardsVisible', () => {
   it('detects the augment selection', () => {
     expect(cardsVisible(shot)).toBe(true)
+  })
+  // real 640×360 previews from a user's game: prismatic, gold (screenshot and in-game capture)
+  it.each(['pos-prismatic.png', 'pos-gold.png', 'pos-gold-ingame.png'])('finds the cards in %s', (f) => {
+    expect(cardsVisible(preview(f))).toBe(true)
+  })
+  // normal game frame, alt-tab switcher, a window over the game
+  it.each(['neg-gameplay.png', 'neg-alttab.png', 'neg-window.png'])('finds nothing in %s', (f) => {
+    expect(cardsVisible(preview(f))).toBe(false)
   })
   it('ignores a normal game frame', () => {
     const empty = Buffer.alloc(1920 * 1080 * 4, 40)
@@ -89,6 +102,30 @@ describe('OCR of the card titles (bundled Tesseract model)', () => {
     await worker.terminate()
     expect(ids).toEqual([1011, 2107, 1349])
   }, 30_000)
+
+  it('reads gold cards too', async () => {
+    const png = PNG.sync.read(readFileSync(join(__dirname, 'fixtures/mayhem-gold-cards-1080p.png')))
+    const gold: Bitmap = { width: png.width, height: png.height, data: png.data, order: 'rgba' }
+    const names = [
+      { id: 1, names: ['Critical Rhythm'] },
+      { id: 2, names: ['Upgrade Infinity Edge'] },
+      { id: 3, names: ['From Beginning To End'] },
+      ...candidates
+    ]
+    const lang = join(dirname(require.resolve('@tesseract.js-data/eng/package.json')), '4.0.0_best_int')
+    const worker = await createWorker('eng', 1, { langPath: lang, gzip: true, cacheMethod: 'none' })
+    await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_LINE })
+    const ids: (number | null)[] = []
+    for (const r of titleRects(1920, 1080)) {
+      const t = prepareTitle(gold, r)
+      const out = new PNG({ width: t.width, height: t.height })
+      t.data.copy(out.data)
+      const { data } = await worker.recognize(PNG.sync.write(out))
+      ids.push(matchAugment(data.text, names)?.id ?? null)
+    }
+    await worker.terminate()
+    expect(ids).toEqual([1, 2, 3])
+  }, 30_000)
 })
 
 /** nearest-neighbour downscale, like the small preview capture */
@@ -120,6 +157,22 @@ describe('cheap preview check', () => {
       for (let x = r.x; x < r.x + r.width; x++) (rerolled.data as Buffer).fill(0, (y * 640 + x) * 4, (y * 640 + x) * 4 + 3)
     expect(signatureChanged(sig, titleSignature(rerolled), 1)).toBe(true)
     expect(signatureChanged(null, sig)).toBe(true)
+  })
+  it('notices a reroll between real captures but not capture noise', () => {
+    const gold = titleSignature(preview('pos-gold.png'))
+    // same cards, captured by a different tool at a different moment (glow animation, JPEG)
+    expect(signatureChanged(gold, titleSignature(preview('pos-gold-ingame.png')))).toBe(false)
+    // other cards
+    expect(signatureChanged(gold, titleSignature(preview('pos-prismatic.png')))).toBe(true)
+    // only the middle card rerolled
+    const mixed = preview('pos-gold.png')
+    const other = preview('pos-prismatic.png')
+    const r = cardRects(640, 360)[1]
+    for (let y = r.y; y < r.y + r.height; y++) {
+      const o = (y * 640 + r.x) * 4
+      ;(other.data as Buffer).copy(mixed.data as Buffer, o, o, o + r.width * 4)
+    }
+    expect(signatureChanged(gold, titleSignature(mixed))).toBe(true)
   })
 })
 

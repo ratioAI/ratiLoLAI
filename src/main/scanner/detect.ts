@@ -24,36 +24,56 @@ function brightness(b: Bitmap, x: number, y: number): number {
 }
 
 /**
- * Cheap pre-check before OCR: each card has a bright frame on its left edge and a dark body.
- * Returns true when at least two of the three cards look like an augment card.
+ * Cheap pre-check before OCR: each card has a light frame on both sides with the dark card body
+ * right inside it. Works for silver, gold and prismatic cards (gold frames are much darker than
+ * prismatic ones, so an absolute brightness threshold is not enough – the frame→body contrast is
+ * what identifies a card). Returns true when at least two of the three cards are found.
  */
 export function cardsVisible(b: Bitmap): boolean {
-  return cardMetrics(b).filter((m) => m.bright > 0.8 && m.dark > 0.6).length >= 2
+  return cardMetrics(b).filter((m) => m.edges >= 0.7 && m.dark >= 0.6).length >= 2
 }
 
-/** Per card: share of rows with a bright frame pixel, share of dark samples in the card body. */
-export function cardMetrics(b: Bitmap): { bright: number; dark: number }[] {
+/** Mean brightness over a horizontal run of pixels. */
+function runMean(b: Bitmap, x0: number, x1: number, y: number): number {
+  let sum = 0
+  let n = 0
+  for (let x = Math.max(0, Math.round(x0)); x <= Math.min(b.width - 1, Math.round(x1)); x++) {
+    sum += brightness(b, x, y)
+    n++
+  }
+  return n ? sum / n : 0
+}
+
+function runMax(b: Bitmap, x0: number, x1: number, y: number): number {
+  let m = 0
+  for (let x = Math.max(0, Math.round(x0)); x <= Math.min(b.width - 1, Math.round(x1)); x++) m = Math.max(m, brightness(b, x, y))
+  return m
+}
+
+/**
+ * Per card: `edges` = share of rows where both side frames are light (≥ 105) and at least 55
+ * brighter than the body just inside them; `dark` = share of dark samples in the card body.
+ */
+export function cardMetrics(b: Bitmap): { edges: number; dark: number }[] {
   const H = b.height
-  const out: { bright: number; dark: number }[] = []
+  const u = H / 1080 // layout unit: 1 px at 1080p
+  const out: { edges: number; dark: number }[] = []
   for (const cx of cardCentres(b.width, H)) {
-    const x0 = Math.max(0, Math.round(cx + LAYOUT.frameFrom * H))
-    const x1 = Math.min(b.width - 1, Math.round(cx + LAYOUT.frameTo * H))
-    if (x1 <= x0) {
-      out.push({ bright: 0, dark: 0 })
-      continue
-    }
     let rows = 0
-    let bright = 0
-    for (let y = Math.round(0.25 * H); y < 0.62 * H; y += Math.max(2, Math.round(H / 270))) {
+    let hits = 0
+    for (let y = Math.round(0.25 * H); y < 0.62 * H; y += Math.max(1, Math.round(H / 180))) {
       rows++
-      for (let x = x0; x <= x1; x += 2) {
-        if (brightness(b, x, y) > 165) {
-          bright++
-          break
-        }
+      let ok = true
+      for (const side of [-1, 1]) {
+        const band = side < 0 ? [cx - 162 * u, cx - 140 * u] : [cx + 140 * u, cx + 162 * u]
+        const inner = side < 0 ? [cx - 126 * u, cx - 112 * u] : [cx + 112 * u, cx + 126 * u]
+        const frame = runMax(b, band[0], band[1], y)
+        const body = runMean(b, inner[0], inner[1], y)
+        if (frame < 105 || frame - body < 55) ok = false
       }
+      if (ok) hits++
     }
-    // the card body next to the frame must be dark
+    // the card body must be dark
     let dark = 0
     let samples = 0
     const ey = LAYOUT.emptyY * H
@@ -61,7 +81,7 @@ export function cardMetrics(b: Bitmap): { bright: number; dark: number }[] {
       samples++
       if (brightness(b, cx + dx, ey) < 90) dark++
     }
-    out.push({ bright: rows ? bright / rows : 0, dark: samples ? dark / samples : 0 })
+    out.push({ edges: rows ? hits / rows : 0, dark: samples ? dark / samples : 0 })
   }
   return out
 }
@@ -146,37 +166,49 @@ export function matchAugment(text: string, candidates: NameCandidate[], min = 0.
 }
 
 /**
- * Coarse fingerprint of the three title areas (mean brightness per cell). Used on the small
- * preview capture to notice a reroll without running OCR every time.
+ * Coarse fingerprint of each card (icon + title area, mean brightness per cell). Used on the small
+ * preview capture to notice a reroll without running OCR every time. One entry per card.
  */
-export function titleSignature(b: Bitmap, cols = 16, rows = 3): number[] {
-  const sig: number[] = []
-  for (const r of titleRects(b.width, b.height)) {
+export function titleSignature(b: Bitmap): number[][] {
+  const H = b.height
+  const cells = (x0: number, y0: number, w: number, h: number, cols: number, rows: number, out: number[]): void => {
     for (let cy = 0; cy < rows; cy++) {
       for (let cx = 0; cx < cols; cx++) {
         let sum = 0
         let n = 0
-        const x0 = r.x + (cx * r.width) / cols
-        const y0 = r.y + (cy * r.height) / rows
-        for (let y = y0; y < y0 + r.height / rows; y += 1) {
-          for (let x = x0; x < x0 + r.width / cols; x += 1) {
+        const xs = x0 + (cx * w) / cols
+        const ys = y0 + (cy * h) / rows
+        for (let y = ys; y < ys + h / rows; y += 1) {
+          for (let x = xs; x < xs + w / cols; x += 1) {
             if (x < 0 || y < 0 || x >= b.width || y >= b.height) continue
             sum += brightness(b, x, y)
             n++
           }
         }
-        sig.push(n ? sum / n : 0)
+        out.push(n ? sum / n : 0)
       }
     }
   }
-  return sig
+  return titleRects(b.width, H).map((r, i) => {
+    const out: number[] = []
+    cells(r.x, r.y, r.width, r.height, 12, 2, out)
+    // the augment icon above the title (changes completely on a reroll)
+    const cx = cardCentres(b.width, H)[i]
+    cells(cx - 0.075 * H, 0.215 * H, 0.15 * H, 0.14 * H, 5, 5, out)
+    return out
+  })
 }
 
-export function signatureChanged(a: number[] | null, b: number[], tolerance = 18): boolean {
+/** True when any card's fingerprint differs noticeably (a reroll changes one card). */
+export function signatureChanged(a: number[][] | null, b: number[][], tolerance = 10): boolean {
   if (!a || a.length !== b.length) return true
-  let diff = 0
-  for (let i = 0; i < a.length; i++) diff += Math.abs(a[i] - b[i])
-  return diff / a.length > tolerance
+  return a.some((card, i) => {
+    const other = b[i]
+    if (!other || other.length !== card.length) return true
+    let diff = 0
+    for (let k = 0; k < card.length; k++) diff += Math.abs(card[k] - other[k])
+    return diff / card.length > tolerance
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -255,7 +287,7 @@ export class AugmentSchedule {
   /** Scan interval in ms, or null when the choice can't be open right now. */
   interval(now = Date.now()): number | null {
     if (!this.canOpen(now)) return null
-    if (this.seen) return 1000
+    if (this.seen) return 350 // cards open: notice a reroll / close quickly (cheap preview only)
     return this.pending ? 1000 : 2000
   }
 

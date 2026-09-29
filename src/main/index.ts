@@ -61,16 +61,18 @@ let minimapState: MinimapState | null = null
 let lastTick = { level: 0, dead: false, gameMode: null as string | null }
 
 const overlay = new OverlayManager(join(__dirname, '../preload/index.js'), loadRenderer, () => {
-  manualOpen = !manualOpen
-  diag.log(`hotkey → overlay ${manualOpen ? 'open' : 'closed'} (inGame=${inGame}, mayhem=${inMayhem})`)
-  if (manualOpen && scanner.running) scanner.lookNow(WINDOWS.manual)
+  // hotkey: look for the cards right now; the tier list panel only if it is switched on
+  if (settings.get().overlay.autoExpand) manualOpen = !manualOpen
+  diag.log(`hotkey → scan now${manualOpen ? ', panel open' : ''} (inGame=${inGame}, mayhem=${inMayhem})`)
+  if (scanner.running) scanner.lookNow(WINDOWS.manual)
   refreshOverlay()
   void overlay.panel.send('overlayToggle', null)
 })
 
 function refreshOverlay(): void {
   const s = settings.get()
-  const panel = s.overlay.enabled && ((inGame && manualOpen) || (inMayhem && (cards.visible || hintOpen)))
+  // the tier list panel is opt-in (Settings → "Also show the tier list panel")
+  const panel = s.overlay.enabled && s.overlay.autoExpand && ((inGame && manualOpen) || (inMayhem && (cards.visible || hintOpen)))
   if (panel) overlay.showPanel()
   else overlay.hidePanel()
 
@@ -79,6 +81,7 @@ function refreshOverlay(): void {
   if (key !== shownOffer) {
     shownOffer = key
     diag.log(offer ? 'frames shown' : 'frames hidden')
+    if (process.env.RC_SELFTEST_NO_FRAMES) return // xvfb has no compositor: our own window would cover the cards
     if (offer) overlay.showFrames(offer)
     else overlay.hideFrames()
   }

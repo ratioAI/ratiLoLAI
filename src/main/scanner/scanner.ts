@@ -75,7 +75,7 @@ export class AugmentScanner {
   private lastKey = ''
   private state: ScanState = { visible: false, offer: null, displayId: null }
   /** signature of the last cards we ran OCR on (successful or not) */
-  private signature: number[] | null = null
+  private signature: number[][] | null = null
   private gameDisplay: number | null = null
   private lastRead = 0
   private readonly ocr: TitleOcr
@@ -167,7 +167,11 @@ export class AugmentScanner {
   private reschedule(): void {
     if (!this.active) return
     const interval = this.schedule.interval()
-    this.capture?.demand('augments', interval === null ? null : { displays: this.watchedDisplays().map((d) => d.id), fps: 2 })
+    // while the cards are open: 5 pictures/s, so frames follow a reroll or a close within a second
+    this.capture?.demand(
+      'augments',
+      interval === null ? null : { displays: this.watchedDisplays().map((d) => d.id), fps: this.schedule.cardsSeen ? 5 : 2 }
+    )
     if (interval === null) {
       if (this.timer) clearTimeout(this.timer)
       this.timer = null
@@ -235,7 +239,7 @@ export class AugmentScanner {
       await mkdir(this.snapshotDir, { recursive: true })
       for (const { display, bitmap } of this.lastPreviews) {
         const m = cardMetrics(bitmap)
-          .map((c) => `${Math.round(c.bright * 100)}/${Math.round(c.dark * 100)}`)
+          .map((c) => `${Math.round(c.edges * 100)}/${Math.round(c.dark * 100)}`)
           .join(' ')
         const name = `miss-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}-${display.id}.jpg`
         let img: Bitmap | null = null
@@ -297,9 +301,10 @@ export class AugmentScanner {
       const displayId = shot.display.id
       const sig = titleSignature(small)
       const same = this.state.visible && this.state.displayId === displayId && !signatureChanged(this.signature, sig)
-      if (same) return this.state // same cards as last time → nothing to read again
-      // a reroll takes a moment to animate – don't OCR the same cards over and over
-      if (this.state.visible && this.state.displayId === displayId && Date.now() - this.lastRead < 2500) return this.state
+      // same cards as last time → nothing to read again (unless the last read failed: retry once a second)
+      if (same && (this.state.offer || Date.now() - this.lastRead < 1000)) return this.state
+      // a reroll animates for a moment – read at most every 400 ms while the titles change
+      if (this.state.visible && this.state.displayId === displayId && Date.now() - this.lastRead < 400) return this.state
 
       this.log(`cards visible on display ${displayId} (preview ${ms} ms) – reading titles`)
       if (this.gameDisplay !== displayId) {
@@ -367,7 +372,7 @@ export class AugmentScanner {
         rect: { x: r.x / scale, y: r.y / scale, width: r.width / scale, height: r.height / scale }
       }
     })
-    if (result.filter((c) => c.augmentId !== null).length < 2) return null
+    if (!result.some((c) => c.augmentId !== null)) return null
     return { displayId: display.id, cards: result }
   }
 
