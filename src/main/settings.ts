@@ -37,7 +37,8 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
     autoImportItems: true,
     autoImportSpells: false,
     flashOn: 'F',
-    autoAccept: false
+    autoAccept: false,
+    acceptDelay: 'human'
   }
 }
 

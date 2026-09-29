@@ -192,6 +192,27 @@ export function Settings() {
           </div>
         </Field>
         <Toggle label="Auto-accept match" value={settings.client.autoAccept} onChange={(v) => save({ client: { ...settings.client, autoAccept: v } })} />
+        {settings.client.autoAccept && (
+          <Field label="Accept after">
+            <div className="flex rounded-xl border border-line bg-bg-2 p-1">
+              {(
+                [
+                  ['human', 'Random 2–6 s'],
+                  ['slow', 'Random 4–8 s'],
+                  ['instant', 'Instantly']
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => save({ client: { ...settings.client, acceptDelay: k } })}
+                  className={`rounded-lg px-3 py-1 text-xs font-bold ${settings.client.acceptDelay === k ? 'bg-panel-2 text-accent' : 'text-muted'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </Field>
+        )}
         <Field label="Install folder (optional)">
           <input
             className="input w-80"

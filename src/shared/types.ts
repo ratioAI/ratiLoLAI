@@ -291,8 +291,12 @@ export interface Settings {
     autoImportSpells: boolean
     flashOn: 'D' | 'F'
     autoAccept: boolean
+    /** how long to wait before accepting: instant, random 2–6 s or random 4–8 s */
+    acceptDelay: AcceptDelay
   }
 }
+
+export type AcceptDelay = 'instant' | 'human' | 'slow'
 
 /** Timers shown on the minimap (all times are game time in seconds). */
 export interface MinimapState {

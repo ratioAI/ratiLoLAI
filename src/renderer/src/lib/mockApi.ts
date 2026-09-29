@@ -348,7 +348,7 @@ export function createMockApi(): RcApi {
     },
     overlay: { enabled: true, hotkey: 'Alt+Shift+A', autoExpand: true, cardFrames: true, animation: 'smooth', gameDisplayId: null },
     minimap: { enabled: true, inhibitors: true, scale: 1 },
-    client: { autoImportRunes: true, autoImportItems: true, autoImportSpells: false, flashOn: 'F', autoAccept: true }
+    client: { autoImportRunes: true, autoImportItems: true, autoImportSpells: false, flashOn: 'F', autoAccept: true, acceptDelay: 'human' }
   }
 
   let crawler: CrawlerStatus = {

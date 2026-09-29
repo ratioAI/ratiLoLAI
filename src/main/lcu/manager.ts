@@ -12,6 +12,7 @@ import type {
   StaticData
 } from '@shared/types'
 import { statsModeOf } from '@shared/types'
+import { acceptDelayMs } from './acceptDelay'
 import { personalMayhemStats, type LcuHistory } from '../mayhem'
 import { fetchAllGameData, parseLiveData } from '../live/liveClient'
 import {
@@ -54,6 +55,13 @@ interface PerkPage {
  * Keeps a connection to the local League client (LCU): detects the client, follows the
  * gameflow, parses champion select, auto-imports builds and polls live game data.
  */
+interface ReadyCheck {
+  state?: string
+  playerResponse?: string
+  /** seconds since the ready check started */
+  timer?: number
+}
+
 export class LcuManager {
   private client: LcuClient | null = null
   private status: ClientStatus = { connected: false, phase: 'None', summoner: null }
@@ -80,6 +88,7 @@ export class LcuManager {
   }
 
   stop(): void {
+    this.cancelAccept()
     if (this.pollTimer) clearTimeout(this.pollTimer)
     this.stopLivePolling()
     this.client?.close()
@@ -194,17 +203,41 @@ export class LcuManager {
           this.onChampSelect(e.data as RawSession)
         }
         break
-      case '/lol-matchmaking/v1/ready-check': {
-        const rc = e.data as { state?: string; playerResponse?: string } | null
-        if (this.deps.settings().client.autoAccept && rc?.state === 'InProgress' && rc.playerResponse === 'None') {
-          await this.client?.request('POST', '/lol-matchmaking/v1/ready-check/accept').catch(() => undefined)
-        }
+      case '/lol-matchmaking/v1/ready-check':
+        this.onReadyCheck(e.data as ReadyCheck | null)
         break
-      }
       case '/lol-summoner/v1/current-summoner':
         this.setStatus({ summoner: await this.fetchSummoner() })
         break
     }
+  }
+
+  // --- auto accept ----------------------------------------------------------
+
+  private acceptTimer: NodeJS.Timeout | null = null
+
+  private cancelAccept(): void {
+    if (this.acceptTimer) clearTimeout(this.acceptTimer)
+    this.acceptTimer = null
+  }
+
+  /**
+   * Accepts the ready check after a random, human-like delay (not the instant the popup appears).
+   * Uses the same documented client API as the Accept button. If you accept or decline yourself,
+   * or the check ends, the pending accept is dropped.
+   */
+  private onReadyCheck(rc: ReadyCheck | null): void {
+    const s = this.deps.settings().client
+    const open = rc?.state === 'InProgress' && rc.playerResponse === 'None'
+    if (!s.autoAccept || !open) return this.cancelAccept()
+    if (this.acceptTimer) return
+    const delay = acceptDelayMs(s.acceptDelay, rc?.timer)
+    this.acceptTimer = setTimeout(async () => {
+      this.acceptTimer = null
+      const now = await this.client?.get<ReadyCheck>('/lol-matchmaking/v1/ready-check').catch(() => null)
+      if (!this.deps.settings().client.autoAccept || now?.state !== 'InProgress' || now.playerResponse !== 'None') return
+      await this.client?.request('POST', '/lol-matchmaking/v1/ready-check/accept').catch(() => undefined)
+    }, delay)
   }
 
   private onPhase(phase: string): void {

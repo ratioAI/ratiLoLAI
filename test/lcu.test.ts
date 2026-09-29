@@ -140,3 +140,20 @@ describe('live client data', () => {
     expect(parseLiveData({})).toBeNull()
   })
 })
+
+describe('auto-accept delay', () => {
+  it('is random within the chosen range, never instant unless asked', async () => {
+    const { acceptDelayMs } = await import('../src/main/lcu/acceptDelay')
+    expect(acceptDelayMs('instant')).toBe(0)
+    const human = Array.from({ length: 500 }, () => acceptDelayMs('human'))
+    expect(Math.min(...human)).toBeGreaterThanOrEqual(2000)
+    expect(Math.max(...human)).toBeLessThanOrEqual(6000)
+    expect(new Set(human).size).toBeGreaterThan(400)
+    expect(acceptDelayMs('slow', 0, () => 0)).toBe(4000)
+    expect(acceptDelayMs('slow', 0, () => 1)).toBe(8000)
+  })
+  it('still accepts in time when the popup was noticed late', async () => {
+    const { acceptDelayMs } = await import('../src/main/lcu/acceptDelay')
+    expect(acceptDelayMs('slow', 5, () => 1)).toBe(4500)
+  })
+})
