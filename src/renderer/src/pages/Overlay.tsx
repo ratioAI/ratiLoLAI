@@ -8,12 +8,17 @@ import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { ChampIcon } from '@/components/icons'
 import { AugmentFrame } from '@/components/AugmentFrame'
+import { CardFrames } from '@/components/CardFrames'
 import { RARITY_COLORS, RARITY_LABELS, useMayhemData } from '@/components/mayhem'
 
 const SHOWN_TIERS: Tier[] = ['S+', 'S', 'A', 'B']
 
 /** In-game overlay (separate transparent window) for ARAM: Mayhem augment picks. */
-export function Overlay() {
+/**
+ * In-game augment tier panel. `part="panel"` is the small window at the right screen edge;
+ * the default renders panel + frames in one page (web demo, screenshots).
+ */
+export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
   const { data: statics, live, settings } = useApp()
   const { data, error } = useMayhemData()
   const [expanded, setExpanded] = useState(() => window.location.hash.includes('champ='))
@@ -23,7 +28,7 @@ export function Overlay() {
   const [showAll, setShowAll] = useState(false)
   const [focus, setFocus] = useState<AugmentTier | null>(null)
   // '#/overlay?champ=412&offer=1011,2107,1349' simulates an augment choice (web demo / screenshots)
-  const [offer, setOffer] = useState<AugmentOffer | null>(() => {
+  const [offer] = useState<AugmentOffer | null>(() => {
     const ids = new URLSearchParams(window.location.hash.split('?')[1]).get('offer')
     if (!ids) return null
     const rects = cardRects(window.innerWidth, window.innerHeight)
@@ -36,7 +41,6 @@ export function Overlay() {
     document.documentElement.classList.add('overlay-mode')
     const offs = [
       api.on('overlayToggle', () => setExpanded((e) => !e)),
-      api.on('augmentOffer', (o) => setOffer(o)),
       // the panel opens together with the cards and closes once an augment is picked
       api.on('augmentCards', ({ visible }) => setExpanded(visible && autoExpandRef.current)),
       api.on('overlayPreview', ({ championId }) => {
@@ -84,9 +88,11 @@ export function Overlay() {
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none">
-      {offer && <CardFrames offer={offer} tierById={tierById} />}
+      {part === 'demo' && offer && (
+        <CardFrames offer={offer} tierById={tierById} animation={settings?.overlay.animation ?? 'smooth'} />
+      )}
       <div
-        className="pointer-events-auto absolute right-3 top-[14%]"
+        className={`pointer-events-auto absolute ${part === 'panel' ? 'right-1 top-1' : 'right-3 top-[14%]'}`}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
       >
@@ -129,7 +135,7 @@ export function Overlay() {
             {!data ? (
               <p className={`text-xs ${error ? 'text-loss' : 'text-muted'}`}>{error ?? 'Loading augment data …'}</p>
             ) : (
-              <div className="max-h-[58vh] space-y-3 overflow-y-auto pr-1">
+              <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1">
                 {groups.map((g) => (
                   <div key={g.tier}>
                     <div className="grid grid-cols-5 gap-x-2 gap-y-6 pt-3 pb-2">
@@ -185,44 +191,3 @@ export function Overlay() {
   )
 }
 
-const TIER_ORDER: Tier[] = ['S+', 'S', 'A', 'B', 'C', 'D']
-const TIER_WORDS: Record<Tier, string> = { 'S+': 'Must pick', S: 'Great', A: 'Good', B: 'Okay', C: 'Meh', D: 'Avoid' }
-
-/** Frames drawn exactly over the three augment cards the game currently offers. */
-function CardFrames({ offer, tierById }: { offer: AugmentOffer; tierById: Map<number, AugmentTier> }) {
-  const rated = offer.cards.map((c) => (c.augmentId != null ? tierById.get(c.augmentId) ?? null : null))
-  const bestRank = Math.min(...rated.map((t) => (t ? TIER_ORDER.indexOf(t.tier) : 99)))
-  return (
-    <>
-      {offer.cards.map((card, i) => {
-        const t = rated[i]
-        if (!t) return null
-        const best = TIER_ORDER.indexOf(t.tier) === bestRank && rated.filter((r) => r && TIER_ORDER.indexOf(r.tier) === bestRank).length === 1
-        const label = best ? 'Best pick' : t.combo ? COMBO_TYPE_LABELS[t.combo] : !t.fits ? 'Weak fit' : TIER_WORDS[t.tier]
-        return (
-          <div
-            key={i}
-            className="card-frame"
-            data-tier={t.tier}
-            style={{ left: card.rect.x - 6, top: card.rect.y - 6, width: card.rect.width + 12, height: card.rect.height + 12 }}
-          >
-            <div className="cf-ring">
-              <div className="cf-border" />
-            </div>
-            <span className="cf-corner tl" />
-            <span className="cf-corner tr" />
-            <span className="cf-corner bl" />
-            <span className="cf-corner br" />
-            <div className="cf-crest">
-              <span className="cf-shield">
-                <span className="cf-tier">{t.tier}</span>
-              </span>
-              <span className="cf-label">{label}</span>
-            </div>
-            {t.note && <div className="cf-note">{t.note}</div>}
-          </div>
-        )
-      })}
-    </>
-  )
-}

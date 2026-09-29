@@ -14,10 +14,16 @@ import { Data } from './pages/Data'
 import { Settings } from './pages/Settings'
 import { Mayhem } from './pages/Mayhem'
 import { Overlay } from './pages/Overlay'
+import { OverlayFrames } from './pages/OverlayFrames'
+import { OverlayMinimap } from './pages/OverlayMinimap'
 
 function Shell() {
   const { data, dataError } = useApp()
-  if (window.location.hash.startsWith('#/overlay')) return <Overlay />
+  const hash = window.location.hash
+  if (hash.startsWith('#/overlay/panel')) return <Overlay part="panel" />
+  if (hash.startsWith('#/overlay/frames')) return <OverlayFrames />
+  if (hash.startsWith('#/overlay/minimap')) return <OverlayMinimap />
+  if (hash.startsWith('#/overlay')) return <Overlay />
   if (!data) {
     return (
       <div className="drag flex h-full flex-col items-center justify-center gap-4 text-sm text-muted">

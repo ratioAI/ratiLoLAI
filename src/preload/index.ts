@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { RcApi, RcEvents } from '@shared/types'
+import type { CaptureBridge } from '@shared/capture'
 
 async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
   const res = (await ipcRenderer.invoke(channel, ...args)) as { ok: boolean; value?: T; error?: string }
@@ -45,3 +46,10 @@ const api: RcApi = {
 }
 
 contextBridge.exposeInMainWorld('rc', api)
+
+// only used by the hidden capture page (see renderer/src/capture.ts)
+const capture: CaptureBridge = {
+  onCommand: (cb) => ipcRenderer.on('capture:cmd', (_e, id: number, cmd) => cb(id, cmd)),
+  reply: (id, reply) => ipcRenderer.send('capture:reply', id, reply)
+}
+contextBridge.exposeInMainWorld('rcCapture', capture)

@@ -114,6 +114,25 @@ export function Settings() {
           value={settings.overlay.cardFrames}
           onChange={(v) => save({ overlay: { ...settings.overlay, cardFrames: v } })}
         />
+        <Field label="Frame animation">
+          <div className="flex rounded-xl border border-line bg-bg-2 p-1">
+            {(
+              [
+                ['smooth', 'Smooth (30 fps)'],
+                ['low', 'Light (15 fps)'],
+                ['off', 'Static']
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => save({ overlay: { ...settings.overlay, animation: k } })}
+                className={`rounded-lg px-3 py-1 text-xs font-bold ${settings.overlay.animation === k ? 'bg-panel-2 text-accent' : 'text-muted'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </Field>
         <Field label="Hotkey to show / hide">
           <input
             className="input w-44 text-center"
@@ -127,6 +146,32 @@ export function Settings() {
           </button>
         </div>
         {!isDemo && <OverlayDiagnosticsPanel />}
+      </Group>
+
+      <Group title="Minimap timers (ARAM)">
+        <p className="mb-2 text-sm text-muted">
+          Shows when a destroyed inhibitor comes back, right under its icon on the minimap. Uses only the game's live data –
+          no screenshots. Health relic timers are not needed: the game shows them on the minimap itself.
+        </p>
+        <Toggle label="Show minimap timers" value={settings.minimap.enabled} onChange={(v) => save({ minimap: { ...settings.minimap, enabled: v } })} />
+        <Toggle
+          label="Inhibitor respawn timers"
+          value={settings.minimap.inhibitors}
+          onChange={(v) => save({ minimap: { ...settings.minimap, inhibitors: v } })}
+        />
+        <Field label={`Minimap size (match the in-game "Minimap scale") – ${Math.round(settings.minimap.scale * 100)} %`}>
+          <input
+            type="range"
+            min={0.6}
+            max={1.6}
+            step={0.02}
+            className="w-56 accent-[var(--color-accent)]"
+            defaultValue={settings.minimap.scale}
+            onMouseUp={(e) => save({ minimap: { ...settings.minimap, scale: Number((e.target as HTMLInputElement).value) } })}
+            onKeyUp={(e) => save({ minimap: { ...settings.minimap, scale: Number((e.target as HTMLInputElement).value) } })}
+          />
+        </Field>
+        <p className="pt-2 text-xs text-muted">"Preview overlay" above also shows example timers, so you can check they sit on the inhibitors.</p>
       </Group>
 
       <Group title="League client">
@@ -352,6 +397,7 @@ function OverlayDiagnosticsPanel() {
               <div>Scanning: {yes(diag.scanning)}</div>
               <div>Cards on screen: {yes(diag.cardsVisible)}</div>
               <div>Overlay visible: {yes(diag.overlayVisible)}</div>
+              <div>Screen stream: <b className="text-text">{diag.captureStream}</b></div>
             </div>
           )}
           <p className="text-muted">

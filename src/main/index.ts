@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import type { ChampionBuild, GameMode, LiveGameState, PatchStats, Platform, RcEvents, Settings, StatRole, TierEntry, UpdateState, OverlayDiagnostics } from '@shared/types'
+import type { ChampionBuild, GameMode, LiveGameState, PatchStats, Platform, RcEvents, Settings, StatRole, TierEntry, UpdateState, OverlayDiagnostics, MinimapState, AugmentOffer } from '@shared/types'
 import { PLATFORMS } from '@shared/types'
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { Crawler } from './crawler/crawler'
@@ -10,8 +10,11 @@ import { DataDragon, makeClassifier } from './ddragon'
 import { LcuManager } from './lcu/manager'
 import { MayhemService } from './mayhem'
 import { OverlayManager } from './overlay'
+import { MinimapWatcher } from './minimap/watcher'
+import { INHIBITOR_POS, minimapRect } from './minimap/timers'
 import { AugmentScanner, type ScanState } from './scanner/scanner'
 import { DiagLog } from './diag'
+import { CaptureService } from './capture/captureService'
 import { cardRects, WINDOWS, type NameCandidate } from './scanner/detect'
 import { augmentTiersForChampion } from '@shared/mayhem'
 import { ProfileService } from './profile'
@@ -42,16 +45,19 @@ function loadRenderer(w: BrowserWindow, hash = ''): void {
 
 // --- in-game overlay -------------------------------------------------------------
 //
-// The overlay window is only visible while the augment choice can be open (dead / game start, an
-// augment pending), while the cards are on screen, or when opened with the hotkey. A transparent
-// always-on-top window costs frames, so it stays hidden the rest of the game.
+// Three small transparent windows instead of one full-screen one: the tier panel (right edge),
+// the animated card frames (only over the cards) and the minimap timers. They are only shown when
+// needed – the panel/frames while the augment choice can be open, the timers during ARAM games.
 
 const diag = new DiagLog(join(userData, 'logs', 'overlay.log'))
+const capture = new CaptureService(join(__dirname, '../preload/index.js'), join(__dirname, '../renderer'), (m) => diag.log(m))
 let inGame = false
 let inMayhem = false
 let manualOpen = false
 let hintOpen = false
 let cards: ScanState = { visible: false, offer: null, displayId: null }
+let shownOffer = ''
+let minimapState: MinimapState | null = null
 let lastTick = { level: 0, dead: false, gameMode: null as string | null }
 
 const overlay = new OverlayManager(join(__dirname, '../preload/index.js'), loadRenderer, () => {
@@ -59,14 +65,40 @@ const overlay = new OverlayManager(join(__dirname, '../preload/index.js'), loadR
   diag.log(`hotkey → overlay ${manualOpen ? 'open' : 'closed'} (inGame=${inGame}, mayhem=${inMayhem})`)
   if (manualOpen && scanner.running) scanner.lookNow(WINDOWS.manual)
   refreshOverlay()
-  emit('overlayToggle', null)
+  void overlay.panel.send('overlayToggle', null)
 })
 
 function refreshOverlay(): void {
-  const s = settings.get().overlay
-  const want = s.enabled && ((inGame && manualOpen) || (inMayhem && (cards.visible || hintOpen)))
-  if (want) overlay.show()
-  else overlay.hide()
+  const s = settings.get()
+  const panel = s.overlay.enabled && ((inGame && manualOpen) || (inMayhem && (cards.visible || hintOpen)))
+  if (panel) overlay.showPanel()
+  else overlay.hidePanel()
+
+  const offer = s.overlay.enabled && s.overlay.cardFrames && inMayhem ? cards.offer : null
+  const key = offer ? JSON.stringify(offer) : ''
+  if (key !== shownOffer) {
+    shownOffer = key
+    diag.log(offer ? 'frames shown' : 'frames hidden')
+    if (offer) overlay.showFrames(offer)
+    else overlay.hideFrames()
+  }
+
+  const mm = minimapState
+  const hasTimers = !!mm && mm.inhibitors.length > 0
+  if (mm && s.minimap.enabled && hasTimers) {
+    const local = overlay.showMinimap(minimap.displayId, mm.rect)
+    void overlay.minimap.send('minimap', { ...mm, local })
+  } else if (overlay.minimap.visible) {
+    overlay.hideMinimap()
+    void overlay.minimap.send('minimap', null)
+  }
+}
+
+const gameDisplay = {
+  get: (): number | null => settings.get().overlay.gameDisplayId,
+  set: (id: number): void => {
+    if (settings.get().overlay.gameDisplayId !== id) settings.update({ overlay: { ...settings.get().overlay, gameDisplayId: id } })
+  }
 }
 
 // screen recognition of the offered augment cards (only while an augment is pending)
@@ -79,11 +111,22 @@ const scanner = new AugmentScanner(
     cards = state
     if (state.displayId !== null) overlay.moveToDisplay(state.displayId)
     if (wasVisible && !state.visible) manualOpen = false // augment picked → overlay goes away
-    emit('augmentCards', { visible: state.visible })
-    emit('augmentOffer', state.offer)
+    void overlay.panel.send('augmentCards', { visible: state.visible })
     refreshOverlay()
   },
-  (msg) => diag.log(msg)
+  (msg) => diag.log(msg),
+  capture,
+  gameDisplay
+)
+
+// inhibitor timers on the minimap (ARAM) – health relic timers are shown by the game itself
+const minimap = new MinimapWatcher(
+  () => settings.get().minimap,
+  () => gameDisplay.get(),
+  (state) => {
+    minimapState = state
+    refreshOverlay()
+  }
 )
 
 async function loadCandidates(): Promise<void> {
@@ -97,12 +140,14 @@ function updateOverlay(live: LiveGameState | null): void {
   inGame = !!live?.active
   const queueId = lcu.getGameQueueId()
   const nowMayhem = inGame && (live!.gameMode === 'KIWI' || queueId === 2400)
+  const aram = inGame && (nowMayhem || live!.gameMode === 'ARAM' || queueId === 450)
   if (inGame && (!wasInGame || live!.gameMode !== lastTick.gameMode)) {
     diag.log(`game detected: gameMode=${live!.gameMode} queue=${queueId ?? '?'} → mayhem=${nowMayhem}`)
     lastTick.gameMode = live!.gameMode
   }
+  minimap.update(live, aram)
   if (nowMayhem && s.enabled) {
-    if (!inMayhem) overlay.prepare() // create the (hidden) window early so it appears instantly
+    if (!inMayhem) overlay.prepare() // create the (hidden) windows early so they appear instantly
     inMayhem = true
     const me = live!.players.find((p) => p.riotId === live!.activePlayer)
     const level = me?.level ?? 0
@@ -114,6 +159,7 @@ function updateOverlay(live: LiveGameState | null): void {
     if (s.cardFrames) {
       if (!scanner.running) {
         scanner.start()
+        scanner.warmup()
         void loadCandidates()
       }
       scanner.update({ level, dead, gameTime: live!.gameTime, itemsKey: (me?.items ?? []).join(',') })
@@ -147,7 +193,8 @@ function overlayDiagnostics(): OverlayDiagnostics {
     canOpen: scanner.schedule.canOpen(),
     scanning: scanner.scanning,
     cardsVisible: cards.visible,
-    overlayVisible: !!overlay.window?.isVisible(),
+    overlayVisible: overlay.anyVisible,
+    captureStream: capture.failed ? `failed: ${capture.failed}` : capture.active ? 'running' : 'off',
     log: diag.recent(40)
   }
 }
@@ -231,7 +278,11 @@ const lcu = new LcuManager({
   build: async (championId, role, mode) => championBuild(await currentPatch(mode), championId, role, mode),
   emit: {
     client: (s) => emit('client', s),
-    champSelect: (s) => emit('champSelect', s),
+    champSelect: (s) => {
+      emit('champSelect', s)
+      // load the OCR engine during champion select, not when the first augment choice opens
+      if (s?.mode === 'mayhem' && settings.get().overlay.cardFrames) scanner.warmup()
+    },
     live: (s) => {
       emit('live', s)
       updateOverlay(s)
@@ -323,25 +374,46 @@ function registerIpc(): void {
   )
   handle('getMayhemData', () => mayhem.get())
   handle('getMayhemPersonal', () => lcu.personalMayhem())
-  handle('overlayPreview', (championId: number) => {
-    overlay.preview(async () => {
-      emit('overlayPreview', { championId })
-      // simulate an augment choice so the card frames can be checked without a game
-      try {
-        const [data, statics] = await Promise.all([mayhem.get(), ddragon.get()])
-        const tiers = augmentTiersForChampion(data, statics, championId)
-        const pick = [tiers[0], tiers[Math.floor(tiers.length * 0.3)], tiers[tiers.length - 1]].filter(Boolean)
-        const display = screen.getAllDisplays().find((d) => d.id === overlay.currentDisplayId) ?? screen.getPrimaryDisplay()
-        const rects = cardRects(display.size.width, display.size.height)
-        emit('augmentOffer', {
-          displayId: display.id,
-          cards: pick.map((t, i) => ({ augmentId: t.augment.id, text: t.augment.nameEn, score: 1, rect: rects[i] }))
-        })
-        setTimeout(() => emit('augmentOffer', null), 20_000)
-      } catch {
-        /* no data – side panel only */
+  handle('overlayPreview', async (championId: number) => {
+    // simulate an augment choice so the card frames can be checked without a game
+    const display = screen.getAllDisplays().find((d) => d.id === (gameDisplay.get() ?? -1)) ?? screen.getPrimaryDisplay()
+    overlay.moveToDisplay(display.id)
+    let offer: AugmentOffer | null = null
+    try {
+      const [data, statics] = await Promise.all([mayhem.get(), ddragon.get()])
+      const tiers = augmentTiersForChampion(data, statics, championId)
+      const pick = [tiers[0], tiers[Math.floor(tiers.length * 0.3)], tiers[tiers.length - 1]].filter(Boolean)
+      const rects = cardRects(display.size.width, display.size.height)
+      offer = {
+        displayId: display.id,
+        championId,
+        cards: pick.map((t, i) => ({ augmentId: t.augment.id, text: t.augment.nameEn, score: 1, rect: rects[i] }))
       }
-    })
+    } catch {
+      /* no data – side panel only */
+    }
+    overlay.preview(offer, () => void overlay.panel.send('overlayPreview', { championId }))
+    // example inhibitor timers at the configured minimap position
+    if (!inGame) {
+      const rect = minimapRect(display.size.width, display.size.height, settings.get().minimap.scale)
+      const demo: MinimapState = {
+        gameTime: 200,
+        measuredAt: Date.now(),
+        rect,
+        inhibitors: [
+          { team: 'ORDER', respawnAt: 200 + 58, pos: INHIBITOR_POS.ORDER },
+          { team: 'CHAOS', respawnAt: 200 + 134, pos: INHIBITOR_POS.CHAOS }
+        ]
+      }
+      const local = overlay.showMinimap(display.id, rect)
+      void overlay.minimap.send('minimap', { ...demo, local })
+      setTimeout(() => {
+        if (!inGame) {
+          overlay.hideMinimap()
+          void overlay.minimap.send('minimap', null)
+        }
+      }, 20_000)
+    }
   })
   handle('overlayDiagnostics', () => overlayDiagnostics())
   handle('overlayTestScan', async () => {
@@ -387,6 +459,7 @@ function createWindow(): void {
   win.on('closed', () => {
     win = null
     overlay.destroy()
+    capture.destroy()
     if (process.platform !== 'darwin') app.quit()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -412,13 +485,55 @@ void app.whenReady().then(async () => {
     app.exit(0)
     return
   }
-  if (process.env.RC_SCAN_SELFTEST) {
-    // end-to-end check of the capture path: show a screenshot full screen and scan the desktop
-    const w = new BrowserWindow({ ...screen.getPrimaryDisplay().bounds, frame: false, show: true })
-    await w.loadFile(process.env.RC_SCAN_SELFTEST)
-    await new Promise((r) => setTimeout(r, 1500))
-    const res = await scanner.testScan(join(userData, 'logs'))
-    console.log('RC_SCAN_SELFTEST ' + JSON.stringify(res))
+  if (process.env.RC_GAME_SELFTEST) {
+    // developer check (xvfb): RC_GAME_SELFTEST=<html showing an augment screenshot>. End-to-end: fake a Mayhem live game (dead, level 1) over a real augment screenshot
+    const d = screen.getPrimaryDisplay()
+    const bg = new BrowserWindow({ ...d.bounds, frame: false, show: true })
+    await bg.loadFile(process.env.RC_GAME_SELFTEST)
+    registerIpc()
+    const fake = (gameTime: number): LiveGameState => ({
+      active: true,
+      gameMode: 'KIWI',
+      gameTime,
+      activePlayer: 'me#1',
+      activeChampion: 'Thresh',
+      activeChampionKey: 'Thresh',
+      players: [
+        { riotId: 'me#1', championName: 'Thresh', team: 'ORDER', level: 1, kills: 0, deaths: 0, assists: 0, creepScore: 0, items: [], spells: [], position: '', isDead: true, respawnTimer: 5 }
+      ],
+      events: [],
+      inhibitorEvents: [{ type: 'killed', inhibitor: 'Barracks_T2_L1', time: gameTime - 60 }]
+    })
+    const t0 = Date.now()
+    const tickFake = (): void => {
+      const f = fake(20 + (Date.now() - t0) / 1000)
+      emit('live', f)
+      updateOverlay(f)
+    }
+    const timer = setInterval(tickFake, 2000)
+    tickFake()
+    const { writeFileSync } = await import('node:fs')
+    for (let i = 0; i < 100 && !overlay.frames.visible; i++) await new Promise((r) => setTimeout(r, 50))
+    await new Promise((r) => setTimeout(r, 700))
+    for (const [name, part] of [['frames', overlay.frames], ['panel', overlay.panel], ['minimap', overlay.minimap]] as const) {
+      if (part.win?.isVisible()) writeFileSync(join(userData, 'logs', `part-${name}.png`), (await part.win.webContents.capturePage()).toPNG())
+    }
+    await new Promise((r) => setTimeout(r, Number(process.env.RC_GAME_SELFTEST_MS ?? 6000)))
+    clearInterval(timer)
+    const wins = BrowserWindow.getAllWindows().map((w) => ({ title: w.getTitle(), visible: w.isVisible(), bounds: w.getBounds() }))
+    console.log('RC_GAME_SELFTEST ' + JSON.stringify({ wins, diag: overlayDiagnostics() }, null, 1))
+    const shot = await capture.grab(d, [{ x: 0, y: 0, w: 1, h: 1 }])
+    if (shot?.[0]) {
+      const { nativeImage } = await import('electron')
+      const f = shot[0]
+      const bgra = Buffer.from(f.data)
+      for (let i = 0; i < bgra.length; i += 4) {
+        const r = bgra[i]
+        bgra[i] = bgra[i + 2]
+        bgra[i + 2] = r
+      }
+      writeFileSync(join(userData, 'logs', 'game-selftest.png'), nativeImage.createFromBitmap(bgra, { width: f.width, height: f.height }).toPNG())
+    }
     app.exit(0)
     return
   }
@@ -436,6 +551,7 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   scanner.stop()
   overlay.destroy()
+  capture.destroy()
   lcu.stop()
   crawler.stop()
   if (process.platform !== 'darwin') app.quit()

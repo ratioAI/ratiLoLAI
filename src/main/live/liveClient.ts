@@ -43,7 +43,17 @@ interface RawLive {
     items: { itemID: number; slot: number }[]
     summonerSpells: { summonerSpellOne?: { displayName: string }; summonerSpellTwo?: { displayName: string } }
   }[]
-  events?: { Events?: { EventName: string; EventTime: number; KillerName?: string; VictimName?: string; DragonType?: string }[] }
+  events?: {
+    Events?: {
+      EventName: string
+      EventTime: number
+      KillerName?: string
+      VictimName?: string
+      DragonType?: string
+      InhibKilled?: string
+      InhibRespawned?: string
+    }[]
+  }
   gameData?: { gameTime: number; gameMode: string }
 }
 
@@ -95,6 +105,14 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
     .slice(-12)
     .reverse()
     .map((e) => ({ name: e.EventName, time: e.EventTime, text: describe(e) }))
+  type InhibEvent = NonNullable<LiveGameState['inhibitorEvents']>[number]
+  const inhibitorEvents = (d.events?.Events ?? []).flatMap((e): InhibEvent[] =>
+    e.EventName === 'InhibKilled' && e.InhibKilled
+      ? [{ type: 'killed', inhibitor: e.InhibKilled, time: e.EventTime }]
+      : e.EventName === 'InhibRespawned' && e.InhibRespawned
+        ? [{ type: 'respawned', inhibitor: e.InhibRespawned, time: e.EventTime }]
+        : []
+  )
   return {
     active: true,
     gameTime: d.gameData.gameTime,
@@ -107,6 +125,7 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
       return me?.rawChampionName?.replace(/^game_character_displayname_/, '') ?? null
     })(),
     players,
-    events
+    events,
+    inhibitorEvents
   }
 }

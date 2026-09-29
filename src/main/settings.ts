@@ -23,7 +23,14 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
     enabled: true,
     hotkey: 'Alt+Shift+A',
     autoExpand: true,
-    cardFrames: true
+    cardFrames: true,
+    animation: 'smooth',
+    gameDisplayId: null
+  },
+  minimap: {
+    enabled: true,
+    inhibitors: true,
+    scale: 1
   },
   client: {
     autoImportRunes: true,
@@ -53,6 +60,7 @@ export class SettingsStore {
       ...loaded,
       crawler: { ...DEFAULT_SETTINGS.crawler, ...loaded.crawler },
       overlay: { ...DEFAULT_SETTINGS.overlay, ...loaded.overlay },
+      minimap: { ...DEFAULT_SETTINGS.minimap, ...loaded.minimap },
       client: { ...DEFAULT_SETTINGS.client, ...loaded.client }
     }
     if ((loaded.schema ?? 1) < 2) this.data.language = 'en_US'
@@ -71,6 +79,7 @@ export class SettingsStore {
       ...patch,
       crawler: { ...this.data.crawler, ...patch.crawler },
       overlay: { ...this.data.overlay, ...patch.overlay },
+      minimap: { ...this.data.minimap, ...patch.minimap },
       client: { ...this.data.client, ...patch.client }
     }
     this.save()

@@ -46,6 +46,14 @@ export class TitleOcr {
     return this.worker
   }
 
+  /** Starts the engine now; resolves with the start-up time (0 when it was already running). */
+  async warmup(): Promise<number> {
+    if (this.worker) return (await this.worker, 0)
+    const t0 = Date.now()
+    await this.get()
+    return Date.now() - t0
+  }
+
   /** `image` is an encoded PNG. */
   async read(image: Buffer): Promise<string> {
     const w = await this.get()

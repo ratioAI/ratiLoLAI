@@ -16,6 +16,7 @@ import {
   type PlayerTick
 } from './detect'
 import { TitleOcr } from './ocr'
+import type { CaptureService } from '../capture/captureService'
 
 /** Bounding box of the cheap preview capture used to check whether the augment cards are open. */
 const PREVIEW = 640
@@ -74,6 +75,7 @@ export class AugmentScanner {
   /** signature of the last cards we ran OCR on (successful or not) */
   private signature: number[] | null = null
   private gameDisplay: number | null = null
+  private lastRead = 0
   private readonly ocr: TitleOcr
   readonly schedule = new AugmentSchedule()
 
@@ -81,9 +83,28 @@ export class AugmentScanner {
     cacheDir: string,
     private readonly candidates: () => NameCandidate[],
     private readonly emit: (state: ScanState) => void,
-    private readonly log: (msg: string) => void = () => undefined
+    private readonly log: (msg: string) => void = () => undefined,
+    private readonly capture: CaptureService | null = null,
+    /** screen the game ran on last time (persisted), so only that one needs to be watched */
+    private readonly knownDisplay: { get(): number | null; set(id: number): void } = { get: () => null, set: () => undefined }
   ) {
     this.ocr = new TitleOcr(cacheDir)
+  }
+
+  /** Loads the OCR engine ahead of time (champion select), so the first augment choice doesn't stutter. */
+  warmup(): void {
+    void this.ocr.warmup().then(
+      (ms) => ms && this.log(`OCR engine ready (${ms} ms)`),
+      (e) => this.log(`OCR warm-up failed: ${String(e)}`)
+    )
+  }
+
+  /** Screens to watch: the known game screen if it still exists, otherwise all of them. */
+  private watchedDisplays(): Display[] {
+    const all = screen.getAllDisplays()
+    const id = this.gameDisplay ?? this.knownDisplay.get()
+    const known = all.find((d) => d.id === id)
+    return known ? [known] : all
   }
 
   get running(): boolean {
@@ -124,6 +145,7 @@ export class AugmentScanner {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     this.schedule.reset()
+    this.capture?.demand('augments', null)
     this.signature = null
     this.publish({ visible: false, offer: null, displayId: null })
     void this.ocr.dispose()
@@ -132,6 +154,7 @@ export class AugmentScanner {
   private reschedule(): void {
     if (!this.active) return
     const interval = this.schedule.interval()
+    this.capture?.demand('augments', interval === null ? null : { displays: this.watchedDisplays().map((d) => d.id), fps: 2 })
     if (interval === null) {
       if (this.timer) clearTimeout(this.timer)
       this.timer = null
@@ -169,48 +192,74 @@ export class AugmentScanner {
     }
   }
 
+  /** Small previews of the watched screens – from the running stream, or getSources() as fallback. */
+  private async previews(): Promise<{ display: Display; bitmap: Bitmap }[]> {
+    if (this.capture && !this.capture.failed) {
+      const out: { display: Display; bitmap: Bitmap }[] = []
+      for (const display of this.watchedDisplays()) {
+        const f = await this.capture.grab(display, [{ x: 0, y: 0, w: 1, h: 1, outW: PREVIEW }])
+        if (f?.[0]) out.push({ display, bitmap: { ...f[0], order: 'rgba' } })
+      }
+      if (out.length || !this.capture.failed) return out
+    }
+    const shots = await captureAll({ width: PREVIEW, height: PREVIEW })
+    return shots.map((s) => ({ display: s.display, bitmap: toBitmap(s.image) }))
+  }
+
   private async look(): Promise<ScanState> {
     const t0 = Date.now()
-    const shots = await captureAll({ width: PREVIEW, height: PREVIEW })
+    const shots = await this.previews()
     const ms = Date.now() - t0
     if (!shots.length) {
       this.log(`preview capture returned no screens (${ms} ms)`)
       return { visible: false, offer: null, displayId: null }
     }
-    // the screen the cards were last seen on first
-    if (this.gameDisplay !== null) shots.sort((a) => (a.display.id === this.gameDisplay ? -1 : 1))
-
     for (const shot of shots) {
-      const small = toBitmap(shot.image)
+      const small = shot.bitmap
       if (!cardsVisible(small)) continue
       const displayId = shot.display.id
       const sig = titleSignature(small)
       const same = this.state.visible && this.state.displayId === displayId && !signatureChanged(this.signature, sig)
       if (same) return this.state // same cards as last time → nothing to read again
+      // a reroll takes a moment to animate – don't OCR the same cards over and over
+      if (this.state.visible && this.state.displayId === displayId && Date.now() - this.lastRead < 2500) return this.state
 
       this.log(`cards visible on display ${displayId} (preview ${ms} ms) – reading titles`)
-      this.gameDisplay = displayId
+      if (this.gameDisplay !== displayId) {
+        this.gameDisplay = displayId
+        this.knownDisplay.set(displayId)
+        this.reschedule() // watch only this screen from now on
+      }
       this.signature = sig
+      this.lastRead = Date.now()
       const offer = await this.readDisplay(shot.display)
       return { visible: true, offer, displayId }
     }
     return { visible: false, offer: null, displayId: null }
   }
 
+  private async fullFrame(display: Display): Promise<Bitmap | null> {
+    if (this.capture && !this.capture.failed) {
+      const f = await this.capture.grab(display, [{ x: 0, y: 0, w: 1, h: 1 }])
+      if (f?.[0]) return { ...f[0], order: 'rgba' }
+    }
+    const all = screen.getAllDisplays()
+    const box = {
+      width: Math.max(...all.map((d) => Math.round(d.size.width * d.scaleFactor))),
+      height: Math.max(...all.map((d) => Math.round(d.size.height * d.scaleFactor)))
+    }
+    const shot = (await captureAll(box)).find((s) => s.display.id === display.id)
+    return shot ? toBitmap(shot.image) : null
+  }
+
   private async readDisplay(display: Display): Promise<AugmentOffer | null> {
     const t0 = Date.now()
-    const px = (d: Display): { width: number; height: number } => ({
-      width: Math.round(d.size.width * d.scaleFactor),
-      height: Math.round(d.size.height * d.scaleFactor)
-    })
-    const all = screen.getAllDisplays().map(px)
-    const box = { width: Math.max(...all.map((s) => s.width)), height: Math.max(...all.map((s) => s.height)) }
-    const shot = (await captureAll(box)).find((s) => s.display.id === display.id)
-    if (!shot) {
+    const bitmap = await this.fullFrame(display)
+    if (!bitmap) {
       this.log('full capture: display not found')
       return null
     }
-    const offer = await this.read(shot.image, display)
+    const offer = await this.read(bitmap, display)
     this.log(
       `OCR ${Date.now() - t0} ms: ${offer ? offer.cards.map((c) => `"${c.text}"→${c.augmentId ?? '?'}`).join(', ') : 'unreadable'}`
     )
@@ -226,8 +275,7 @@ export class AugmentScanner {
     return texts
   }
 
-  private async read(img: Electron.NativeImage, display: Display): Promise<AugmentOffer | null> {
-    const bitmap = toBitmap(img)
+  private async read(bitmap: Bitmap, display: Display): Promise<AugmentOffer | null> {
     const candidates = this.candidates()
     const texts = await this.readTitles(bitmap)
     const cards = cardRects(bitmap.width, bitmap.height)

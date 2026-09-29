@@ -273,6 +273,17 @@ export interface Settings {
     autoExpand: boolean
     /** recognise the offered augment cards on screen and frame them by tier */
     cardFrames: boolean
+    /** animated frames: 30 fps, 15 fps or static */
+    animation: 'smooth' | 'low' | 'off'
+    /** screen the game was last seen on (set automatically) */
+    gameDisplayId: number | null
+  }
+  minimap: {
+    /** timers on the minimap in ARAM / ARAM: Mayhem */
+    enabled: boolean
+    inhibitors: boolean
+    /** minimap size relative to the default (in-game minimap scale) */
+    scale: number
   }
   client: {
     autoImportRunes: boolean
@@ -281,6 +292,17 @@ export interface Settings {
     flashOn: 'D' | 'F'
     autoAccept: boolean
   }
+}
+
+/** Timers shown on the minimap (all times are game time in seconds). */
+export interface MinimapState {
+  gameTime: number
+  /** Date.now() when gameTime was measured – the overlay counts down locally in between */
+  measuredAt: number
+  rect: { x: number; y: number; w: number; h: number }
+  /** minimap inside the overlay window (DIP), filled in by the main process */
+  local?: { x: number; y: number; w: number; h: number }
+  inhibitors: { team: 'ORDER' | 'CHAOS'; respawnAt: number; pos: { x: number; y: number } }[]
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +392,8 @@ export interface LiveGameState {
   activeChampion: string | null
   /** Data Dragon id of the local player's champion (e.g. "MonkeyKing"), language independent */
   activeChampionKey?: string | null
+  /** inhibitor kills / respawns from the event feed */
+  inhibitorEvents?: { type: 'killed' | 'respawned'; inhibitor: string; time: number }[]
   activePlayer: string | null
   players: LivePlayer[]
   events: { name: string; time: number; text: string }[]
@@ -534,6 +558,8 @@ export interface RcApi {
 /** Augment cards currently offered on screen (detected by screen recognition). */
 export interface AugmentOffer {
   displayId: number
+  /** only for the settings preview: rate the cards for this champion instead of the live one */
+  championId?: number
   /** card rectangles relative to the display, in DIP */
   cards: { augmentId: number | null; text: string; score: number; rect: { x: number; y: number; width: number; height: number } }[]
 }
@@ -550,6 +576,8 @@ export interface OverlayDiagnostics {
   scanning: boolean
   cardsVisible: boolean
   overlayVisible: boolean
+  /** state of the shared screen stream */
+  captureStream: string
   log: string[]
 }
 
@@ -586,6 +614,9 @@ export interface RcEvents {
   augmentOffer: AugmentOffer | null
   /** augment cards on screen (even when their titles could not be read) */
   augmentCards: { visible: boolean }
+  /** offer with card rects relative to the frames window (sent to that window only) */
+  framesOffer: AugmentOffer | null
+  minimap: MinimapState | null
   overlayPreview: { championId: number }
   update: UpdateState
 }
