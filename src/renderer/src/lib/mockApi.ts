@@ -334,6 +334,7 @@ export function createMockApi(): RcApi {
       return buildMayhemData(en, de ?? en, aug, combos, Date.now(), mayhemPool(lists))
     })())
 
+  let owned: number[] = []
   let settings: Settings = {
     platform: 'euw1',
     language: 'en_US',
@@ -469,6 +470,15 @@ export function createMockApi(): RcApi {
       log: ['web demo – no game running']
     }),
     overlayScanNow: async () => undefined,
+    getOwnedAugments: async () => {
+      const q = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('owned')
+      if (q) owned = q.split(',').filter(Boolean).map(Number)
+      return owned
+    },
+    setOwnedAugments: async (ids) => {
+      owned = ids
+      emit('augmentsOwned', ids)
+    },
     overlayTestScan: async () => ({ captureMs: 0, screens: [] }),
     openDiagnosticsFolder: async () => undefined,
     getMayhemPersonal: async (): Promise<MayhemPersonal> => {
@@ -503,7 +513,7 @@ export function createMockApi(): RcApi {
     },
     resetStats: async () => undefined,
     clientStatus: async () => client,
-    champSelect,
+    champSelect: async () => (window.location.hash.includes('demo-live') ? null : champSelect()),
     importBuild: async (championId) => {
       const d = await getStatic()
       return {
@@ -512,7 +522,43 @@ export function createMockApi(): RcApi {
         errors: []
       }
     },
-    liveGame: async (): Promise<LiveGameState | null> => null,
+    // '#/live?demo-live&owned=30,48' shows an example ARAM: Mayhem game (screenshots)
+    liveGame: async (): Promise<LiveGameState | null> => {
+      const q = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
+      if (!q.has('demo-live')) return null
+      owned = (q.get('owned') ?? '').split(',').filter(Boolean).map(Number)
+      const mk = (riotId: string, championName: string, team: 'ORDER' | 'CHAOS', items: number[], k: number) => ({
+        riotId,
+        championName,
+        team,
+        level: 9,
+        kills: k,
+        deaths: 2,
+        assists: 7,
+        creepScore: 41,
+        items,
+        spells: ['Flash', 'Mark'],
+        position: '',
+        isDead: false,
+        respawnTimer: 0
+      })
+      return {
+        active: true,
+        gameMode: 'KIWI',
+        gameTime: 612,
+        activePlayer: 'Axel Fungus#EUW',
+        activeChampion: 'Lux',
+        activeChampionKey: 'Lux',
+        players: [
+          mk('Axel Fungus#EUW', 'Lux', 'ORDER', [3285, 3020, 3089], 6),
+          mk('blackbird#EUW', 'Garen', 'ORDER', [3071, 3047], 4),
+          mk('Doulul#EUW', 'Thresh', 'ORDER', [3190, 3117], 1),
+          mk('Toni#EUW', 'Jinx', 'CHAOS', [3031, 3006, 3094], 5),
+          mk('ratio#EUW', 'Ryze', 'CHAOS', [3003, 3158], 3)
+        ],
+        events: [{ name: 'ChampionKill', time: 598, text: 'Axel Fungus killed Toni' }]
+      }
+    },
     lookupProfile: async (riotId) => demoProfile(await getStatic(), riotId),
     scoutActiveGame: async (): Promise<ScoutResult | null> => {
       const cs = await champSelect()

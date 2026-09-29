@@ -206,6 +206,16 @@ export interface AugmentTier {
   source: 'combo' | 'rating'
   combo?: ComboType
   fits: boolean
+  /** set when this augment builds a combo with augments the player already owns */
+  synergy?: Synergy
+}
+
+export interface Synergy {
+  type: ComboType
+  /** owned augments that are part of the combo */
+  with: number[]
+  /** augments still missing after taking this one (empty = combo complete) */
+  missing: number[]
 }
 
 export function championProfile(tags: string[]): Set<AugmentFit> {
@@ -258,4 +268,58 @@ export function augmentTiersForChampion(data: MayhemData, statics: StaticData, c
       (a, b) =>
         TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || (b.augment.pickRate ?? 0) - (a.augment.pickRate ?? 0)
     )
+}
+
+// ---------------------------------------------------------------------------
+// Combos with augments the player already owns
+// ---------------------------------------------------------------------------
+
+/** Best multi-augment combo that `augmentId` builds together with the owned augments. */
+export function synergyFor(combos: MayhemCombo[], owned: number[], augmentId: number): Synergy | null {
+  if (owned.includes(augmentId)) return null
+  let best: Synergy | null = null
+  const score = (x: Synergy): number => x.missing.length * 10 + TYPE_ORDER.indexOf(x.type) - x.with.length * 0.1
+  for (const c of combos) {
+    if (c.augments.length < 2 || !c.augments.includes(augmentId)) continue
+    const have = c.augments.filter((a) => owned.includes(a))
+    if (!have.length) continue
+    const missing = c.augments.filter((a) => a !== augmentId && !owned.includes(a))
+    // proven multi-augment builds often carry no rating – they count as strong
+    const type = [...c.types].sort((a, b) => TYPE_ORDER.indexOf(a) - TYPE_ORDER.indexOf(b))[0] ?? 'strong'
+    const cand: Synergy = { type, with: have, missing }
+    // a trap only counts when nothing better exists
+    const better =
+      !best ||
+      (best.type === 'trap' && type !== 'trap') ||
+      ((best.type === 'trap') === (type === 'trap') && score(cand) < score(best))
+    if (better) best = cand
+  }
+  return best
+}
+
+/**
+ * Augment tiers for a champion, adjusted for the augments already owned: completing a combo lifts
+ * the augment to at least the combo's tier (top combo → S+), being one step away lifts it one
+ * tier, and completing a known trap drops it to D.
+ */
+export function augmentTiersWithOwned(
+  data: MayhemData,
+  statics: StaticData,
+  championId: number,
+  owned: number[]
+): AugmentTier[] {
+  const base = augmentTiersForChampion(data, statics, championId)
+  if (!owned.length) return base
+  const combos = combosForChampion(data, statics, championId)
+  return base
+    .map((t) => {
+      const synergy = synergyFor(combos, owned, t.augment.id)
+      if (!synergy) return t
+      let tier = t.tier
+      if (synergy.type === 'trap') tier = synergy.missing.length ? tier : 'D'
+      else if (!synergy.missing.length) tier = TIERS.indexOf(COMBO_TIER[synergy.type]) < TIERS.indexOf(tier) ? COMBO_TIER[synergy.type] : tier
+      else if (synergy.missing.length === 1) tier = TIERS[Math.max(0, TIERS.indexOf(tier) - 1)]
+      return { ...t, tier, synergy }
+    })
+    .sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || (b.augment.pickRate ?? 0) - (a.augment.pickRate ?? 0))
 }

@@ -150,3 +150,31 @@ describe('augment tiers per champion', () => {
     expect(Object.keys(AUGMENT_NOTES).length).toBeGreaterThanOrEqual(220)
   })
 })
+
+describe('combos with owned augments', () => {
+  it('finds the best combo an offered augment builds with what you own', async () => {
+    const { synergyFor } = await import('../src/shared/mayhem')
+    const combos = [
+      { championAlias: 'Ryze', augments: [1, 2], types: ['strong' as const], url: '' },
+      { championAlias: 'Ryze', augments: [1, 2, 3], types: ['god' as const], url: '' },
+      { championAlias: 'Ryze', augments: [1, 4], types: ['trap' as const], url: '' },
+      { championAlias: 'Ryze', augments: [5], types: ['god' as const], url: '' }
+    ]
+    // owning 1: taking 2 completes the strong combo (better than being 1 away from the god combo)
+    expect(synergyFor(combos, [1], 2)).toEqual({ type: 'strong', with: [1], missing: [] })
+    expect(synergyFor(combos, [1], 3)).toEqual({ type: 'god', with: [1], missing: [2] })
+    expect(synergyFor(combos, [1, 2], 3)).toEqual({ type: 'god', with: [1, 2], missing: [] })
+    expect(synergyFor(combos, [1], 4)?.type).toBe('trap')
+    expect(synergyFor(combos, [], 2)).toBeNull() // nothing owned
+    expect(synergyFor(combos, [1], 5)).toBeNull() // single-augment combos are not synergies
+    expect(synergyFor(combos, [1], 1)).toBeNull() // already owned
+  })
+})
+
+describe('untyped builds', () => {
+  it('count as strong combos', async () => {
+    const { synergyFor } = await import('../src/shared/mayhem')
+    const combos = [{ championAlias: 'Lux', augments: [30, 48, 156], types: [], url: '' }]
+    expect(synergyFor(combos, [30, 48], 156)).toEqual({ type: 'strong', with: [30, 48], missing: [] })
+  })
+})

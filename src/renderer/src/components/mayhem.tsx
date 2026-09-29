@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { Tier } from '@shared/types'
-import { ExternalLink, Sparkles, TriangleAlert } from 'lucide-react'
+import { Check, ExternalLink, Sparkles, TriangleAlert } from 'lucide-react'
 import type { AugmentRarity, ComboType, MayhemAugment, MayhemData } from '@shared/types'
-import { augmentTiersForChampion, COMBO_TYPE_LABELS, combosForChampion } from '@shared/mayhem'
+import { augmentTiersWithOwned, COMBO_TYPE_LABELS, combosForChampion } from '@shared/mayhem'
 import { AugmentFrame } from './AugmentFrame'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
@@ -25,6 +25,24 @@ export const COMBO_COLORS: Record<ComboType, string> = {
 }
 
 let cache: Promise<MayhemData> | null = null
+
+/** Augments picked in the running Mayhem game (recognised from the in-game augment choice). */
+export function useOwnedAugments(): number[] {
+  const [owned, setOwned] = useState<number[]>([])
+  useEffect(() => {
+    let alive = true
+    void api
+      .getOwnedAugments()
+      .then((ids) => alive && setOwned(ids))
+      .catch(() => undefined)
+    const off = api.on('augmentsOwned', setOwned)
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+  return owned
+}
 
 export function useMayhemData(): { data: MayhemData | null; error: string | null } {
   const [state, setState] = useState<{ data: MayhemData | null; error: string | null }>({ data: null, error: null })
@@ -83,7 +101,16 @@ export function Attribution({ data }: { data: MayhemData }) {
 }
 
 /** Augment recommendations for one champion – shown in champion select, in game and on the champion page. */
-export function MayhemChampionPanel({ championId, compact = false }: { championId: number; compact?: boolean }) {
+export function MayhemChampionPanel({
+  championId,
+  compact = false,
+  owned = []
+}: {
+  championId: number
+  compact?: boolean
+  /** augments already picked this game: combos with them are shown first, tiers adjusted */
+  owned?: number[]
+}) {
   const { data: statics } = useApp()
   const { data, error } = useMayhemData()
   const [rarityFilter, setRarityFilter] = useState<AugmentRarity | null>(null)
@@ -92,8 +119,14 @@ export function MayhemChampionPanel({ championId, compact = false }: { championI
 
   const combos = combosForChampion(data, statics, championId)
   const tips = combos.filter((c) => c.types.length && c.augments.length === 1)
-  const builds = combos.filter((c) => c.augments.length > 1).slice(0, compact ? 3 : 6)
-  const tiers = augmentTiersForChampion(data, statics, championId)
+  const has = (c: { augments: number[] }) => c.augments.filter((a) => owned.includes(a)).length
+  const builds = combos
+    .filter((c) => c.augments.length > 1)
+    .map((c, i) => ({ c, i, have: has(c), missing: c.augments.length - has(c) }))
+    // with owned augments: combos you are already building first, the closest ones on top
+    .sort((a, b) => (owned.length ? Number(b.have > 0) - Number(a.have > 0) || a.missing - b.missing : 0) || a.i - b.i)
+    .slice(0, compact ? 4 : 6)
+  const tiers = augmentTiersWithOwned(data, statics, championId, owned).filter((t) => !owned.includes(t.augment.id))
   const shownTiers: Tier[] = compact ? ['S+', 'S', 'A'] : ['S+', 'S', 'A', 'B']
 
   return (
@@ -124,23 +157,44 @@ export function MayhemChampionPanel({ championId, compact = false }: { championI
 
       {builds.length > 0 && (
         <div>
-          <h3 className="mb-2 text-xs font-semibold text-muted">Proven augment combinations</h3>
+          <h3 className="mb-2 text-xs font-semibold text-muted">
+            {owned.length ? 'Combos with your augments' : 'Proven augment combinations'}
+          </h3>
           <div className="space-y-2">
-            {builds.map((c, i) => (
+            {builds.map(({ c, have, missing }, i) => (
               <button
                 key={i}
                 onClick={() => api.openExternal(c.url)}
-                className="flex w-full items-center gap-1.5 rounded-xl bg-bg-2 p-2 text-left hover:bg-panel-2"
+                className={`flex w-full items-center gap-1.5 rounded-xl p-2 text-left hover:bg-panel-2 ${
+                  have ? 'bg-accent/10 ring-1 ring-accent/40' : 'bg-bg-2'
+                }`}
                 title="Details on arammayhem.com"
               >
-                {c.augments.map((id) => (
-                  <AugmentIcon key={id} augment={data.augments[id]} size={34} />
-                ))}
-                {c.types.map((t) => (
-                  <span key={t} className="ml-auto text-xs font-bold" style={{ color: COMBO_COLORS[t] }}>
-                    {COMBO_TYPE_LABELS[t]}
-                  </span>
-                ))}
+                {c.augments.map((id) => {
+                  const mine = owned.includes(id)
+                  return (
+                    <span key={id} className={`relative ${owned.length > 0 && !mine ? 'opacity-60' : ''}`}>
+                      <AugmentIcon augment={data.augments[id]} size={34} />
+                      {mine && (
+                        <span className="absolute -right-1 -bottom-1 rounded-full bg-win p-0.5 text-black">
+                          <Check size={9} strokeWidth={4} />
+                        </span>
+                      )}
+                    </span>
+                  )
+                })}
+                <span className="ml-auto flex flex-col items-end gap-0.5">
+                  {c.types.map((t) => (
+                    <span key={t} className="text-xs font-bold" style={{ color: COMBO_COLORS[t] }}>
+                      {COMBO_TYPE_LABELS[t]}
+                    </span>
+                  ))}
+                  {have > 0 && (
+                    <span className="text-[10px] font-semibold whitespace-nowrap text-accent">
+                      {missing === 0 ? 'Complete!' : `${missing} to go`}
+                    </span>
+                  )}
+                </span>
               </button>
             ))}
           </div>
@@ -173,7 +227,17 @@ export function MayhemChampionPanel({ championId, compact = false }: { championI
           {tiers
             .filter((t) => shownTiers.includes(t.tier) && (!rarityFilter || t.augment.rarity === rarityFilter))
             .map((t) => (
-              <AugmentFrame key={t.augment.id} augment={t.augment} tier={t.tier} size={compact ? 38 : 44} note={t.note} />
+              <AugmentFrame
+                key={t.augment.id}
+                augment={t.augment}
+                tier={t.tier}
+                size={compact ? 38 : 44}
+                note={
+                  t.synergy
+                    ? `${t.synergy.type === 'trap' ? 'Trap' : t.synergy.missing.length ? 'Builds a combo' : 'Completes a combo'} with ${t.synergy.with.map((id) => data.augments[id]?.name).join(' + ')}`
+                    : t.note
+                }
+              />
             ))}
         </div>
       </div>

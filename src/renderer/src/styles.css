@@ -405,6 +405,13 @@ html.overlay-mode #root {
   --cf-text: linear-gradient(180deg, #f3d3bf, #9b6a4f);
 }
 
+/* the note becomes a combo hint when the card builds a combo with an owned augment */
+.card-frame .cf-note.cf-note-combo {
+  border-color: #5dffb0;
+  box-shadow: 0 0 18px -2px rgba(93, 255, 176, 0.8);
+  font-weight: 700;
+}
+
 /* ---- Minimap timers ---- */
 .mm-chip {
   display: inline-block;

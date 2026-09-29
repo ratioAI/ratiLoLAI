@@ -552,6 +552,9 @@ export interface RcApi {
   overlayDiagnostics(): Promise<OverlayDiagnostics>
   /** look for augment cards right now (and for the next 20 s), e.g. from the overlay pill */
   overlayScanNow(): Promise<void>
+  /** augments picked in the running Mayhem game (recognised from the augment choice) */
+  getOwnedAugments(): Promise<number[]>
+  setOwnedAugments(ids: number[]): Promise<void>
   overlayTestScan(): Promise<ScanTestResult>
   openDiagnosticsFolder(): Promise<void>
   liveGame(): Promise<LiveGameState | null>
@@ -622,6 +625,7 @@ export interface RcEvents {
   augmentCards: { visible: boolean }
   /** offer with card rects relative to the frames window (sent to that window only) */
   framesOffer: AugmentOffer | null
+  augmentsOwned: number[]
   minimap: MinimapState | null
   overlayPreview: { championId: number }
   update: UpdateState

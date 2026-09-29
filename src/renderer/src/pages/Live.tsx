@@ -1,10 +1,12 @@
 import { liveChampionKey } from '@shared/staticData'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Ban, Eye, Loader2, Radio, Skull } from 'lucide-react'
+import { Ban, Eye, Loader2, Radio, Skull, X } from 'lucide-react'
 import type { ChampSelectPlayer, GameMode, LiveGameState, Platform, ScoutResult } from '@shared/types'
 import { PLATFORMS, ROLE_LABELS, statsModeOf } from '@shared/types'
-import { MayhemChampionPanel } from '@/components/mayhem'
+import { MayhemChampionPanel, useMayhemData, useOwnedAugments } from '@/components/mayhem'
+import { AugmentFrame } from '@/components/AugmentFrame'
+import { augmentTiersForChampion } from '@shared/mayhem'
 import { api } from '@/lib/api'
 import { duration, num, pct, RANK_COLORS, wrColor } from '@/lib/format'
 import { useApp, useAsync } from '@/lib/store'
@@ -223,8 +225,41 @@ function TeamColumn({ title, players, enemy = false }: { title: string; players:
   )
 }
 
+/** The augments you picked this game, in their tier frames (hover a frame to remove a wrong one). */
+function OwnedAugments({ championId, owned }: { championId: number; owned: number[] }) {
+  const { data: statics } = useApp()
+  const { data } = useMayhemData()
+  const tiers = useMemo(
+    () => (data && statics && championId ? new Map(augmentTiersForChampion(data, statics, championId).map((t) => [t.augment.id, t])) : null),
+    [data, statics, championId]
+  )
+  if (!data || !tiers) return null
+  return (
+    <span className="ml-2 flex items-center gap-2 pt-1.5 pb-1">
+      {owned.map((id) => {
+        const t = tiers.get(id)
+        const a = data.augments[id]
+        if (!a) return null
+        return (
+          <span key={id} className="group relative">
+            <AugmentFrame augment={a} tier={t?.tier ?? 'C'} size={26} note={t?.note ?? null} />
+            <button
+              onClick={() => api.setOwnedAugments(owned.filter((x) => x !== id))}
+              className="absolute -top-2 -right-2 hidden rounded-full bg-black/85 p-0.5 text-muted group-hover:block hover:text-loss"
+              title="Not picked – remove"
+            >
+              <X size={10} />
+            </button>
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 function LiveScoreboard({ live }: { live: LiveGameState }) {
   const { data } = useApp()
+  const owned = useOwnedAugments()
   if (!data) return null
   const teams = (['ORDER', 'CHAOS'] as const).map((t) => live.players.filter((p) => p.team === t))
   const myChamp = liveChampionKey(data, live)
@@ -254,6 +289,7 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
                       <ItemIcon key={i} id={p.items[i] ?? 0} size={24} />
                     ))}
                   </span>
+                  {p.riotId === live.activePlayer && owned.length > 0 && <OwnedAugments championId={myChamp} owned={owned} />}
                   {p.isDead && (
                     <span className="ml-auto flex items-center gap-1 text-xs text-loss">
                       <Skull size={12} /> {Math.ceil(p.respawnTimer)}s
@@ -269,7 +305,7 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
       {live.gameMode === 'KIWI' && myChamp > 0 && (
         <div className="panel p-4">
           <h2 className="mb-3 text-sm font-bold text-gold uppercase">Augments for {live.activeChampion}</h2>
-          <MayhemChampionPanel championId={myChamp} compact />
+          <MayhemChampionPanel championId={myChamp} compact owned={owned} />
         </div>
       )}
       <div className="panel p-4">

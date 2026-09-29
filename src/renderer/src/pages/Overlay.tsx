@@ -2,14 +2,14 @@ import { liveChampionKey } from '@shared/staticData'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Sparkles, X } from 'lucide-react'
 import type { AugmentOffer, AugmentRarity, Tier } from '@shared/types'
-import { augmentTiersForChampion, COMBO_TYPE_LABELS, type AugmentTier } from '@shared/mayhem'
+import { augmentTiersWithOwned, COMBO_TYPE_LABELS, type AugmentTier } from '@shared/mayhem'
 import { cardRects } from '@shared/cardLayout'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { ChampIcon } from '@/components/icons'
 import { AugmentFrame } from '@/components/AugmentFrame'
 import { CardFrames } from '@/components/CardFrames'
-import { RARITY_COLORS, RARITY_LABELS, useMayhemData } from '@/components/mayhem'
+import { RARITY_COLORS, RARITY_LABELS, useMayhemData, useOwnedAugments } from '@/components/mayhem'
 
 const SHOWN_TIERS: Tier[] = ['S+', 'S', 'A', 'B']
 
@@ -21,6 +21,7 @@ const SHOWN_TIERS: Tier[] = ['S+', 'S', 'A', 'B']
 export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
   const { data: statics, live, settings } = useApp()
   const { data, error } = useMayhemData()
+  const owned = useOwnedAugments()
   const [expanded, setExpanded] = useState(() => window.location.hash.includes('champ='))
   // '#/overlay?champ=99' previews the overlay for a champion (used by the web demo)
   const [previewChamp, setPreviewChamp] = useState(() => Number(new URLSearchParams(window.location.hash.split('?')[1]).get('champ')) || 0)
@@ -60,8 +61,8 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
   const level = live?.players.find((p) => p.riotId === live.activePlayer)?.level ?? 0
 
   const tiers = useMemo(
-    () => (data && statics && championId ? augmentTiersForChampion(data, statics, championId) : []),
-    [data, statics, championId]
+    () => (data && statics && championId ? augmentTiersWithOwned(data, statics, championId, owned) : []),
+    [data, statics, championId, owned]
   )
   const visible = tiers.filter((t) => !rarity || t.augment.rarity === rarity)
   const groups = (showAll ? (['S+', 'S', 'A', 'B', 'C', 'D'] as Tier[]) : SHOWN_TIERS)

@@ -124,6 +124,17 @@ const scanner = new AugmentScanner(
 
 scanner.snapshotDir = join(userData, 'logs')
 
+// augments picked in the running Mayhem game
+let owned: number[] = []
+let ownedGameTime = 0
+function setOwned(ids: number[]): void {
+  owned = [...new Set(ids)].slice(0, 4)
+  emit('augmentsOwned', owned)
+}
+scanner.onPicked = (id) => {
+  if (!owned.includes(id)) setOwned([...owned, id])
+}
+
 // inhibitor timers on the minimap (ARAM) – health relic timers are shown by the game itself
 const minimap = new MinimapWatcher(
   () => settings.get().minimap,
@@ -151,6 +162,11 @@ function updateOverlay(live: LiveGameState | null): void {
     lastTick.gameMode = live!.gameMode
   }
   minimap.update(live, aram)
+  // a new game (clock restarted) → forget the augments of the last one
+  if (inGame) {
+    if (live!.gameTime + 5 < ownedGameTime && owned.length) setOwned([])
+    ownedGameTime = live!.gameTime
+  }
   if (nowMayhem && s.enabled) {
     if (!inMayhem) overlay.prepare() // create the (hidden) windows early so they appear instantly
     inMayhem = true
@@ -421,6 +437,8 @@ function registerIpc(): void {
     }
   })
   handle('overlayDiagnostics', () => overlayDiagnostics())
+  handle('getOwnedAugments', () => owned)
+  handle('setOwnedAugments', (ids: number[]) => setOwned(Array.isArray(ids) ? ids.filter((x) => Number.isInteger(x)) : []))
   handle('overlayScanNow', () => {
     diag.log('scan requested from the overlay')
     if (scanner.running) scanner.lookNow(WINDOWS.manual)

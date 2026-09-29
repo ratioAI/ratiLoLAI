@@ -201,9 +201,13 @@ export class AugmentScanner {
         this.log('no cards on the remembered screen – watching all screens')
         this.reschedule()
       }
+      this.trackPick(state)
       if (this.schedule.observe(state.visible) === 'gone') {
         this.signature = null
-        this.log('cards gone (picked or closed)')
+        const picked = this.resolvePick()
+        const name = picked !== null ? (this.candidates().find((c) => c.id === picked)?.names[1] ?? picked) : null
+        this.log(picked !== null ? `augment picked: ${name}` : 'cards closed (no card under the cursor)')
+        if (picked !== null) this.onPicked(picked)
       }
       this.publish(state)
     } catch (e) {
@@ -213,6 +217,46 @@ export class AugmentScanner {
       this.busy = false
       this.reschedule()
     }
+  }
+
+  /** called with the augment the player clicked */
+  onPicked: (augmentId: number) => void = () => undefined
+  private lastOffer: AugmentOffer | null = null
+  private cursorVisible: Electron.Point | null = null
+  private cursorAtMiss: Electron.Point | null = null
+
+  /**
+   * The Live Client API doesn't report picked augments, so the pick is inferred: a card is chosen
+   * by clicking it, and the selection closes right away – the card under the mouse pointer when the
+   * cards disappear is the one that was picked. Closing with the button below (pointer not on a
+   * card) or rerolling (cards stay) is not counted.
+   */
+  private trackPick(state: ScanState): void {
+    if (state.visible) {
+      if (state.offer) this.lastOffer = state.offer
+      this.cursorVisible = screen.getCursorScreenPoint()
+      this.cursorAtMiss = null
+    } else if (this.schedule.cardsSeen && !this.cursorAtMiss) {
+      this.cursorAtMiss = screen.getCursorScreenPoint()
+    }
+  }
+
+  private resolvePick(): number | null {
+    const offer = this.lastOffer
+    const points = [this.cursorAtMiss, this.cursorVisible].filter((p): p is Electron.Point => !!p)
+    this.lastOffer = null
+    this.cursorAtMiss = null
+    this.cursorVisible = null
+    if (!offer) return null
+    const d = screen.getAllDisplays().find((x) => x.id === offer.displayId)
+    if (!d) return null
+    for (const p of points) {
+      const x = p.x - d.bounds.x
+      const y = p.y - d.bounds.y
+      const card = offer.cards.find((c) => x >= c.rect.x && x <= c.rect.x + c.rect.width && y >= c.rect.y && y <= c.rect.y + c.rect.height)
+      if (card) return card.augmentId
+    }
+    return null
   }
 
   /** folder for diagnostic snapshots (Settings → Diagnostics → Open log folder) */

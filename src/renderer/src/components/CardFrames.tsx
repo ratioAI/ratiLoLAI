@@ -12,11 +12,14 @@ const TIER_WORDS: Record<Tier, string> = { 'S+': 'Must pick', S: 'Great', A: 'Go
 export function CardFrames({
   offer,
   tierById,
-  animation = 'smooth'
+  animation = 'smooth',
+  names = {}
 }: {
   offer: AugmentOffer
   tierById: Map<number, AugmentTier>
   animation?: Settings['overlay']['animation']
+  /** augment id → name, for the combo note */
+  names?: Record<number, string>
 }) {
   const rated = offer.cards.map((c) => (c.augmentId != null ? (tierById.get(c.augmentId) ?? null) : null))
   const bestRank = Math.min(...rated.map((t) => (t ? TIER_ORDER.indexOf(t.tier) : 99)))
@@ -24,7 +27,8 @@ export function CardFrames({
     TIER_ORDER.indexOf(t.tier) === bestRank && rated.filter((r) => r && TIER_ORDER.indexOf(r.tier) === bestRank).length === 1
   const specs: FrameSpec[] = offer.cards.flatMap((card, i) => {
     const t = rated[i]
-    return t ? [{ rect: card.rect, tier: t.tier, best: isBest(t) }] : []
+    const combo = !!t?.synergy && t.synergy.type !== 'trap' && !t.synergy.missing.length
+    return t ? [{ rect: card.rect, tier: t.tier, best: isBest(t) || combo }] : []
   })
   return (
     <>
@@ -32,7 +36,26 @@ export function CardFrames({
       {offer.cards.map((card, i) => {
         const t = rated[i]
         if (!t) return null
-        const label = isBest(t) ? 'Best pick' : t.combo ? COMBO_TYPE_LABELS[t.combo] : !t.fits ? 'Weak fit' : TIER_WORDS[t.tier]
+        const syn = t.synergy
+        const label =
+          syn && syn.type !== 'trap' && !syn.missing.length
+            ? 'Completes combo'
+            : isBest(t)
+              ? 'Best pick'
+              : syn && syn.type !== 'trap'
+                ? 'Builds combo'
+                : syn
+                  ? 'Trap combo'
+                  : t.combo
+                    ? COMBO_TYPE_LABELS[t.combo]
+                    : !t.fits
+                      ? 'Weak fit'
+                      : TIER_WORDS[t.tier]
+        const note = syn
+          ? `${syn.type === 'trap' ? 'Trap with' : 'Combo with'} ${syn.with.map((id) => names[id] ?? '?').join(' + ')}${
+              syn.missing.length ? ` – ${syn.missing.length} more to go` : ''
+            }`
+          : t.note
         return (
           <div
             key={i}
@@ -46,7 +69,7 @@ export function CardFrames({
               </span>
               <span className="cf-label">{label}</span>
             </div>
-            {t.note && <div className="cf-note">{t.note}</div>}
+            {note && <div className={`cf-note ${syn ? 'cf-note-combo' : ''}`}>{note}</div>}
           </div>
         )
       })}
