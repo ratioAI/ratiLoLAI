@@ -127,7 +127,8 @@ export function TripBackground({ mode, inGame }: { mode: Settings['ui']['backgro
 
   return (
     <>
-      <canvas ref={ref} aria-hidden className="trip-bg pointer-events-none fixed inset-0 -z-10 h-full w-full" />
+      {/* a fresh canvas per mode: a context that was released can never draw again */}
+      <canvas key={effective} ref={ref} aria-hidden className="trip-bg pointer-events-none fixed inset-0 -z-10 h-full w-full" />
       <div aria-hidden className="trip-grain pointer-events-none fixed inset-0 -z-10" />
     </>
   )

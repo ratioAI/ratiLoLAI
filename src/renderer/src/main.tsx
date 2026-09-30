@@ -24,6 +24,7 @@ import { Overlay } from './pages/Overlay'
 import { TripBackground } from './components/TripBackground'
 import { OverlayFrames } from './pages/OverlayFrames'
 import { OverlayMinimap } from './pages/OverlayMinimap'
+import { OverlayLoading } from './pages/OverlayLoading'
 
 function Shell() {
   const { settings, live } = useApp()
@@ -31,6 +32,7 @@ function Shell() {
   if (hash.startsWith('#/overlay/panel')) return <Overlay part="panel" />
   if (hash.startsWith('#/overlay/frames')) return <OverlayFrames />
   if (hash.startsWith('#/overlay/minimap')) return <OverlayMinimap />
+  if (hash.startsWith('#/overlay/loading')) return <OverlayLoading />
   if (hash.startsWith('#/overlay')) return <Overlay />
   return (
     <>

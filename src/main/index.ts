@@ -12,7 +12,7 @@ import { LcuManager } from './lcu/manager'
 import { MayhemService } from './mayhem'
 import { OverlayManager } from './overlay'
 import { MinimapWatcher } from './minimap/watcher'
-import { INHIBITOR_POS, minimapRect } from './minimap/timers'
+import { INHIBITOR_POS, minimapRect, RELICS } from './minimap/timers'
 import { AugmentScanner, type ScanState } from './scanner/scanner'
 import { DiagLog } from './diag'
 import { CaptureService } from './capture/captureService'
@@ -103,7 +103,7 @@ function refreshOverlay(): void {
   }
 
   const mm = minimapState
-  const hasTimers = !!mm && mm.inhibitors.length > 0
+  const hasTimers = !!mm && (mm.inhibitors.length > 0 || mm.relics.some((r) => r.state !== 'unknown'))
   if (mm && s.minimap.enabled && hasTimers) {
     const local = overlay.showMinimap(minimap.displayId, mm.rect)
     void overlay.minimap.send('minimap', { ...mm, local })
@@ -148,8 +148,15 @@ function setOwned(ids: number[]): void {
   emit('augmentsOwned', owned)
 }
 scanner.onPicked = (id) => {
-  if (!owned.includes(id)) setOwned([...owned, id])
+  // never more augments than the levels allow (a covered card is not a pick)
+  if (owned.includes(id)) return
+  if (owned.length >= Math.max(1, scanner.schedule.earned)) {
+    diag.log(`ignoring pick ${id}: already ${owned.length} augments at this level`)
+    return
+  }
+  setOwned([...owned, id])
 }
+scanner.onUnpicked = (id) => setOwned(owned.filter((x) => x !== id))
 
 // inhibitor timers on the minimap (ARAM) – health relic timers are shown by the game itself
 const minimap = new MinimapWatcher(
@@ -157,9 +164,36 @@ const minimap = new MinimapWatcher(
   () => gameDisplay.get(),
   (state) => {
     minimapState = state
+    emit('mapTimers', state)
     refreshOverlay()
-  }
+  },
+  capture,
+  (m) => diag.log(m)
 )
+
+// --- loading screen panel (Mayhem / ARAM win rates of all players, Space to show/hide) ---
+let loadingHidden = false
+function refreshLoading(): void {
+  const state = lcu.getLoading()
+  const live = lcu.getLive()
+  const started = !!live?.active && live.gameTime > 1
+  const want = !!state && !started && settings.get().overlay.loadingScreen
+  if (want) {
+    overlay.holdKey('Space', () => {
+      loadingHidden = !loadingHidden
+      refreshLoading()
+    })
+    if (loadingHidden) overlay.hideLoading()
+    else {
+      overlay.showLoading(gameDisplay.get())
+      void overlay.loading.send('loading', state)
+    }
+  } else {
+    overlay.holdKey(null)
+    overlay.hideLoading()
+    if (!state) loadingHidden = false
+  }
+}
 
 async function loadCandidates(): Promise<void> {
   const d = await mayhem.get().catch(() => null)
@@ -320,8 +354,13 @@ const lcu = new LcuManager({
       // load the OCR engine during champion select, not when the first augment choice opens
       if (s?.mode === 'mayhem' && settings.get().overlay.cardFrames) scanner.warmup()
     },
+    loading: (s) => {
+      emit('loading', s)
+      refreshLoading()
+    },
     live: (s) => {
       emit('live', s)
+      refreshLoading()
       updateOverlay(s)
     },
     imported: (r) => emit('imported', r)
@@ -440,7 +479,8 @@ function registerIpc(): void {
         inhibitors: [
           { team: 'ORDER', respawnAt: 200 + 58, pos: INHIBITOR_POS.ORDER },
           { team: 'CHAOS', respawnAt: 200 + 134, pos: INHIBITOR_POS.CHAOS }
-        ]
+        ],
+        relics: RELICS.map((r, i) => ({ ...r, pos: { ...r.pos }, state: i % 2 ? 'up' : 'spawn', at: i % 2 ? null : 200 + 31 + i * 17 }))
       }
       const local = overlay.showMinimap(display.id, rect)
       void overlay.minimap.send('minimap', { ...demo, local })
@@ -454,6 +494,7 @@ function registerIpc(): void {
   })
   handle('overlayDiagnostics', () => overlayDiagnostics())
   handle('getOwnedAugments', () => owned)
+  handle('getMapTimers', () => minimapState)
   handle('setOwnedAugments', (ids: number[]) => setOwned(Array.isArray(ids) ? ids.filter((x) => Number.isInteger(x)) : []))
   handle('overlayScanNow', () => {
     diag.log('scan requested from the overlay')

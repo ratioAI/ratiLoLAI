@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Tier } from '@shared/types'
-import { Check, ExternalLink, Sparkles, TriangleAlert } from 'lucide-react'
+import { Check, ChevronDown, ExternalLink, Sparkles, TriangleAlert } from 'lucide-react'
 import type { AugmentRarity, ComboType, MayhemAugment, MayhemData } from '@shared/types'
 import { augmentTiersWithOwned, COMBO_TYPE_LABELS, combosForChampion } from '@shared/mayhem'
 import { AugmentFrame } from './AugmentFrame'
@@ -114,6 +114,8 @@ export function MayhemChampionPanel({
   const { data: statics } = useApp()
   const { data, error } = useMayhemData()
   const [rarityFilter, setRarityFilter] = useState<AugmentRarity | null>(null)
+  // compact (Live page): the long tier grid is a drop-down, closed by default
+  const [tiersOpen, setTiersOpen] = useState(!compact)
   if (error) return <p className="text-sm text-loss">{error}</p>
   if (!data || !statics) return <p className="text-sm text-muted">Loading augment data …</p>
 
@@ -158,7 +160,7 @@ export function MayhemChampionPanel({
       {builds.length > 0 && (
         <div>
           <h3 className="mb-2 text-xs font-semibold text-muted">
-            {owned.length ? 'Combos with your augments' : 'Proven augment combinations'}
+            {builds.some((b) => b.have > 0) ? 'Combos with your augments' : 'Proven augment combinations'}
           </h3>
           <div className="space-y-2">
             {builds.map(({ c, have, missing }, i) => (
@@ -166,7 +168,7 @@ export function MayhemChampionPanel({
                 key={i}
                 onClick={() => api.openExternal(c.url)}
                 className={`flex w-full items-center gap-1.5 rounded-xl p-2 text-left hover:bg-panel-2 ${
-                  have ? 'bg-accent/10 ring-1 ring-accent/40' : 'bg-bg-2'
+                  have ? `combo-live ${missing <= 1 ? 'combo-hot' : ''}` : 'bg-bg-2'
                 }`}
                 title="Details on arammayhem.com"
               >
@@ -209,8 +211,15 @@ export function MayhemChampionPanel({
 
       <div>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-xs font-semibold text-muted">Augment tiers for {statics.champions[championId]?.name}</h3>
-          <div className="flex gap-1">
+          <button
+            onClick={() => setTiersOpen((o) => !o)}
+            className="flex items-center gap-1.5 text-xs font-semibold text-muted hover:text-text"
+            aria-expanded={tiersOpen}
+          >
+            <ChevronDown size={14} className={`transition-transform ${tiersOpen ? '' : '-rotate-90'}`} />
+            Augment tiers for {statics.champions[championId]?.name}
+          </button>
+          <div className={`flex gap-1 ${tiersOpen ? '' : 'hidden'}`}>
             {(['prismatic', 'gold', 'silver'] as AugmentRarity[]).map((r) => (
               <button
                 key={r}
@@ -223,7 +232,7 @@ export function MayhemChampionPanel({
             ))}
           </div>
         </div>
-        <div className="flex flex-wrap gap-x-3 gap-y-6 pt-3 pb-2">
+        <div className={`flex flex-wrap gap-x-3 gap-y-6 pt-3 pb-2 ${tiersOpen ? '' : 'hidden'}`}>
           {tiers
             .filter((t) => shownTiers.includes(t.tier) && (!rarityFilter || t.augment.rarity === rarityFilter))
             .map((t) => (

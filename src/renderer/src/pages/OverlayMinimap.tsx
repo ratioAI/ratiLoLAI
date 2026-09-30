@@ -33,6 +33,24 @@ export function OverlayMinimap() {
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none">
+      {state.relics.map((r) => {
+        // before the first spawn the game shows its own countdown on the pad – only respawns here
+        const first = r.at === (r.kind === 'outer' ? 105 : 150)
+        if (r.state !== 'spawn' || r.at === null || first) return null
+        const left = r.at - now
+        if (left <= 0) return null
+        return (
+          <div
+            key={r.id}
+            className="absolute -translate-x-1/2 -translate-y-1/2"
+            style={{ left: local.x + r.pos.x * local.w, top: local.y + r.pos.y * local.h }}
+          >
+            <span className={`mm-chip mm-relic ${left < 10 ? 'mm-soon' : ''}`} style={{ '--team': '#5dff9b' } as React.CSSProperties}>
+              {fmt(left)}
+            </span>
+          </div>
+        )
+      })}
       {state.inhibitors.map((inh, i) => {
         const left = inh.respawnAt - now
         if (left <= 0) return null

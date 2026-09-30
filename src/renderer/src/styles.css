@@ -444,6 +444,12 @@ html.overlay-mode #root {
   --cf-text: linear-gradient(180deg, #f3d3bf, #9b6a4f);
 }
 
+/* a card that builds a combo with an owned augment wears the combo colours (crest + label) */
+.card-frame[data-combo] {
+  --cf-accent: #5dffb0;
+  --cf-text: linear-gradient(180deg, #f0fff8, #5dffb0 55%, #ffd36b);
+}
+
 /* the note becomes a combo hint when the card builds a combo with an owned augment */
 .card-frame .cf-note.cf-note-combo {
   border-color: #5dffb0;
@@ -465,6 +471,11 @@ html.overlay-mode #root {
   background: rgba(6, 9, 14, 0.85);
   border: 1px solid color-mix(in srgb, var(--team) 75%, transparent);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+.mm-chip.mm-relic {
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 13px;
 }
 .mm-chip.mm-soon {
   color: #ffd66b;
@@ -492,4 +503,30 @@ html.overlay-mode .aug-frame .aug-glow {
 .nav-active svg {
   color: #f3b8ff;
   filter: drop-shadow(0 0 6px rgb(229 139 255 / 0.7));
+}
+
+/* combos you are building (Live / Mayhem pages): glowing mint card; one step away → breathing glow */
+.combo-live {
+  background:
+    linear-gradient(rgb(20 40 38 / 0.85), rgb(28 18 52 / 0.85)) padding-box,
+    linear-gradient(120deg, #5dffb0, #b58bff 55%, #ffd36b) border-box;
+  border: 1px solid transparent;
+  box-shadow: 0 0 18px -6px rgb(93 255 176 / 0.8);
+}
+.combo-live.combo-hot {
+  animation: combo-breathe 2.4s ease-in-out infinite;
+}
+@keyframes combo-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 14px -6px rgb(93 255 176 / 0.7);
+  }
+  50% {
+    box-shadow: 0 0 26px -2px rgb(93 255 176 / 1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .combo-live.combo-hot {
+    animation: none;
+  }
 }

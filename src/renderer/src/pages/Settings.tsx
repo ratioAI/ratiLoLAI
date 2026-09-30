@@ -130,6 +130,11 @@ export function Settings() {
         </p>
         <Toggle label="Enable overlay" value={settings.overlay.enabled} onChange={(v) => save({ overlay: { ...settings.overlay, enabled: v } })} />
         <Toggle
+          label="Loading screen: win rates of all players (Space shows / hides)"
+          value={settings.overlay.loadingScreen}
+          onChange={(v) => save({ overlay: { ...settings.overlay, loadingScreen: v } })}
+        />
+        <Toggle
           label="Also show the tier list panel next to the cards"
           value={settings.overlay.autoExpand}
           onChange={(v) => save({ overlay: { ...settings.overlay, autoExpand: v } })}
@@ -175,14 +180,20 @@ export function Settings() {
 
       <Group title="Minimap timers (ARAM)">
         <p className="mb-2 text-sm text-muted">
-          Shows when a destroyed inhibitor comes back, right under its icon on the minimap. Uses only the game's live data –
-          no screenshots. Health relic timers are not needed: the game shows them on the minimap itself.
+          Health relic respawns (the game only counts down the first spawn) and inhibitor respawns, right on the minimap and
+          on the Live page. Inhibitors come from the game's live data; relics are recognised by looking at the four relic
+          pads on the minimap once per second.
         </p>
         <Toggle label="Show minimap timers" value={settings.minimap.enabled} onChange={(v) => save({ minimap: { ...settings.minimap, enabled: v } })} />
         <Toggle
           label="Inhibitor respawn timers"
           value={settings.minimap.inhibitors}
           onChange={(v) => save({ minimap: { ...settings.minimap, inhibitors: v } })}
+        />
+        <Toggle
+          label="Health relic timers"
+          value={settings.minimap.relics}
+          onChange={(v) => save({ minimap: { ...settings.minimap, relics: v } })}
         />
         <Field label={`Minimap size (match the in-game "Minimap scale") – ${Math.round(settings.minimap.scale * 100)} %`}>
           <input

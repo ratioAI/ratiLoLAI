@@ -1,7 +1,7 @@
 import { BrowserWindow, globalShortcut, ipcMain, screen, type Rectangle } from 'electron'
 import type { AugmentOffer, RcEvents } from '@shared/types'
 
-type Part = 'panel' | 'frames' | 'minimap'
+type Part = 'panel' | 'frames' | 'minimap' | 'loading'
 
 /**
  * One transparent, click-through, always-on-top window. On Windows every repaint of a transparent
@@ -94,6 +94,8 @@ export class OverlayManager {
   readonly panel: OverlayWindow
   readonly frames: OverlayWindow
   readonly minimap: OverlayWindow
+  readonly loading: OverlayWindow
+  private tempKey: string | null = null
   private hotkey: string | null = null
   private previewTimer: NodeJS.Timeout | null = null
   private displayId: number | null = null
@@ -102,6 +104,7 @@ export class OverlayManager {
     this.panel = new OverlayWindow('panel', preload, load, '/overlay/panel')
     this.frames = new OverlayWindow('frames', preload, load, '/overlay/frames')
     this.minimap = new OverlayWindow('minimap', preload, load, `/overlay/minimap?m=${MINIMAP_MARGIN}`)
+    this.loading = new OverlayWindow('loading', preload, load, '/overlay/loading')
     ipcMain.on('overlay:interactive', (e, interactive: boolean) => {
       BrowserWindow.fromWebContents(e.sender)?.setIgnoreMouseEvents(!interactive, { forward: true })
     })
@@ -189,6 +192,35 @@ export class OverlayManager {
     }
   }
 
+  /** Loading-screen panel, centred at the top of the game screen. */
+  showLoading(displayId: number | null): void {
+    const d = this.display(displayId)
+    const width = Math.min(1040, d.bounds.width - 40)
+    const height = 330
+    this.loading.setBounds({ x: Math.round(d.bounds.x + (d.bounds.width - width) / 2), y: d.bounds.y + 18, width, height })
+    this.loading.show()
+  }
+
+  hideLoading(): void {
+    this.loading.hide()
+  }
+
+  /**
+   * A key that only works while something needs it (e.g. Space on the loading screen). Global
+   * shortcuts take the key away from every other program, so it is released right afterwards.
+   */
+  holdKey(accelerator: string | null, cb: () => void = () => undefined): void {
+    if (this.tempKey === accelerator) return
+    if (this.tempKey) globalShortcut.unregister(this.tempKey)
+    this.tempKey = null
+    if (!accelerator) return
+    try {
+      if (globalShortcut.register(accelerator, cb)) this.tempKey = accelerator
+    } catch {
+      /* taken by another program */
+    }
+  }
+
   hideMinimap(): void {
     this.minimap.hide()
   }
@@ -219,7 +251,7 @@ export class OverlayManager {
   }
 
   get anyVisible(): boolean {
-    return this.panel.visible || this.frames.visible || this.minimap.visible
+    return this.panel.visible || this.frames.visible || this.minimap.visible || this.loading.visible
   }
 
   destroy(): void {
@@ -227,5 +259,6 @@ export class OverlayManager {
     this.panel.destroy()
     this.frames.destroy()
     this.minimap.destroy()
+    this.loading.destroy()
   }
 }

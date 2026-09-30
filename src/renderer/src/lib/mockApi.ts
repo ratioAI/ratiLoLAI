@@ -347,8 +347,8 @@ export function createMockApi(): RcApi {
       matchesPerPlayer: 10,
       minGamesForTierList: 20
     },
-    overlay: { enabled: true, hotkey: 'Alt+Shift+A', autoExpand: true, cardFrames: true, animation: 'smooth', gameDisplayId: null },
-    minimap: { enabled: true, inhibitors: true, scale: 1 },
+    overlay: { enabled: true, hotkey: 'Alt+Shift+A', autoExpand: true, cardFrames: true, animation: 'smooth', loadingScreen: true, gameDisplayId: null },
+    minimap: { enabled: true, inhibitors: true, relics: true, scale: 1 },
     ui: { background: 'animated' },
     client: { autoImportRunes: true, autoImportItems: true, autoImportSpells: false, flashOn: 'F', autoAccept: true, acceptDelay: 'human' }
   }
@@ -471,6 +471,21 @@ export function createMockApi(): RcApi {
       log: ['web demo – no game running']
     }),
     overlayScanNow: async () => undefined,
+    getMapTimers: async () =>
+      window.location.hash.includes('demo-live')
+        ? {
+            gameTime: 612,
+            measuredAt: Date.now(),
+            rect: { x: 0.84, y: 0.72, w: 0.15, h: 0.26 },
+            inhibitors: [{ team: 'CHAOS' as const, respawnAt: 700, pos: { x: 0.75, y: 0.25 } }],
+            relics: [
+              { id: 'order-inner', team: 'ORDER' as const, kind: 'inner' as const, pos: { x: 0.37, y: 0.69 }, state: 'up' as const, at: null },
+              { id: 'order-outer', team: 'ORDER' as const, kind: 'outer' as const, pos: { x: 0.46, y: 0.59 }, state: 'spawn' as const, at: 655 },
+              { id: 'chaos-outer', team: 'CHAOS' as const, kind: 'outer' as const, pos: { x: 0.59, y: 0.47 }, state: 'spawn' as const, at: 634 },
+              { id: 'chaos-inner', team: 'CHAOS' as const, kind: 'inner' as const, pos: { x: 0.69, y: 0.39 }, state: 'up' as const, at: null }
+            ]
+          }
+        : null,
     getOwnedAugments: async () => {
       const q = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('owned')
       if (q) owned = q.split(',').filter(Boolean).map(Number)
@@ -557,6 +572,7 @@ export function createMockApi(): RcApi {
           mk('Toni#EUW', 'Jinx', 'CHAOS', [3031, 3006, 3094], 5),
           mk('ratio#EUW', 'Ryze', 'CHAOS', [3003, 3158], 3)
         ],
+        premades: ['blackbird#EUW'],
         events: [{ name: 'ChampionKill', time: 598, text: 'Axel Fungus killed Toni' }]
       }
     },

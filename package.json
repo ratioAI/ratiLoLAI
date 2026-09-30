@@ -1,7 +1,7 @@
 {
   "name": "rift-companion",
   "productName": "ratioAI",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Ad-free League of Legends companion app – tier lists, builds, runes, auto-import, ARAM & ARAM: Mayhem augments, live game scouting. Powered by your own Riot API crawler.",
   "main": "./out/main/index.js",
   "author": "Alexander Fink",

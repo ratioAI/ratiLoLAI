@@ -1,8 +1,8 @@
 import { liveChampionKey } from '@shared/staticData'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Ban, Eye, Loader2, Radio, Skull, X } from 'lucide-react'
-import type { ChampSelectPlayer, GameMode, LiveGameState, Platform, ScoutResult } from '@shared/types'
+import type { ChampSelectPlayer, GameMode, LiveGameState, MinimapState, Platform, ScoutResult } from '@shared/types'
 import { PLATFORMS, ROLE_LABELS, statsModeOf } from '@shared/types'
 import { MayhemChampionPanel, useMayhemData, useOwnedAugments } from '@/components/mayhem'
 import { AugmentFrame } from '@/components/AugmentFrame'
@@ -257,68 +257,165 @@ function OwnedAugments({ championId, owned }: { championId: number; owned: numbe
   )
 }
 
+const TEAM_STYLE = {
+  ORDER: { label: 'Blue team', color: '#4ea3ff', tint: 'rgb(78 163 255 / 0.13)', edge: 'rgb(78 163 255 / 0.55)' },
+  CHAOS: { label: 'Red team', color: '#ff5a78', tint: 'rgb(255 90 120 / 0.12)', edge: 'rgb(255 90 120 / 0.55)' }
+} as const
+
+const fmtClock = (s: number): string => {
+  const v = Math.max(0, Math.ceil(s))
+  return `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`
+}
+
+/** Relic and inhibitor timers of the running ARAM game (same data as the minimap overlay). */
+function MapTimers({ gameMode }: { gameMode: string }) {
+  const [t, setT] = useState<MinimapState | null>(null)
+  const [, tick] = useState(0)
+  useEffect(() => {
+    void api.getMapTimers().then(setT).catch(() => undefined)
+    const off = api.on('mapTimers', setT)
+    const i = setInterval(() => tick((x) => x + 1), 1000)
+    return () => {
+      off()
+      clearInterval(i)
+    }
+  }, [])
+  if (!t || (gameMode !== 'KIWI' && gameMode !== 'ARAM')) return null
+  const now = t.gameTime + (Date.now() - t.measuredAt) / 1000
+  const label = (id: string) => ({ 'order-inner': 'Blue inner', 'order-outer': 'Blue outer', 'chaos-outer': 'Red outer', 'chaos-inner': 'Red inner' })[id] ?? id
+  return (
+    <div className="panel p-4">
+      <h2 className="mb-3 text-sm font-bold text-muted uppercase">Map timers</h2>
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        {t.relics.map((r) => (
+          <div key={r.id} className="flex items-center justify-between rounded-lg bg-bg-2 px-2.5 py-1.5">
+            <span className="flex items-center gap-1.5">
+              <span className="font-black text-win">+</span>
+              {label(r.id)}
+            </span>
+            <span className="font-bold tabular-nums">
+              {r.state === 'spawn' && r.at !== null && r.at > now ? fmtClock(r.at - now) : r.state === 'up' ? <span className="text-win">up</span> : <span className="text-muted">up?</span>}
+            </span>
+          </div>
+        ))}
+        {t.inhibitors
+          .filter((i) => i.respawnAt > now)
+          .map((i, k) => (
+            <div key={k} className="col-span-2 flex items-center justify-between rounded-lg bg-bg-2 px-2.5 py-1.5">
+              <span style={{ color: TEAM_STYLE[i.team].color }}>{i.team === 'ORDER' ? 'Blue' : 'Red'} inhibitor</span>
+              <span className="font-bold tabular-nums">{fmtClock(i.respawnAt - now)}</span>
+            </div>
+          ))}
+      </div>
+    </div>
+  )
+}
+
 function LiveScoreboard({ live }: { live: LiveGameState }) {
   const { data } = useApp()
   const owned = useOwnedAugments()
   if (!data) return null
-  const teams = (['ORDER', 'CHAOS'] as const).map((t) => live.players.filter((p) => p.team === t))
+  const me = live.players.find((p) => p.riotId === live.activePlayer)
+  const premades = new Set((live.premades ?? []).map((r) => r.toLowerCase()))
+  // your team first
+  const order: ('ORDER' | 'CHAOS')[] = me?.team === 'CHAOS' ? ['CHAOS', 'ORDER'] : ['ORDER', 'CHAOS']
   const myChamp = liveChampionKey(data, live)
+  // the Live Client API only updates other players' CS in steps of 10 – meaningless in ARAM
+  const showCs = live.gameMode !== 'ARAM' && live.gameMode !== 'KIWI'
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[2fr_1fr]">
       <div className="space-y-4">
-        {teams.map((players, ti) => (
-          <div key={ti} className="panel p-4">
-            <h2 className={`mb-3 text-sm font-bold uppercase ${ti ? 'text-loss' : 'text-accent'}`}>{ti ? 'Red team' : 'Blue team'}</h2>
-            <div className="space-y-1.5">
-              {players.map((p) => (
-                <div
-                  key={p.riotId}
-                  className={`flex items-center gap-3 rounded-lg p-1.5 text-sm ${p.riotId === live.activePlayer ? 'bg-accent/8' : ''} ${p.isDead ? 'opacity-50' : ''}`}
-                >
-                  <span className="relative">
-                    <GameImage src={img.championByName(data, p.championName)} size={34} alt={p.championName} />
-                    <span className="absolute -right-1 -bottom-1 rounded bg-black/80 px-1 text-[10px] font-bold">{p.level}</span>
+        {order.map((team) => {
+          const st = TEAM_STYLE[team]
+          const players = live.players.filter((p) => p.team === team)
+          const mine = me?.team === team
+          return (
+            <div
+              key={team}
+              className="rounded-2xl p-4"
+              style={{
+                background: `linear-gradient(135deg, ${st.tint}, rgb(20 13 40 / 0.78) 70%)`,
+                border: `1px solid ${st.edge}`,
+                boxShadow: mine ? `0 0 24px -10px ${st.color}` : undefined
+              }}
+            >
+              <h2 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase" style={{ color: st.color }}>
+                {st.label}
+                {mine && (
+                  <span className="rounded-md px-1.5 py-0.5 text-[10px] tracking-wider" style={{ background: st.tint, color: st.color }}>
+                    your team
                   </span>
-                  <span className="w-40 truncate font-medium">{p.riotId.split('#')[0]}</span>
-                  <span className="w-20 font-semibold tabular-nums">
-                    {p.kills}/<span className="text-loss">{p.deaths}</span>/{p.assists}
-                  </span>
-                  <span className="w-14 text-muted tabular-nums">{p.creepScore} CS</span>
-                  <span className="flex gap-0.5">
-                    {Array.from({ length: 7 }, (_, i) => (
-                      <ItemIcon key={i} id={p.items[i] ?? 0} size={24} />
-                    ))}
-                  </span>
-                  {p.riotId === live.activePlayer && owned.length > 0 && <OwnedAugments championId={myChamp} owned={owned} />}
-                  {p.isDead && (
-                    <span className="ml-auto flex items-center gap-1 text-xs text-loss">
-                      <Skull size={12} /> {Math.ceil(p.respawnTimer)}s
-                    </span>
-                  )}
-                </div>
-              ))}
+                )}
+              </h2>
+              <div className="space-y-1.5">
+                {players.map((p) => {
+                  const isMe = p.riotId === live.activePlayer
+                  const premade = premades.has(p.riotId.toLowerCase())
+                  return (
+                    <div
+                      key={p.riotId}
+                      className={`flex items-center gap-3 rounded-lg p-1.5 text-sm ${isMe ? 'bg-gold/8 ring-1 ring-gold/30' : ''} ${p.isDead ? 'opacity-55' : ''}`}
+                    >
+                      <span className="relative">
+                        <GameImage src={img.championByName(data, p.championName)} size={34} alt={p.championName} />
+                        <span className="absolute -right-1 -bottom-1 rounded bg-black/80 px-1 text-[10px] font-bold">{p.level}</span>
+                      </span>
+                      <span
+                        className={`w-40 truncate font-semibold ${isMe ? 'text-gold' : premade ? 'text-[#7cc4ff]' : 'text-text'}`}
+                        title={premade ? 'In your party' : undefined}
+                      >
+                        {p.riotId.split('#')[0]}
+                      </span>
+                      <span className="w-20 font-semibold tabular-nums">
+                        {p.kills}/<span className="text-loss">{p.deaths}</span>/{p.assists}
+                      </span>
+                      {showCs && (
+                        <span className="w-14 text-muted tabular-nums" title="The game reports other players' CS in steps of 10">
+                          ~{p.creepScore} CS
+                        </span>
+                      )}
+                      <span className="flex gap-0.5">
+                        {Array.from({ length: 7 }, (_, i) => (
+                          <ItemIcon key={i} id={p.items[i] ?? 0} size={24} />
+                        ))}
+                      </span>
+                      {isMe && owned.length > 0 && <OwnedAugments championId={myChamp} owned={owned} />}
+                      {p.isDead && (
+                        <span className="ml-auto flex items-center gap-1 text-xs text-loss">
+                          <Skull size={12} /> {Math.ceil(p.respawnTimer)}s
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
+        <p className="px-1 text-[11px] text-muted">
+          <span className="font-semibold text-gold">Gold</span> = you · <span className="font-semibold text-[#7cc4ff]">blue</span> = your
+          premades. Other players' augments are not shared by the game, so only yours are shown.
+        </p>
       </div>
       <div className="space-y-4">
-      {live.gameMode === 'KIWI' && myChamp > 0 && (
+        <MapTimers gameMode={live.gameMode} />
+        {live.gameMode === 'KIWI' && myChamp > 0 && (
+          <div className="panel p-4">
+            <h2 className="mb-3 text-sm font-bold text-gold uppercase">Augments for {live.activeChampion}</h2>
+            <MayhemChampionPanel championId={myChamp} compact owned={owned} />
+          </div>
+        )}
         <div className="panel p-4">
-          <h2 className="mb-3 text-sm font-bold text-gold uppercase">Augments for {live.activeChampion}</h2>
-          <MayhemChampionPanel championId={myChamp} compact owned={owned} />
+          <h2 className="mb-3 text-sm font-bold text-muted uppercase">Events</h2>
+          <div className="space-y-2 text-sm">
+            {live.events.map((e, i) => (
+              <div key={i} className="flex gap-3">
+                <span className="w-10 text-muted tabular-nums">{duration(e.time)}</span>
+                <span>{e.text}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      )}
-      <div className="panel p-4">
-        <h2 className="mb-3 text-sm font-bold text-muted uppercase">Events</h2>
-        <div className="space-y-2 text-sm">
-          {live.events.map((e, i) => (
-            <div key={i} className="flex gap-3">
-              <span className="w-10 text-muted tabular-nums">{duration(e.time)}</span>
-              <span>{e.text}</span>
-            </div>
-          ))}
-        </div>
-      </div>
       </div>
     </div>
   )

@@ -5,6 +5,8 @@ export interface FrameSpec {
   rect: { x: number; y: number; width: number; height: number }
   tier: Tier
   best: boolean
+  /** builds a combo with an owned augment: mint/gold, extra glow, full colour flow */
+  combo?: boolean
 }
 
 /**
@@ -19,6 +21,8 @@ const STYLE: Record<Tier, { a: string; b: string; psy: number; wobble: number; g
   C: { a: '#b4c2d1', b: '#8da0b3', psy: 0.05, wobble: 1.2, glow: 0.25 },
   D: { a: '#c0896b', b: '#8a3f2c', psy: 0, wobble: 0.8, glow: 0.2 }
 }
+
+const COMBO_STYLE = { a: '#5dffb0', b: '#ffd36b', psy: 0.9, wobble: 5, glow: 1.1 }
 
 const rgb = (hex: string): [number, number, number] => {
   const n = parseInt(hex.slice(1), 16)
@@ -146,11 +150,11 @@ export function FrameCanvas({ frames, animation }: { frames: FrameSpec[]; animat
       const b = new Float32Array(9)
       const p = new Float32Array(12)
       f.slice(0, 3).forEach((fr, i) => {
-        const st = STYLE[fr.tier]
+        const st = fr.combo ? COMBO_STYLE : STYLE[fr.tier]
         rect.set([fr.rect.x, fr.rect.y, fr.rect.width, fr.rect.height], i * 4)
         a.set(rgb(st.a), i * 3)
         b.set(rgb(st.b), i * 3)
-        p.set([st.psy, st.wobble, st.glow + (fr.best ? 0.3 : 0), 1], i * 4)
+        p.set([st.psy, st.wobble, st.glow + (fr.best || fr.combo ? 0.35 : 0), 1], i * 4)
       })
       gl.uniform2f(uRes, canvas.width, canvas.height)
       gl.uniform1f(uTime, time)
@@ -183,5 +187,5 @@ export function FrameCanvas({ frames, animation }: { frames: FrameSpec[]; animat
     }
   }, [animation, staticKey])
 
-  return <canvas ref={ref} className="pointer-events-none absolute inset-0 h-full w-full" />
+  return <canvas key={`${animation}:${staticKey}`} ref={ref} className="pointer-events-none absolute inset-0 h-full w-full" />
 }

@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
     autoExpand: false,
     cardFrames: true,
     animation: 'smooth',
+    loadingScreen: true,
     gameDisplayId: null
   },
   ui: {
@@ -33,6 +34,7 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
   minimap: {
     enabled: true,
     inhibitors: true,
+    relics: true,
     scale: 1
   },
   client: {

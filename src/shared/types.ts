@@ -275,6 +275,8 @@ export interface Settings {
     cardFrames: boolean
     /** animated frames: 30 fps, 15 fps or static */
     animation: 'smooth' | 'low' | 'off'
+    /** loading screen panel with the players' win rates in Mayhem / ARAM (Space toggles) */
+    loadingScreen: boolean
     /** screen the game was last seen on (set automatically) */
     gameDisplayId: number | null
   }
@@ -286,6 +288,8 @@ export interface Settings {
     /** timers on the minimap in ARAM / ARAM: Mayhem */
     enabled: boolean
     inhibitors: boolean
+    /** health relic timers – watches the four relic pads on the minimap once per second */
+    relics: boolean
     /** minimap size relative to the default (in-game minimap scale) */
     scale: number
   }
@@ -300,6 +304,24 @@ export interface Settings {
   }
 }
 
+/** Loading screen: the players of the game with their recent record in this mode. */
+export interface LoadingPlayer {
+  puuid: string
+  riotId: string
+  championId: number
+  ally: boolean
+  me: boolean
+  premade: boolean
+  /** recent games of this mode in the player's match history, null while loading / unavailable */
+  record: { games: number; wins: number } | null
+  loading: boolean
+}
+
+export interface LoadingState {
+  mode: 'mayhem' | 'aram'
+  players: LoadingPlayer[]
+}
+
 export type AcceptDelay = 'instant' | 'human' | 'slow'
 
 /** Timers shown on the minimap (all times are game time in seconds). */
@@ -311,6 +333,15 @@ export interface MinimapState {
   /** minimap inside the overlay window (DIP), filled in by the main process */
   local?: { x: number; y: number; w: number; h: number }
   inhibitors: { team: 'ORDER' | 'CHAOS'; respawnAt: number; pos: { x: number; y: number } }[]
+  relics: {
+    id: string
+    team: 'ORDER' | 'CHAOS'
+    kind: 'outer' | 'inner'
+    pos: { x: number; y: number }
+    /** up = seen on the minimap, spawn = comes back at `at`, unknown = up but not confirmed */
+    state: 'up' | 'spawn' | 'unknown'
+    at: number | null
+  }[]
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +431,8 @@ export interface LiveGameState {
   activeChampion: string | null
   /** Data Dragon id of the local player's champion (e.g. "MonkeyKing"), language independent */
   activeChampionKey?: string | null
+  /** Riot IDs of the players you queued with (from the client lobby) */
+  premades?: string[]
   /** inhibitor kills / respawns from the event feed */
   inhibitorEvents?: { type: 'killed' | 'respawned'; inhibitor: string; time: number }[]
   activePlayer: string | null
@@ -558,6 +591,7 @@ export interface RcApi {
   overlayScanNow(): Promise<void>
   /** augments picked in the running Mayhem game (recognised from the augment choice) */
   getOwnedAugments(): Promise<number[]>
+  getMapTimers(): Promise<MinimapState | null>
   setOwnedAugments(ids: number[]): Promise<void>
   overlayTestScan(): Promise<ScanTestResult>
   openDiagnosticsFolder(): Promise<void>
@@ -630,6 +664,9 @@ export interface RcEvents {
   /** offer with card rects relative to the frames window (sent to that window only) */
   framesOffer: AugmentOffer | null
   augmentsOwned: number[]
+  loading: LoadingState | null
+  /** map timers for the main window (the minimap overlay gets its own copy with positions) */
+  mapTimers: MinimapState | null
   minimap: MinimapState | null
   overlayPreview: { championId: number }
   update: UpdateState

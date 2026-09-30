@@ -206,8 +206,11 @@ export class AugmentScanner {
         this.signature = null
         const picked = this.resolvePick()
         const name = picked !== null ? (this.candidates().find((c) => c.id === picked)?.names[1] ?? picked) : null
-        this.log(picked !== null ? `augment picked: ${name}` : 'cards closed (no card under the cursor)')
+        this.log(picked !== null ? `augment picked: ${name}` : 'cards minimised (no card under the cursor) – keep watching')
         if (picked !== null) this.onPicked(picked)
+        // minimised to go shopping: the choice can be reopened any time in the fountain → keep
+        // an eye on it for a while, even without a respawn / purchase to trigger a look
+        else this.schedule.openWindow(90_000)
       }
       this.publish(state)
     } catch (e) {
@@ -231,9 +234,23 @@ export class AugmentScanner {
    * cards disappear is the one that was picked. Closing with the button below (pointer not on a
    * card) or rerolling (cards stay) is not counted.
    */
+  /** called when a pick turns out to be wrong (the same cards came back) */
+  onUnpicked: (augmentId: number) => void = () => undefined
+  private lastPick: { id: number; offered: number[] } | null = null
+
   private trackPick(state: ScanState): void {
     if (state.visible) {
-      if (state.offer) this.lastOffer = state.offer
+      if (state.offer) {
+        // the cards we thought were picked from are back (e.g. the shop covered them) → no pick
+        const ids = state.offer.cards.map((c) => c.augmentId).filter((x): x is number => x !== null)
+        const lp = this.lastPick
+        if (lp && ids.includes(lp.id) && ids.filter((x) => lp.offered.includes(x)).length >= 2) {
+          this.log(`cards are back – ${lp.id} was not picked`)
+          this.onUnpicked(lp.id)
+          this.lastPick = null
+        }
+        this.lastOffer = state.offer
+      }
       this.cursorVisible = screen.getCursorScreenPoint()
       this.cursorAtMiss = null
     } else if (this.schedule.cardsSeen && !this.cursorAtMiss) {
@@ -254,7 +271,10 @@ export class AugmentScanner {
       const x = p.x - d.bounds.x
       const y = p.y - d.bounds.y
       const card = offer.cards.find((c) => x >= c.rect.x && x <= c.rect.x + c.rect.width && y >= c.rect.y && y <= c.rect.y + c.rect.height)
-      if (card) return card.augmentId
+      if (card?.augmentId != null) {
+        this.lastPick = { id: card.augmentId, offered: offer.cards.map((c) => c.augmentId).filter((v): v is number => v !== null) }
+        return card.augmentId
+      }
     }
     return null
   }

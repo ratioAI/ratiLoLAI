@@ -6,14 +6,16 @@ import type {
   GameMode,
   ImportResult,
   LiveGameState,
+  LoadingPlayer,
+  LoadingState,
   MayhemPersonal,
   Settings,
   StatRole,
   StaticData
 } from '@shared/types'
-import { statsModeOf } from '@shared/types'
+import { QUEUE_IDS, statsModeOf } from '@shared/types'
 import { acceptDelayMs } from './acceptDelay'
-import { personalMayhemStats, type LcuHistory } from '../mayhem'
+import { modeRecord, personalMayhemStats, type LcuHistory } from '../mayhem'
 import { fetchAllGameData, parseLiveData } from '../live/liveClient'
 import {
   buildItemSet,
@@ -37,6 +39,7 @@ export interface LcuManagerDeps {
     champSelect(s: ChampSelectState | null): void
     live(s: LiveGameState | null): void
     imported(r: ImportResult & { championId: number }): void
+    loading(s: LoadingState | null): void
   }
 }
 
@@ -240,7 +243,99 @@ export class LcuManager {
     }, delay)
   }
 
+  // --- party & loading screen ------------------------------------------------
+
+  private premades: string[] = []
+  private premadePuuids = new Set<string>()
+  private loadingState: LoadingState | null = null
+  private loadingGame: number | null = null
+
+  getLoading(): LoadingState | null {
+    return this.loadingState
+  }
+
+  private async riotIdOf(puuid: string): Promise<string> {
+    const s = await this.client
+      ?.get<{ gameName?: string; tagLine?: string }>(`/lol-summoner/v2/summoners/puuid/${puuid}`)
+      .catch(() => null)
+    return s?.gameName ? `${s.gameName}#${s.tagLine ?? ''}` : ''
+  }
+
+  /** Remembers who is in your party (lobby) – shown as premades during the game. */
+  private async fetchParty(): Promise<void> {
+    const lobby = await this.client
+      ?.get<{ members?: { puuid?: string }[] }>('/lol-lobby/v2/lobby')
+      .catch(() => null)
+    const me = this.status.summoner?.puuid
+    const puuids = (lobby?.members ?? []).map((m) => m.puuid).filter((p): p is string => !!p && p !== me)
+    if (!puuids.length && !lobby) return // no lobby right now – keep what we knew
+    this.premadePuuids = new Set(puuids)
+    this.premades = (await Promise.all(puuids.map((p) => this.riotIdOf(p)))).filter(Boolean)
+  }
+
+  /**
+   * Loading screen: read the players from the game session and look up each player's recent
+   * games of this mode in the client's match history (the same data the client's profile shows).
+   */
+  private async fetchLoading(): Promise<void> {
+    const client = this.client
+    if (!client) return
+    type SessionPlayer = { puuid?: string; championId?: number; gameName?: string; tagLine?: string; summonerName?: string }
+    const session = await client
+      .get<{ gameData?: { gameId?: number; queue?: { id?: number; gameMode?: string }; teamOne?: SessionPlayer[]; teamTwo?: SessionPlayer[] } }>(
+        '/lol-gameflow/v1/session'
+      )
+      .catch(() => null)
+    const g = session?.gameData
+    const queue = g?.queue?.id ?? null
+    const mode: LoadingState['mode'] | null =
+      g?.queue?.gameMode === 'KIWI' || (queue !== null && (QUEUE_IDS.mayhem as readonly number[]).includes(queue))
+        ? 'mayhem'
+        : g?.queue?.gameMode === 'ARAM' || (queue !== null && (QUEUE_IDS.aram as readonly number[]).includes(queue))
+          ? 'aram'
+          : null
+    if (!g || !mode || g.gameId === this.loadingGame) return
+    this.loadingGame = g.gameId ?? null
+    const me = this.status.summoner?.puuid
+    const mine = (g.teamOne ?? []).some((p) => p.puuid === me) ? g.teamOne ?? [] : g.teamTwo ?? []
+    const all = [...(g.teamOne ?? []), ...(g.teamTwo ?? [])].filter((p) => p.puuid)
+    const players: LoadingPlayer[] = all.map((p) => ({
+      puuid: p.puuid!,
+      riotId: p.gameName ? `${p.gameName}#${p.tagLine ?? ''}` : p.summonerName ?? '',
+      championId: p.championId ?? 0,
+      ally: mine.includes(p),
+      me: p.puuid === me,
+      premade: this.premadePuuids.has(p.puuid!),
+      record: null,
+      loading: true
+    }))
+    this.loadingState = { mode, players }
+    this.deps.emit.loading(this.loadingState)
+
+    // names + records, three at a time so the client isn't hammered during loading
+    const queue_ = [...players]
+    const worker = async (): Promise<void> => {
+      for (let p = queue_.shift(); p; p = queue_.shift()) {
+        if (!p.riotId) p.riotId = await this.riotIdOf(p.puuid)
+        const history = await client
+          .get<LcuHistory>(`/lol-match-history/v1/products/lol/${p.puuid}/matches?begIndex=0&endIndex=99`)
+          .catch(() => null)
+        p.record = history ? modeRecord(history, p.puuid, mode) : null
+        p.loading = false
+        if (this.loadingState?.players === players) this.deps.emit.loading({ mode, players: [...players] })
+      }
+    }
+    await Promise.all([worker(), worker(), worker()])
+  }
+
   private onPhase(phase: string): void {
+    if (['Lobby', 'Matchmaking', 'ReadyCheck', 'ChampSelect'].includes(phase)) void this.fetchParty()
+    if (phase === 'InProgress') void this.fetchLoading()
+    else if (this.loadingState) {
+      this.loadingState = null
+      this.loadingGame = null
+      this.deps.emit.loading(null)
+    }
     if (phase === 'InProgress') {
       // remember the queue of the running game (the champ-select queue is cleared when it ends)
       void this.client
@@ -303,6 +398,7 @@ export class LcuManager {
     if (this.liveTimer) return
     const poll = async (): Promise<void> => {
       const state = parseLiveData(await fetchAllGameData())
+      if (state) state.premades = this.premades
       this.liveState = state
       this.deps.emit.live(state)
       this.liveTimer = setTimeout(poll, LIVE_POLL_MS)

@@ -134,3 +134,19 @@ export function personalMayhemStats(history: LcuHistory, puuid: string | null): 
   result.recent.sort((a, b) => b.createdAt - a.createdAt)
   return result
 }
+
+/** Wins / games of one player in a mode (from that player's client match history). */
+export function modeRecord(history: LcuHistory, puuid: string, mode: 'mayhem' | 'aram'): { games: number; wins: number } {
+  let games = 0
+  let wins = 0
+  for (const g of history.games?.games ?? []) {
+    const match = mode === 'mayhem' ? isMayhemGame(g) : (QUEUE_IDS.aram as readonly number[]).includes(g.queueId) || g.gameMode === 'ARAM'
+    if (!match) continue
+    const pid = g.participantIdentities?.find((i) => i.player?.puuid === puuid)?.participantId
+    const me = g.participants.find((p) => p.participantId === pid) ?? (g.participants.length === 1 ? g.participants[0] : undefined)
+    if (!me) continue
+    games++
+    if (me.stats.win === true) wins++
+  }
+  return { games, wins }
+}

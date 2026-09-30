@@ -32,6 +32,7 @@ const api: RcApi = {
   overlayDiagnostics: () => call('overlayDiagnostics'),
   overlayScanNow: () => call('overlayScanNow'),
   getOwnedAugments: () => call('getOwnedAugments'),
+  getMapTimers: () => call('getMapTimers'),
   setOwnedAugments: (ids) => call('setOwnedAugments', ids),
   overlayTestScan: () => call('overlayTestScan'),
   openDiagnosticsFolder: () => call('openDiagnosticsFolder'),

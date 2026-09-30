@@ -73,3 +73,65 @@ describe('live data', () => {
     ])
   })
 })
+
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { PNG } from 'pngjs'
+import { RELIC_PATCH, RELICS, RelicTracker, relicSeen } from '../src/main/minimap/timers'
+
+/** Relic pad patches from a 220×220 crop at (1060,500) of a real 1280×720 in-game capture. */
+function pads(name: string) {
+  const png = PNG.sync.read(readFileSync(join(__dirname, 'fixtures/minimap', name)))
+  const r = minimapRect(1280, 720)
+  const side = r.w * 1280
+  const px = Math.max(9, Math.round(RELIC_PATCH * side))
+  return RELICS.map((relic) => {
+    const cx = r.x * 1280 + relic.pos.x * side - 1060
+    const cy = r.y * 720 + relic.pos.y * side - 500
+    const half = (RELIC_PATCH * side) / 2
+    const data = new Uint8Array(px * px * 4)
+    for (let y = 0; y < px; y++)
+      for (let x = 0; x < px; x++) {
+        const sx = Math.round(cx - half + ((x + 0.5) * 2 * half) / px)
+        const sy = Math.round(cy - half + ((y + 0.5) * 2 * half) / px)
+        const i = (sy * png.width + sx) * 4
+        data.set(png.data.subarray(i, i + 4), (y * px + x) * 4)
+      }
+    return relicSeen({ width: px, height: px, data })
+  })
+}
+
+describe('health relics on the minimap (real captures)', () => {
+  it('sees the green crosses of the inner relics', () => {
+    // order-inner, order-outer, chaos-outer, chaos-inner
+    expect(pads('inner-up-own-champ.png')).toEqual(['present', 'absent', 'unclear', 'present'])
+    expect(pads('inner-up-fight.png')[0]).toBe('present')
+    expect(pads('inner-up-fight.png')[3]).toBe('present')
+    expect(pads('inner-up-fight.png')[1]).toBe('absent')
+  })
+  it('sees nothing before the first spawn (the game shows its own countdown there)', () => {
+    expect(pads('prespawn.png')).toEqual(['absent', 'absent', 'absent', 'absent'])
+  })
+
+  it('starts a timer only after the cross was seen and then missing for 3 s', () => {
+    const t = new RelicTracker()
+    const all = (s: 'present' | 'absent' | 'unclear') => [s, s, s, s] as const
+    t.observe(100, [...all('absent')])
+    expect(t.snapshot()[1]).toMatchObject({ state: 'spawn', at: 105 })
+    t.observe(106, [...all('absent')]) // spawned, but never seen → no pickup assumed
+    t.observe(107, [...all('absent')])
+    t.observe(108, [...all('absent')])
+    expect(t.snapshot()[1].state).toBe('unknown')
+    t.observe(109, ['absent', 'present', 'absent', 'absent'])
+    expect(t.snapshot()[1].state).toBe('up')
+    t.observe(110, ['absent', 'absent', 'absent', 'absent'])
+    t.observe(111, ['absent', 'unclear', 'absent', 'absent']) // champion on the pad
+    t.observe(112, ['absent', 'absent', 'absent', 'absent'])
+    expect(t.observe(113, ['absent', 'absent', 'absent', 'absent'])).toEqual(['order-outer'])
+    expect(t.snapshot()[1]).toMatchObject({ state: 'spawn', at: 110 + 92.5 })
+    // the cross comes back long before the timer ends → it was covered, not taken
+    t.observe(130, ['absent', 'present', 'absent', 'absent'])
+    t.observe(131, ['absent', 'present', 'absent', 'absent'])
+    expect(t.snapshot()[1].state).toBe('up')
+  })
+})

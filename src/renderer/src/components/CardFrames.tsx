@@ -27,8 +27,8 @@ export function CardFrames({
     TIER_ORDER.indexOf(t.tier) === bestRank && rated.filter((r) => r && TIER_ORDER.indexOf(r.tier) === bestRank).length === 1
   const specs: FrameSpec[] = offer.cards.flatMap((card, i) => {
     const t = rated[i]
-    const combo = !!t?.synergy && t.synergy.type !== 'trap' && !t.synergy.missing.length
-    return t ? [{ rect: card.rect, tier: t.tier, best: isBest(t) || combo }] : []
+    const combo = !!t?.synergy && t.synergy.type !== 'trap'
+    return t ? [{ rect: card.rect, tier: t.tier, best: isBest(t), combo }] : []
   })
   return (
     <>
@@ -61,6 +61,7 @@ export function CardFrames({
             key={i}
             className="card-frame"
             data-tier={t.tier}
+            data-combo={syn && syn.type !== 'trap' ? '' : undefined}
             style={{ left: card.rect.x, top: card.rect.y, width: card.rect.width, height: card.rect.height }}
           >
             <div className="cf-crest">

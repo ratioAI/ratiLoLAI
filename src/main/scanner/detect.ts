@@ -229,7 +229,7 @@ export interface PlayerTick {
 }
 
 /** Length of the "probably in the fountain" windows, in ms. */
-export const WINDOWS = { respawn: 20_000, shopping: 15_000, manual: 20_000, gameStart: 100 }
+export const WINDOWS = { respawn: 12_000, shopping: 15_000, manual: 20_000, gameStart: 100 }
 
 /**
  * Decides when the screen is worth looking at. The augment choice only opens while dead or in the
