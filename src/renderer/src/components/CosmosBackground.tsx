@@ -4,11 +4,12 @@ import type { Settings } from '@shared/types'
 const VERT = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`
 
 /*
- * "Standing on a planet at night, looking at a galaxy."
+ * "Standing on a planet at night, looking up into the galaxy you live in."
  *
- * Every seed is a different place: galaxy position, size, tilt, number of arms, twist, colours,
- * the planet's atmosphere and – sometimes – a supermassive black hole with photon ring and
- * accretion disk in the galactic core, bending the starlight around it. The sky turns very slowly.
+ * Every seed is a different planet somewhere in a different galaxy: the angle and arc of the
+ * galactic band, its colours, dust rifts and nebulae, how far the planet is from the galactic
+ * core (a thin faint band … a core filling half the sky … the supermassive black hole itself),
+ * far-away galaxies, and the planet's mountains and atmosphere. The sky turns very slowly.
  *
  * u_warp (0 → 1) is the jump to the next star: the view dives into a wormhole – star streaks
  * rushing past, a lensing ring, a flash – and the new seed is swapped in at the peak.
@@ -65,74 +66,126 @@ vec3 stars(vec2 uv, float t){
   return starLayer(uv, 34.0, 0.93, t, 1.0) + starLayer(uv, 70.0, 0.86, t, 2.0) * 0.8 + starLayer(uv, 140.0, 0.8, t, 3.0) * 0.55;
 }
 
-vec3 sky(vec2 p, float t, float seed){
-  // ---- this place's parameters
-  vec2 gc = vec2(mix(-0.45, 0.45, h11(seed + 1.0)), mix(0.02, 0.22, h11(seed + 2.0)));
-  float grot = h11(seed + 3.0) * 6.283 + t * 0.006;
-  float tilt = mix(0.28, 0.85, h11(seed + 4.0));
-  float gscale = mix(0.24, 0.42, h11(seed + 5.0));
-  float arms = floor(mix(2.0, 4.99, h11(seed + 6.0)));
-  float twist = mix(2.4, 5.2, h11(seed + 7.0));
-  vec3 armCol = neb(h11(seed + 8.0));                           // outer arms
-  vec3 armIn = neb(h11(seed + 8.0) + 0.25 + 0.5 * h11(seed + 18.0)); // inner arms, a second tone
-  bool hole = h11(seed + 9.0) > 0.55;                           // sometimes a black hole in the core
-  float rb = gscale * 0.085;
-
-  // ---- gravitational lensing of the starfield around the black hole
-  vec2 d = p - gc;
-  float dl = length(d);
-  vec2 sp = p;
-  if (hole) sp = p - normalize(d) * rb * rb * 1.6 / max(dl, rb * 0.6);
-  vec3 col = stars(sp + vec2(t * 0.002, 0.0), t);
-
-  // ---- faint milky band across the sky
-  vec2 bp = rot(h11(seed + 10.0) * 3.14) * p;
-  float band = exp(-pow(bp.y * 3.2, 2.0)) * fbm(bp * 3.0 + seed);
-  col += neb(h11(seed + 11.0)) * band * 0.10;
-
-  // ---- the galaxy (in its own tilted, rotated plane)
-  vec2 q = rot(grot) * d;
+// A galaxy seen from far outside it (rare: a planet in the galactic halo or a satellite galaxy).
+vec3 spiralGalaxy(vec2 p, float t, float seed){
+  vec2 gc = vec2(mix(-0.5, 0.5, h11(seed + 21.0)), mix(0.05, 0.22, h11(seed + 22.0)));
+  float grot = h11(seed + 23.0) * 6.283 + t * 0.004;
+  float tilt = mix(0.3, 0.8, h11(seed + 24.0));
+  float gscale = mix(0.3, 0.55, h11(seed + 25.0));
+  float arms = floor(mix(2.0, 4.99, h11(seed + 26.0)));
+  float twist = mix(2.4, 5.2, h11(seed + 27.0));
+  vec3 armCol = neb(h11(seed + 28.0));
+  vec3 armIn = neb(h11(seed + 28.0) + 0.3);
+  vec2 q = rot(grot) * (p - gc);
   q.y /= tilt;
   q /= gscale;
   float r = length(q);
   float a = atan(q.y, q.x);
-  // arms with a ragged phase so they are not perfect spirals, plus a few spurs
   float wob = (fbm(q * 1.4 + seed * 0.7) - 0.5) * 1.6;
-  float spiral = pow(0.5 + 0.5 * cos(arms * (a - twist * log(r + 0.06)) + wob - t * 0.015), 2.6);
-  spiral += 0.35 * pow(0.5 + 0.5 * cos((arms * 2.0 + 1.0) * (a - twist * 1.15 * log(r + 0.06)) + wob * 2.0), 6.0) * smoothstep(0.2, 0.7, r);
+  float spiral = pow(0.5 + 0.5 * cos(arms * (a - twist * log(r + 0.06)) + wob - t * 0.01), 2.6);
   float disk = exp(-r * 2.1);
   float clumps = fbm(q * 3.4 + seed);
-  float arm = spiral * disk * (0.45 + 1.0 * clumps);
   float dust = smoothstep(0.42, 0.78, fbm(q * 7.0 - seed * 1.3)) * spiral * exp(-r * 1.2);
-  float core = exp(-r * 8.0) * 1.7 + exp(-r * 2.8) * 0.28;
-  vec3 g = mix(armIn, armCol, smoothstep(0.2, 1.1, r)) * arm * 1.35 + vec3(1.0, 0.86, 0.62) * core;
-  g += neb(h11(seed + 19.0)) * smoothstep(0.62, 0.9, clumps) * disk * spiral * 0.9;   // HII knots
-  g += starLayer(q * 0.35, 90.0, 0.7, t, 9.0) * spiral * disk * 1.6; // star clusters in the arms
+  vec3 g = mix(armIn, armCol, smoothstep(0.2, 1.1, r)) * spiral * disk * (0.45 + clumps) * 1.3;
+  g += vec3(1.0, 0.86, 0.62) * (exp(-r * 8.0) * 1.6 + exp(-r * 2.8) * 0.25);
+  g += starLayer(q * 0.35, 90.0, 0.7, t, 9.0) * spiral * disk * 1.5;
   g *= 1.0 - dust * 0.75;
-  g *= smoothstep(2.8, 1.3, r);
+  return g * smoothstep(2.8, 1.3, r);
+}
+
+// A small, faint galaxy far away: an elliptical smudge with a hint of arms.
+vec3 farGalaxy(vec2 p, vec2 c, float s, float ang, float tilt, float seed){
+  vec2 q = rot(ang) * (p - c);
+  q.y /= tilt;
+  q /= s;
+  float r = length(q);
+  float a = atan(q.y, q.x);
+  float sp = pow(0.5 + 0.5 * cos(2.0 * (a - 3.0 * log(r + 0.05))), 2.0);
+  vec3 g = vec3(1.0, 0.9, 0.78) * exp(-r * 7.0) + neb(h11(seed)) * sp * exp(-r * 2.6) * 0.45;
+  return g * smoothstep(2.2, 0.8, r);
+}
+
+/*
+ * The night sky of a planet *inside* a galaxy – like the Milky Way seen from Earth: the galactic
+ * disk is a glowing band across the sky with dark dust rifts, star clouds and pink/teal nebulae,
+ * and somewhere along it the bulge of the galactic core. How close the planet is to the core
+ * decides everything: far out the band is thin and faint; close in the bulge swells over half the
+ * sky – and very close the supermassive black hole becomes visible, from a lensed point of light
+ * up to a Gargantua filling the sky.
+ */
+vec3 sky(vec2 p, float t, float seed){
+  float d = pow(h11(seed + 1.0), 0.85);                         // 0 = at the core, 1 = outer rim
+  float c = 1.0 - d;
+  bool outside = h11(seed + 30.0) < 0.14;                       // rare: a view from outside
+  float ba = (h11(seed + 2.0) - 0.5) * 1.3 + t * 0.003;        // band angle, slowly turning
+  float curv = (h11(seed + 3.0) - 0.5) * 0.45;
+  float off = mix(-0.02, 0.26, h11(seed + 4.0));
+  float u0 = mix(-0.7, 0.7, h11(seed + 5.0));                  // where along the band the core is
+  vec2 cs = rot(-ba) * vec2(u0, off + curv * u0 * u0);          // the core on screen
+  bool hole = !outside && d < 0.36;
+  float closeness = smoothstep(0.36, 0.0, d);
+  float rb = hole ? mix(0.0035, 0.2, pow(closeness, 2.4)) : 0.0;
+
+  // gravitational lensing: everything behind the black hole is bent around it
+  vec2 dd = p - cs;
+  float dl = length(dd);
+  vec2 sp = p;
+  if (hole) sp = p - normalize(dd) * rb * rb * 1.8 / max(dl, rb * 0.5);
+
+  vec3 col = stars(sp + vec2(t * 0.0015, 0.0), t) * (outside ? 0.4 : 0.8 + 0.5 * c);
+
+  // ---- the galactic band
+  vec2 bp = rot(ba) * sp;
+  float u = bp.x;
+  float v = bp.y - off - curv * u * u;
+  float w = mix(0.055, 0.15, c) * (outside ? 0.6 : 1.0);
+  float prof = exp(-pow(v / w, 2.0));
+  float glow = exp(-pow(v / (w * 2.8), 2.0));
+  float clouds = fbm(vec2(u * 2.2, v * 5.0) + seed);
+  float grain = fbm(vec2(u * 9.0, v * 14.0) - seed);
+  float bw = mix(0.1, 0.8, c * c);                               // bulge size grows near the core
+  float bulge = exp(-(pow((u - u0) / bw, 2.0) + pow(v / (bw * 0.5), 2.0)));
+  float lane = v - w * 0.18 * sin(u * 2.3 + seed);
+  float rift = smoothstep(0.42, 0.7, fbm(vec2(u * 3.0, v * 9.0) + seed * 1.7)) * exp(-pow(lane / (w * 0.55), 2.0));
+  rift = max(rift, exp(-pow(lane / (w * 0.3), 2.0)) * smoothstep(0.45, 0.7, fbm(vec2(u * 4.0, v * 6.0) + seed * 2.3)) * 0.85);
+  vec3 bandCol = mix(vec3(0.86, 0.84, 0.92), neb(h11(seed + 6.0)), 0.35);
+  float bright = mix(0.32, 0.85, c) * (outside ? 0.3 : 1.0);
+  vec3 g = bandCol * (prof * (0.3 + 1.5 * clouds * grain) + glow * 0.12) * bright;
+  vec3 bulgeCol = mix(vec3(1.0, 0.8, 0.56), bandCol, 0.25 + 0.3 * clouds);
+  if (!outside) g += bulgeCol * bulge * (0.25 + 1.3 * grain * clouds) * mix(0.35, 1.25, c) * mix(1.0, 0.7, closeness);
+  g += neb(h11(seed + 7.0)) * smoothstep(0.6, 0.82, fbm(sp * 7.0 + seed)) * prof * 0.55;          // nebulae
+  g += neb(h11(seed + 8.0) + 0.5) * smoothstep(0.66, 0.86, fbm(sp * 5.0 - seed)) * prof * 0.35;
+  g += starLayer(sp, 230.0, 0.5, t, 5.0) * prof * (0.8 + c);                                        // star clouds
+  g *= 1.0 - rift * 0.88;
   col += g;
 
+  // ---- a few galaxies far away
+  for (int i = 0; i < 3; i++) {
+    float fi = float(i);
+    if (h11(seed + 40.0 + fi) < 0.45) continue;
+    vec2 gp = vec2(mix(-0.8, 0.8, h11(seed + 50.0 + fi)), mix(-0.05, 0.45, h11(seed + 60.0 + fi)));
+    col += farGalaxy(sp, gp, mix(0.008, 0.028, h11(seed + 70.0 + fi)), h11(seed + 80.0 + fi) * 6.3, mix(0.25, 0.9, h11(seed + 90.0 + fi)), seed + fi) * 0.55;
+  }
+  if (outside) col += spiralGalaxy(sp, t, seed);
+
+  // ---- the black hole in the core, its accretion disk in the galactic plane
   if (hole) {
-    // "Gargantua": a black shadow, a thin edge-on accretion disk crossing it, the far side of the
-    // disk lensed up and over (and faintly under) the shadow, a photon ring, Doppler-brightened
-    // on the side moving towards us
-    float edge = rb * 1.0;
-    float shadow = smoothstep(edge * 0.94, edge * 1.06, dl);
-    vec2 dq = rot(grot * 0.15) * d;                             // nearly level, like the film
+    float shadow = smoothstep(rb * 0.94, rb * 1.06, dl);
+    vec2 dq = rot(ba) * dd;
     float doppler = 1.0 + 0.55 * clamp(-dq.x / (rb * 3.0), -1.0, 1.0);
-    float thick = rb * 0.16;
+    float thick = rb * 0.16 + 0.0015;
     float flow = 0.75 + 0.25 * fbm(vec2(dq.x / rb * 3.0 - t * 0.6, dq.y / rb * 20.0));
-    float adisk = exp(-pow(dq.y / thick, 2.0)) * smoothstep(rb * 3.4, rb * 1.1, abs(dq.x)) * flow;
+    float adisk = exp(-pow(dq.y / thick, 2.0)) * smoothstep(rb * 3.6, rb * 1.1, abs(dq.x)) * flow;
     float yy = dq.y / max(dl, 1e-4);
-    float halo = exp(-pow((dl - rb * 1.32) / (rb * 0.24), 2.0));
-    float upper = halo * smoothstep(-0.35, 0.5, yy) * 1.6;            // lensed far side above
-    float lower = exp(-pow((dl - rb * 1.22) / (rb * 0.12), 2.0)) * smoothstep(0.2, -0.7, yy) * 0.55;
-    float ring = exp(-pow((dl - rb * 1.06) / (rb * 0.045), 2.0));
+    float halo = exp(-pow((dl - rb * 1.32) / (rb * 0.24 + 0.001), 2.0));
+    float upper = halo * smoothstep(-0.35, 0.5, yy) * 1.6;
+    float lower = exp(-pow((dl - rb * 1.22) / (rb * 0.12 + 0.001), 2.0)) * smoothstep(0.2, -0.7, yy) * 0.55;
+    float ring = exp(-pow((dl - rb * 1.06) / (rb * 0.045 + 0.0008), 2.0));
     vec3 hot = vec3(1.0, 0.80, 0.55);
     vec3 white = vec3(1.0, 0.95, 0.88);
     vec3 light = hot * (upper * 1.3 + lower) * doppler + white * ring * 1.5 + mix(hot, white, adisk) * adisk * 2.2 * doppler;
-    light += hot * exp(-dl / (rb * 2.2)) * 0.18;                // glow of the inner disk
-    col = col * shadow + light;                                  // the disk passes in front of the shadow
+    light += hot * exp(-dl / (rb * 2.2 + 0.004)) * mix(0.5, 0.18, closeness) * shadow;   // far away: a bright point
+    col = col * shadow + light;
   }
   return col;
 }
