@@ -15,6 +15,7 @@ import type {
 } from '@shared/types'
 import { QUEUE_IDS, statsModeOf } from '@shared/types'
 import { acceptDelayMs } from './acceptDelay'
+import { buildSummary, type CurvePoint, type GameSummary, type RawGame, type RawTimeline } from '@shared/summary'
 import { modeRecord, personalMayhemStats, type LcuHistory } from '../mayhem'
 import { fetchAllGameData, parseLiveData } from '../live/liveClient'
 import {
@@ -40,7 +41,10 @@ export interface LcuManagerDeps {
     live(s: LiveGameState | null): void
     imported(r: ImportResult & { championId: number }): void
     loading(s: LoadingState | null): void
+    summary(s: GameSummary): void
   }
+  /** gold/kill lead recorded from the live data (fallback when the client has no timeline) */
+  liveCurve(): CurvePoint[]
 }
 
 const POLL_MS = 3000
@@ -245,6 +249,27 @@ export class LcuManager {
 
   // --- party & loading screen ------------------------------------------------
 
+  private currentGameId: number | null = null
+
+  /**
+   * After the game: the client's match history entry has all ten players (stats, augments) and a
+   * timeline (gold per minute, kills). It can take a little while to appear – retry for ~2 min.
+   */
+  private async fetchSummary(gameId: number): Promise<void> {
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const client = this.client
+      if (!client) return
+      const game = await client.get<RawGame>(`/lol-match-history/v1/games/${gameId}`).catch(() => null)
+      if (game?.participants?.length) {
+        const timeline = await client.get<RawTimeline>(`/lol-match-history/v1/game-timelines/${gameId}`).catch(() => null)
+        const summary = buildSummary(game, timeline, this.status.summoner?.puuid ?? null, this.premadePuuids, this.deps.liveCurve())
+        this.deps.emit.summary(summary)
+        return
+      }
+      await new Promise((r) => setTimeout(r, 5000))
+    }
+  }
+
   private premades: string[] = []
   private premadePuuids = new Set<string>()
   private loadingState: LoadingState | null = null
@@ -336,11 +361,19 @@ export class LcuManager {
       this.loadingGame = null
       this.deps.emit.loading(null)
     }
+    if (['PreEndOfGame', 'WaitingForStats', 'EndOfGame'].includes(phase) && this.currentGameId) {
+      const id = this.currentGameId
+      this.currentGameId = null
+      void this.fetchSummary(id)
+    }
     if (phase === 'InProgress') {
-      // remember the queue of the running game (the champ-select queue is cleared when it ends)
+      // remember the queue (and id) of the running game (the champ-select queue is cleared when it ends)
       void this.client
-        ?.get<{ gameData?: { queue?: { id?: number } } }>('/lol-gameflow/v1/session')
-        .then((s) => (this.gameQueueId = s?.gameData?.queue?.id ?? null))
+        ?.get<{ gameData?: { gameId?: number; queue?: { id?: number } } }>('/lol-gameflow/v1/session')
+        .then((s) => {
+          this.gameQueueId = s?.gameData?.queue?.id ?? null
+          this.currentGameId = s?.gameData?.gameId ?? null
+        })
         .catch(() => undefined)
       this.startLivePolling()
     } else {

@@ -6,6 +6,7 @@
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { DDRAGON, loadStaticData } from '@shared/staticData'
 import { buildMayhemData, mayhemPool, type AmAugmentRow, type AmComboRow, type AmFile, type AugmentList, type CherryAugment } from '@shared/mayhem'
+import { buildSummary, type GameSummary } from '@shared/summary'
 import type {
   ChampionRoleStats,
   ChampSelectState,
@@ -471,6 +472,24 @@ export function createMockApi(): RcApi {
       log: ['web demo – no game running']
     }),
     overlayScanNow: async () => undefined,
+    listGames: async () => {
+      const s = demoSummary()
+      const me = s.players.find((p) => p.me)!
+      return [
+        {
+          gameId: s.gameId,
+          createdAt: s.createdAt,
+          duration: s.duration,
+          queueId: s.queueId,
+          mode: s.mode,
+          win: s.win,
+          championId: me.championId,
+          kda: [me.kills, me.deaths, me.assists] as [number, number, number],
+          blamedPremade: s.players.find((p) => p.puuid === s.blame)?.riotId ?? null
+        }
+      ]
+    },
+    getGame: async () => demoSummary(),
     getMapTimers: async () =>
       window.location.hash.includes('demo-live')
         ? {
@@ -604,4 +623,77 @@ export function createMockApi(): RcApi {
     }
   }
   return api
+}
+
+/** A synthetic ARAM: Mayhem game for the post-game summary demo (lost after a big lead). */
+function demoSummary(): GameSummary {
+  const names: [string, number, boolean, boolean][] = [
+    ['Axel Fungus', 412, true, false],
+    ['blackbird', 86, false, true],
+    ['Doulul', 99, false, true],
+    ['Toni', 222, false, false],
+    ['ratio', 103, false, false],
+    ['simwai', 157, false, false],
+    ['Psychedelic Bard', 432, false, false],
+    ['Guido', 25, false, false],
+    ['Splitter', 11, false, false],
+    ['NOATAQQ', 54, false, false]
+  ]
+  const stats = [
+    [3, 7, 21, 14200, 31000, 9000],
+    [9, 9, 11, 28100, 22000, 0],
+    [4, 11, 9, 16900, 18000, 1200],
+    [11, 6, 12, 33800, 15000, 0],
+    [5, 8, 14, 21000, 26000, 3800],
+    [12, 5, 14, 35100, 17000, 0],
+    [6, 7, 20, 18800, 29000, 11000],
+    [14, 6, 9, 31900, 14000, 0],
+    [3, 7, 19, 15200, 38000, 2100],
+    [6, 7, 16, 22400, 21000, 0]
+  ]
+  const augs = [[1011, 2107, 1349], [1180, 2139, 1149], [1072, 2034], [1238, 1401, 2102], [1013, 1353], [1205, 1305], [1328, 1358, 1421], [1098, 2080], [1020, 2032], [1054, 1325]]
+  const game = {
+    gameId: 7300000001,
+    gameCreation: Date.now() - 40 * 60_000,
+    gameDuration: 19 * 60 + 12,
+    queueId: 2400,
+    gameMode: 'KIWI',
+    participants: names.map(([, champ], i) => ({
+      participantId: i + 1,
+      championId: champ,
+      teamId: i < 5 ? 100 : 200,
+      stats: {
+        win: i >= 5,
+        kills: stats[i][0],
+        deaths: stats[i][1],
+        assists: stats[i][2],
+        totalDamageDealtToChampions: stats[i][3],
+        totalDamageTaken: stats[i][4],
+        damageSelfMitigated: Math.round(stats[i][4] * 0.4),
+        totalHealsOnTeammates: stats[i][5],
+        goldEarned: 9000 + stats[i][0] * 350,
+        champLevel: 18,
+        ...Object.fromEntries([3020, 3089, 3157, 4645, 3135, 3165, 3340].map((it, k) => [`item${k}`, it])),
+        ...Object.fromEntries(augs[i].map((a, k) => [`playerAugment${k + 1}`, a]))
+      }
+    })),
+    participantIdentities: names.map(([n], i) => ({ participantId: i + 1, player: { puuid: `p${i}`, gameName: n, tagLine: 'EUW' } }))
+  }
+  const lead = [0, 300, 900, 1600, 2400, 3100, 3800, 4200, 3900, 3300, 2600, 1800, 900, 200, -700, -1500, -2300, -3200, -4100, -5000]
+  const timeline = {
+    frames: lead.map((g, m) => ({
+      timestamp: m * 60_000,
+      participantFrames: Object.fromEntries(
+        names.map((_, i) => [String(i + 1), { totalGold: 500 + m * 600 + (i < 5 ? g / 5 : 0) }])
+      ),
+      events:
+        m > 0
+          ? [
+              { type: 'CHAMPION_KILL', timestamp: m * 60_000 - 20_000, killerId: m < 9 ? 1 + (m % 5) : 6 + (m % 5), victimId: 3 },
+              ...(m % 3 === 0 ? [{ type: 'CHAMPION_KILL', timestamp: m * 60_000 - 5_000, killerId: 6 + (m % 5), victimId: 2 }] : [])
+            ]
+          : []
+    }))
+  }
+  return buildSummary(game, timeline, 'p0', new Set(['p1', 'p2']))
 }

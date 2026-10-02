@@ -8,7 +8,8 @@
  */
 import type { MinimapState } from '@shared/types'
 
-export const INHIBITOR_RESPAWN = 300
+/** measured in ARAM: Mayhem (killed 930 s → respawned 1180 s, twice): 4:10, not Summoner's Rift's 5:00 */
+export const INHIBITOR_RESPAWN = 250
 
 /** Inhibitor events as parsed from the Live Client Data API. */
 export interface InhibitorEvent {
@@ -106,26 +107,43 @@ interface RelicTrack {
   absentSince: number | null
   absentCount: number
   presentCount: number
+  takenAt: number | null
 }
 
+/**
+ * Per-pad state machine with hysteresis. The respawn time is learned during the game: when a
+ * cross that was taken comes back for good, the time it took is recorded; once two such
+ * observations agree, timers use the learned value (modes and maps can differ from the 90 s
+ * of classic ARAM).
+ */
 export class RelicTracker {
   private tracks: RelicTrack[] = []
   private last = 0
+  private respawnSamples: number[] = []
 
-  constructor() {
+  constructor(private readonly log: (msg: string) => void = () => undefined) {
     this.reset()
   }
 
   reset(): void {
     this.last = 0
+    this.respawnSamples = []
     this.tracks = RELICS.map((r) => ({
       phase: 'spawn',
       at: RELIC_TIMES[r.kind],
       verified: false,
       absentSince: null,
       absentCount: 0,
-      presentCount: 0
+      presentCount: 0,
+      takenAt: null
     }))
+  }
+
+  /** Respawn time in use: learned (median of observations) once two agree, else 92.5 s. */
+  get respawnTime(): number {
+    const s = [...this.respawnSamples].sort((a, b) => a - b)
+    if (s.length < 2) return RELIC_TIMES.respawn
+    return s[s.length >> 1]
   }
 
   tick(gameTime: number): void {
@@ -138,6 +156,7 @@ export class RelicTracker {
         t.verified = false
         t.absentCount = 0
         t.absentSince = null
+        t.presentCount = 0
       }
     }
   }
@@ -156,23 +175,30 @@ export class RelicTracker {
           t.absentSince = null
         } else if (t.verified) {
           t.absentSince ??= gameTime
-          // 3 s without the cross: taken (a champion walking over it is shorter or "unclear")
-          if (++t.absentCount >= 3) {
+          // 4 s without the cross: taken (a champion walking over it is shorter or "unclear")
+          if (++t.absentCount >= 4) {
             t.phase = 'spawn'
-            t.at = t.absentSince + RELIC_TIMES.respawn
+            t.takenAt = t.absentSince
+            t.at = t.absentSince + this.respawnTime
             t.presentCount = 0
             taken.push(RELICS[i].id)
           }
         }
       } else if (t.phase === 'spawn' && t.at !== null && gameTime > RELIC_TIMES[RELICS[i].kind]) {
-        // the cross is clearly back long before the timer ends → that was no pickup
         t.presentCount = s === 'present' ? t.presentCount + 1 : 0
-        if (t.presentCount >= 2 && t.at - gameTime > 5) {
+        if (t.presentCount >= 3) {
+          const since = t.takenAt !== null ? gameTime - 2 - t.takenAt : 0
+          if (since >= 20 && since <= 120) {
+            // the relic really is back – it respawns faster/slower than assumed: learn it
+            this.respawnSamples.push(since)
+            this.log(`relic ${RELICS[i].id} back after ${Math.round(since)} s (respawn now ${Math.round(this.respawnTime)} s)`)
+          } else this.log(`relic ${RELICS[i].id} still there after ${Math.round(since)} s – not taken`)
           t.phase = 'up'
           t.at = null
           t.verified = true
           t.absentCount = 0
           t.absentSince = null
+          t.presentCount = 0
         }
       }
     })

@@ -15,6 +15,8 @@ import { MinimapWatcher } from './minimap/watcher'
 import { INHIBITOR_POS, minimapRect, RELICS } from './minimap/timers'
 import { AugmentScanner, type ScanState } from './scanner/scanner'
 import { DiagLog } from './diag'
+import { GameStore } from './games'
+import type { CurvePoint } from '@shared/summary'
 import { CaptureService } from './capture/captureService'
 import { cardRects, WINDOWS, type NameCandidate } from './scanner/detect'
 import { augmentTiersForChampion } from '@shared/mayhem'
@@ -344,7 +346,31 @@ const crawler = new Crawler(
   }
 )
 
+// --- post-game summaries ------------------------------------------------------------
+const games = new GameStore(join(userData, 'games'))
+/** gold / kill lead recorded every 15 s from the live data – fallback curve for the summary */
+let liveCurve: CurvePoint[] = []
+let liveCurveAt = -1
+async function recordCurve(live: LiveGameState | null): Promise<void> {
+  if (!live?.active) return
+  if (live.gameTime < liveCurveAt) liveCurve = [] // new game
+  if (live.gameTime - liveCurveAt < 15 && liveCurve.length) return
+  liveCurveAt = live.gameTime
+  const statics = await ddragon.get().catch(() => null)
+  const me = live.players.find((p) => p.riotId === live.activePlayer)
+  if (!me || !statics) return
+  let gold = 0
+  let kills = 0
+  for (const p of live.players) {
+    const sign = p.team === me.team ? 1 : -1
+    gold += sign * p.items.reduce((s, id) => s + (statics.items[id]?.gold ?? 0), 0)
+    kills += sign * p.kills
+  }
+  liveCurve.push({ t: live.gameTime, gold, kills })
+}
+
 const lcu = new LcuManager({
+  liveCurve: () => liveCurve,
   settings: () => settings.get(),
   staticData: () => ddragon.get(),
   build: async (championId, role, mode) => championBuild(await currentPatch(mode), championId, role, mode),
@@ -361,10 +387,15 @@ const lcu = new LcuManager({
     },
     live: (s) => {
       emit('live', s)
+      void recordCurve(s)
       refreshLoading()
       updateOverlay(s)
     },
-    imported: (r) => emit('imported', r)
+    imported: (r) => emit('imported', r),
+    summary: (s) => {
+      diag.log(`game summary ready: ${s.gameId} (${s.win ? 'win' : 'loss'}, curve from ${s.curveSource})`)
+      void games.save(s).then(() => emit('gameSummary', s))
+    }
   }
 })
 
@@ -497,6 +528,8 @@ function registerIpc(): void {
   handle('overlayDiagnostics', () => overlayDiagnostics())
   handle('getOwnedAugments', () => owned)
   handle('getMapTimers', () => minimapState)
+  handle('listGames', () => games.list())
+  handle('getGame', (id: number) => games.get(Number(id)))
   handle('setOwnedAugments', (ids: number[]) => setOwned(Array.isArray(ids) ? ids.filter((x) => Number.isInteger(x)) : []))
   handle('overlayScanNow', () => {
     diag.log('scan requested from the overlay')

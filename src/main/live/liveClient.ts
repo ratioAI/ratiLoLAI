@@ -54,7 +54,7 @@ interface RawLive {
       InhibRespawned?: string
     }[]
   }
-  gameData?: { gameTime: number; gameMode: string }
+  gameData?: { gameTime: number; gameMode: string; mapNumber?: number; mapName?: string }
 }
 
 function describe(e: { EventName: string; KillerName?: string; VictimName?: string; DragonType?: string }): string {
@@ -117,6 +117,7 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
     active: true,
     gameTime: d.gameData.gameTime,
     gameMode: d.gameData.gameMode,
+    mapNumber: d.gameData.mapNumber ?? null,
     activePlayer: d.activePlayer?.riotId ?? d.activePlayer?.summonerName ?? null,
     activeChampion:
       players.find((p) => p.riotId && p.riotId === (d.activePlayer?.riotId ?? d.activePlayer?.summonerName))?.championName ?? null,

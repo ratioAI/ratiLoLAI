@@ -1,3 +1,4 @@
+import type { GameSummary } from './summary'
 // Types shared between the Electron main process and the React renderer.
 
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
@@ -324,6 +325,19 @@ export interface LoadingState {
   players: LoadingPlayer[]
 }
 
+/** One finished game in the list of post-game summaries. */
+export interface GameListEntry {
+  gameId: number
+  createdAt: number
+  duration: number
+  queueId: number
+  mode: string
+  win: boolean
+  championId: number
+  kda: [number, number, number]
+  blamedPremade: string | null
+}
+
 export type AcceptDelay = 'instant' | 'human' | 'slow'
 
 /** Timers shown on the minimap (all times are game time in seconds). */
@@ -429,6 +443,8 @@ export interface LiveGameState {
   active: boolean
   gameTime: number
   gameMode: string
+  /** 12 = Howling Abyss (other numbers: Butcher's Bridge, Koeshin's Crossing, …) */
+  mapNumber?: number | null
   /** champion name of the local player (localized) */
   activeChampion: string | null
   /** Data Dragon id of the local player's champion (e.g. "MonkeyKing"), language independent */
@@ -594,6 +610,8 @@ export interface RcApi {
   /** augments picked in the running Mayhem game (recognised from the augment choice) */
   getOwnedAugments(): Promise<number[]>
   getMapTimers(): Promise<MinimapState | null>
+  listGames(): Promise<GameListEntry[]>
+  getGame(gameId: number): Promise<GameSummary | null>
   setOwnedAugments(ids: number[]): Promise<void>
   overlayTestScan(): Promise<ScanTestResult>
   openDiagnosticsFolder(): Promise<void>
@@ -666,6 +684,8 @@ export interface RcEvents {
   /** offer with card rects relative to the frames window (sent to that window only) */
   framesOffer: AugmentOffer | null
   augmentsOwned: number[]
+  /** a post-game summary is ready */
+  gameSummary: GameSummary
   loading: LoadingState | null
   /** map timers for the main window (the minimap overlay gets its own copy with positions) */
   mapTimers: MinimapState | null

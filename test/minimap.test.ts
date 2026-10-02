@@ -18,6 +18,10 @@ describe('inhibitor timers', () => {
     const t = inhibitorTimers(events, 700)
     expect(t).toHaveLength(1)
     expect(t[0]).toMatchObject({ team: 'CHAOS', respawnAt: 600 + INHIBITOR_RESPAWN })
+    expect(INHIBITOR_RESPAWN).toBe(250)
+    // real names from an ARAM: Mayhem game
+    expect(inhibitorTeam('Inhib_TChaos_L1_P1_2432143522_0')).toBe('CHAOS')
+    expect(inhibitorTeam('Inhib_TOrder_L1_P1_196971597_0')).toBe('ORDER')
     expect(inhibitorTimers(events, 600 + INHIBITOR_RESPAWN + 1)).toHaveLength(0)
     // killed again after respawning
     expect(inhibitorTimers([...events, { type: 'killed', inhibitor: 'Barracks_T1_L1', time: 650 }], 700)).toHaveLength(2)
@@ -113,25 +117,42 @@ describe('health relics on the minimap (real captures)', () => {
     expect(pads('prespawn.png')).toEqual(['absent', 'absent', 'absent', 'absent'])
   })
 
-  it('starts a timer only after the cross was seen and then missing for 3 s', () => {
+  it('starts a timer only after the cross was seen and then missing for 4 s', () => {
     const t = new RelicTracker()
     const all = (s: 'present' | 'absent' | 'unclear') => [s, s, s, s] as const
     t.observe(100, [...all('absent')])
     expect(t.snapshot()[1]).toMatchObject({ state: 'spawn', at: 105 })
-    t.observe(106, [...all('absent')]) // spawned, but never seen → no pickup assumed
-    t.observe(107, [...all('absent')])
-    t.observe(108, [...all('absent')])
+    for (const s of [106, 107, 108, 109]) t.observe(s, [...all('absent')]) // spawned, never seen → no pickup
     expect(t.snapshot()[1].state).toBe('unknown')
-    t.observe(109, ['absent', 'present', 'absent', 'absent'])
+    t.observe(110, ['absent', 'present', 'absent', 'absent'])
     expect(t.snapshot()[1].state).toBe('up')
-    t.observe(110, ['absent', 'absent', 'absent', 'absent'])
-    t.observe(111, ['absent', 'unclear', 'absent', 'absent']) // champion on the pad
-    t.observe(112, ['absent', 'absent', 'absent', 'absent'])
-    expect(t.observe(113, ['absent', 'absent', 'absent', 'absent'])).toEqual(['order-outer'])
-    expect(t.snapshot()[1]).toMatchObject({ state: 'spawn', at: 110 + 92.5 })
-    // the cross comes back long before the timer ends → it was covered, not taken
-    t.observe(130, ['absent', 'present', 'absent', 'absent'])
-    t.observe(131, ['absent', 'present', 'absent', 'absent'])
+    t.observe(111, [...all('absent')])
+    t.observe(112, ['absent', 'unclear', 'absent', 'absent']) // champion on the pad
+    t.observe(113, [...all('absent')])
+    t.observe(114, [...all('absent')])
+    expect(t.observe(115, [...all('absent')])).toEqual(['order-outer'])
+    expect(t.snapshot()[1]).toMatchObject({ state: 'spawn', at: 111 + 92.5 })
+    // back after 8 s → it was covered, not taken (too early to be a respawn)
+    for (const s of [119, 120, 121]) t.observe(s, ['absent', 'present', 'absent', 'absent'])
     expect(t.snapshot()[1].state).toBe('up')
+    expect(t.respawnTime).toBe(92.5)
+  })
+
+  it('learns a different respawn time from two real respawns', () => {
+    const t = new RelicTracker()
+    const take = (from: number) => {
+      t.observe(from, ['absent', 'present', 'absent', 'absent'])
+      for (let s = from + 1; s <= from + 4; s++) t.observe(s, ['absent', 'absent', 'absent', 'absent'])
+    }
+    const back = (from: number) => {
+      for (let s = from; s < from + 3; s++) t.observe(s, ['absent', 'present', 'absent', 'absent'])
+    }
+    take(200)
+    back(241) // seen again 40 s after the pickup
+    take(260)
+    back(301)
+    expect(t.respawnTime).toBeCloseTo(40, 0)
+    take(320)
+    expect(t.snapshot()[1].at).toBeCloseTo(321 + 40, 0)
   })
 })

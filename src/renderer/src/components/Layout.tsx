@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Database, Gauge, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy } from 'lucide-react'
+import { Database, Gauge, History, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy } from 'lucide-react'
 import type { GameMode, UpdateState } from '@shared/types'
+import type { GameSummary } from '@shared/summary'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { isDemo } from '@/lib/api'
@@ -12,6 +13,7 @@ const NAV = [
   { to: '/tierlist', label: 'Tier list', icon: Trophy },
   { to: '/champions', label: 'Champions', icon: LayoutGrid },
   { to: '/live', label: 'Live', icon: Radio },
+  { to: '/games', label: 'Games', icon: History },
   { to: '/mayhem', label: 'Mayhem', icon: Sparkles },
   { to: '/profile', label: 'Profile', icon: Search },
   { to: '/data', label: 'Data', icon: Database }
@@ -55,9 +57,11 @@ export function Wordmark({ className = '' }: { className?: string }) {
 export function Layout({ children }: { children: ReactNode }) {
   const { client, patches, patch, setPatch, crawler, mode, setMode } = useApp()
   const [update, setUpdate] = useState<UpdateState | null>(null)
+  const [summary, setSummary] = useState<GameSummary | null>(null)
   useEffect(() => {
     api.appInfo().then((i) => setUpdate(i.update))
-    return api.on('update', setUpdate)
+    const offs = [api.on('update', setUpdate), api.on('gameSummary', setSummary)]
+    return () => offs.forEach((o) => o())
   }, [])
   return (
     <div className="flex h-full">
@@ -145,6 +149,20 @@ export function Layout({ children }: { children: ReactNode }) {
           </span>
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+        {summary && (
+          <div className="panel fixed right-5 bottom-5 z-50 flex items-center gap-3 p-3 pr-2 shadow-2xl">
+            <span className={`font-display font-extrabold ${summary.win ? 'text-[#5fb4ff]' : 'text-[#ff7a62]'}`}>
+              {summary.win ? 'Victory' : 'Defeat'}
+            </span>
+            <span className="text-sm text-muted">Game summary is ready</span>
+            <NavLink to={`/games/${summary.gameId}`} onClick={() => setSummary(null)} className="btn btn-primary px-3 py-1 text-xs">
+              Open
+            </NavLink>
+            <button onClick={() => setSummary(null)} className="px-1 text-muted hover:text-text" aria-label="Dismiss">
+              ×
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

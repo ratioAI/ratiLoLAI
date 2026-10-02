@@ -14,10 +14,12 @@ export class MinimapWatcher {
   private inhibEvents: NonNullable<LiveGameState['inhibitorEvents']> = []
   private lastKey = ''
   private lastEmit = 0
-  private readonly relics = new RelicTracker()
+  private readonly relics: RelicTracker
   private timer: NodeJS.Timeout | null = null
   private sampling = false
   private loggedInhibs = 0
+  private loggedMap: number | null | undefined = undefined
+  private relicsOn = true
 
   constructor(
     private readonly settings: () => Settings['minimap'],
@@ -25,7 +27,9 @@ export class MinimapWatcher {
     private readonly emit: (s: MinimapState | null) => void,
     private readonly capture: CaptureService | null = null,
     private readonly log: (msg: string) => void = () => undefined
-  ) {}
+  ) {
+    this.relics = new RelicTracker(log)
+  }
 
   private display(): Electron.Display {
     const id = this.gameDisplay()
@@ -64,7 +68,15 @@ export class MinimapWatcher {
     this.relics.tick(live.gameTime)
 
     // relic pads are only worth watching once the first relics are about to spawn
-    const watchRelics = s.relics && !!this.capture && live.gameTime > 95
+    // relic pad positions are known for the Howling Abyss (map 12) only – other Mayhem maps
+    // (Butcher's Bridge, Koeshin's Crossing) put them elsewhere
+    if (live.mapNumber !== this.loggedMap) {
+      this.loggedMap = live.mapNumber ?? null
+      this.log(`map ${live.mapNumber ?? '?'}${live.mapNumber != null && live.mapNumber !== 12 ? ' – relic timers off (pads unknown on this map)' : ''}`)
+    }
+    const knownMap = live.mapNumber == null || live.mapNumber === 12
+    this.relicsOn = knownMap
+    const watchRelics = s.relics && knownMap && !!this.capture && live.gameTime > 95
     this.capture?.demand('relics', watchRelics ? { displays: [this.display().id], fps: 1 } : null)
     if (watchRelics && !this.timer) this.timer = setInterval(() => void this.sample(), 1000)
     if (!watchRelics && this.timer) {
@@ -104,7 +116,7 @@ export class MinimapWatcher {
       measuredAt: Date.now(),
       rect: minimapRect(d.size.width, d.size.height, s.scale),
       inhibitors: s.inhibitors ? inhibitorTimers(this.inhibEvents, this.now()) : [],
-      relics: s.relics ? this.relics.snapshot() : []
+      relics: s.relics && this.relicsOn ? this.relics.snapshot() : []
     }
     // the overlay counts down on its own – only resend when something changed (or to resync)
     const key = JSON.stringify({ ...state, gameTime: 0, measuredAt: 0 })

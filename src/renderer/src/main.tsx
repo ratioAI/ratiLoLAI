@@ -16,6 +16,7 @@ import { TierList } from './pages/TierList'
 import { Champions } from './pages/Champions'
 import { ChampionPage } from './pages/Champion'
 import { Live } from './pages/Live'
+import { GameDetail, Games } from './pages/Games'
 import { Profile } from './pages/Profile'
 import { Data } from './pages/Data'
 import { Settings } from './pages/Settings'
@@ -69,6 +70,8 @@ function MainShell() {
         <Route path="/champions" element={<Champions />} />
         <Route path="/champion/:id/:role?" element={<ChampionPage />} />
         <Route path="/live" element={<Live />} />
+        <Route path="/games" element={<Games />} />
+        <Route path="/games/:id" element={<GameDetail />} />
         <Route path="/mayhem" element={<Mayhem />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/data" element={<Data />} />
