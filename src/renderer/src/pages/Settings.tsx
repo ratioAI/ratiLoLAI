@@ -130,6 +130,11 @@ export function Settings() {
         </p>
         <Toggle label="Enable overlay" value={settings.overlay.enabled} onChange={(v) => save({ overlay: { ...settings.overlay, enabled: v } })} />
         <Toggle
+          label="Show the overlay in screen shares and recordings (Discord, OBS)"
+          value={settings.overlay.showInCapture}
+          onChange={(v) => save({ overlay: { ...settings.overlay, showInCapture: v } })}
+        />
+        <Toggle
           label="Loading screen: win rates of all players (Space shows / hides)"
           value={settings.overlay.loadingScreen}
           onChange={(v) => save({ overlay: { ...settings.overlay, loadingScreen: v } })}

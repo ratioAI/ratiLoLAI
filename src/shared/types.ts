@@ -275,6 +275,8 @@ export interface Settings {
     cardFrames: boolean
     /** animated frames: 30 fps, 15 fps or static */
     animation: 'smooth' | 'low' | 'off'
+    /** show the overlays in screen shares / recordings (Discord, OBS) – off keeps them private */
+    showInCapture: boolean
     /** loading screen panel with the players' win rates in Mayhem / ARAM (Space toggles) */
     loadingScreen: boolean
     /** screen the game was last seen on (set automatically) */

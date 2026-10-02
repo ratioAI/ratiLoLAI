@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
     cardFrames: true,
     animation: 'smooth',
     loadingScreen: true,
+    showInCapture: false,
     gameDisplayId: null
   },
   ui: {

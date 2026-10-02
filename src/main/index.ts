@@ -139,6 +139,7 @@ const scanner = new AugmentScanner(
 )
 
 scanner.snapshotDir = join(userData, 'logs')
+scanner.overlayInCapture = () => settings.get().overlay.showInCapture
 
 // augments picked in the running Mayhem game
 let owned: number[] = []
@@ -392,6 +393,7 @@ function registerIpc(): void {
     ddragon.setLanguage(next.language)
     mayhem.setLanguage(next.language)
     overlay.setHotkey(next.overlay.hotkey)
+    overlay.setVisibleInCapture(next.overlay.showInCapture)
     updateOverlay(lcu.getLive())
     tierCache.clear()
     return next
@@ -641,6 +643,7 @@ void app.whenReady().then(async () => {
   createWindow()
   lcu.start()
   overlay.setHotkey(settings.get().overlay.hotkey)
+  overlay.setVisibleInCapture(settings.get().overlay.showInCapture)
   initAutoUpdate()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -8,9 +8,16 @@ type Part = 'panel' | 'frames' | 'minimap' | 'loading'
  * window is copied to the desktop compositor as a whole, so each overlay part gets a window that is
  * only as large as its content – the animated card frames no longer repaint a full-screen surface.
  */
+/** false = overlays also appear in screen shares / recordings (Discord, OBS) */
+let hideFromCapture = true
+
 class OverlayWindow {
   win: BrowserWindow | null = null
   private loaded: Promise<void> | null = null
+
+  applyCapture(): void {
+    if (this.win && !this.win.isDestroyed()) this.win.setContentProtection(hideFromCapture)
+  }
 
   constructor(
     private readonly part: Part,
@@ -39,9 +46,10 @@ class OverlayWindow {
     win.setAlwaysOnTop(true, 'screen-saver')
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
     win.setIgnoreMouseEvents(true, { forward: true })
-    // keep our own overlay out of screen captures (Windows 10 2004+: WDA_EXCLUDEFROMCAPTURE), so the
-    // card recognition never sees its own frames – and OBS/Discord show the plain game
-    win.setContentProtection(true)
+    // by default our own overlay stays out of screen captures (Windows 10 2004+:
+    // WDA_EXCLUDEFROMCAPTURE), so the card recognition never sees its own frames. Users who want to
+    // show it in Discord / OBS can turn that off (Settings → overlay).
+    win.setContentProtection(hideFromCapture)
     this.loaded = new Promise((resolve) => win.webContents.once('did-finish-load', () => setTimeout(resolve, 300)))
     this.load(win, this.hash)
     win.on('closed', () => {
@@ -237,6 +245,13 @@ export class OverlayManager {
       this.panel.hide()
       this.hideFrames()
     }, ms)
+  }
+
+  /** Show the overlays in screen shares / recordings (Discord, OBS) or keep them out. */
+  setVisibleInCapture(visible: boolean): void {
+    if (hideFromCapture === !visible) return
+    hideFromCapture = !visible
+    for (const w of [this.panel, this.frames, this.minimap, this.loading]) w.applyCapture()
   }
 
   setHotkey(accelerator: string): void {

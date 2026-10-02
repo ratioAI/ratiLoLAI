@@ -222,6 +222,9 @@ export class AugmentScanner {
     }
   }
 
+  /** true when the overlay windows are visible in screen captures (and thus in our own pictures) */
+  overlayInCapture: () => boolean = () => false
+
   /** called with the augment the player clicked */
   onPicked: (augmentId: number) => void = () => undefined
   private lastOffer: AugmentOffer | null = null
@@ -366,7 +369,10 @@ export class AugmentScanner {
       const sig = titleSignature(small)
       const same = this.state.visible && this.state.displayId === displayId && !signatureChanged(this.signature, sig)
       // same cards as last time → nothing to read again (unless the last read failed: retry once a second)
-      if (same && (this.state.offer || Date.now() - this.lastRead < 1000)) return this.state
+      // when our frames show up in the capture themselves (overlay visible in screen shares), the
+      // cards are re-read every 1.5 s so frames left over a closed selection can't keep themselves alive
+      const recheck = this.overlayInCapture() && Date.now() - this.lastRead > 1500
+      if (same && !recheck && (this.state.offer || Date.now() - this.lastRead < 1000)) return this.state
       // a reroll animates for a moment – read at most every 400 ms while the titles change
       if (this.state.visible && this.state.displayId === displayId && Date.now() - this.lastRead < 400) return this.state
 

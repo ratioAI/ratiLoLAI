@@ -347,7 +347,7 @@ export function createMockApi(): RcApi {
       matchesPerPlayer: 10,
       minGamesForTierList: 20
     },
-    overlay: { enabled: true, hotkey: 'Alt+Shift+A', autoExpand: true, cardFrames: true, animation: 'smooth', loadingScreen: true, gameDisplayId: null },
+    overlay: { enabled: true, hotkey: 'Alt+Shift+A', autoExpand: true, cardFrames: true, animation: 'smooth', loadingScreen: true, showInCapture: false, gameDisplayId: null },
     minimap: { enabled: true, inhibitors: true, relics: true, scale: 1 },
     ui: { background: 'animated' },
     client: { autoImportRunes: true, autoImportItems: true, autoImportSpells: false, flashOn: 'F', autoAccept: true, acceptDelay: 'human' }
