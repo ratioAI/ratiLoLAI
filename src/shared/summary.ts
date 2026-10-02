@@ -49,7 +49,7 @@ export interface GameSummary {
   curveSource: 'timeline' | 'live' | 'none'
   kills: { t: number; ally: boolean }[]
   mvp: string | null
-  /** lowest impact among you and your premades in a loss (your team if you played alone) */
+  /** lowest impact of your whole team in a loss */
   blame: string | null
   highlights: string[]
 }
@@ -101,6 +101,46 @@ export function impactScores(team: Pick<SummaryPlayer, 'kills' | 'deaths' | 'ass
       18 * (kp - 0.5)
     return Math.round(Math.max(0, Math.min(100, raw)))
   })
+}
+
+/** Whole-team blame for any summary (also older ones saved with group-only blame). */
+export function teamBlame(s: Pick<GameSummary, 'win' | 'players'>): SummaryPlayer | null {
+  if (s.win) return null
+  const allies = s.players.filter((p) => p.ally).sort((a, b) => a.score - b.score)
+  return allies[0] ?? null
+}
+
+export interface ImpactFactor {
+  label: string
+  /** the player's value as text, e.g. "31 %" */
+  value: string
+  /** team average as text */
+  avg: string
+  /** points this factor added to (or took from) the score */
+  points: number
+}
+
+/**
+ * Why a player got their score: each factor of impactScores with the player's share vs an even
+ * share of the team, sorted by how much it moved the score.
+ */
+export function explainImpact(players: SummaryPlayer[], puuid: string): ImpactFactor[] {
+  const p = players.find((x) => x.puuid === puuid)
+  if (!p) return []
+  const team = players.filter((x) => x.ally === p.ally)
+  const sum = (f: (x: SummaryPlayer) => number) => team.reduce((s, x) => s + f(x), 0) || 1
+  const even = 1 / (team.length || 1)
+  const pct = (v: number) => `${Math.round(v * 100)} %`
+  const share = (f: (x: SummaryPlayer) => number) => f(p) / sum(f)
+  const kp = (p.kills + p.assists) / sum((x) => x.kills)
+  const f: ImpactFactor[] = [
+    { label: 'Damage to champions', value: pct(share((x) => x.damage)), avg: pct(even), points: 38 * (share((x) => x.damage) - even) },
+    { label: 'Deaths of the team', value: pct(share((x) => x.deaths)), avg: pct(even), points: -36 * (share((x) => x.deaths) - even) },
+    { label: 'Kill participation', value: pct(kp), avg: '50 %', points: 18 * (kp - 0.5) },
+    { label: 'Damage soaked', value: pct(share((x) => x.tanked)), avg: pct(even), points: 14 * (share((x) => x.tanked) - even) },
+    { label: 'Heals & shields on allies', value: pct(share((x) => x.support)), avg: pct(even), points: 12 * (share((x) => x.support) - even) }
+  ]
+  return f.sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
 }
 
 const clock = (s: number): string => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
@@ -174,9 +214,7 @@ export function buildSummary(
   // --- MVP & blame
   const allies = players.filter((p) => p.ally).sort((a, b) => b.score - a.score)
   const mvp = allies[0]?.puuid ?? null
-  const group = players.filter((p) => p.ally && (p.me || p.premade))
-  const pool = group.length > 1 ? group : players.filter((p) => p.ally)
-  const blame = win ? null : ([...pool].sort((a, b) => a.score - b.score)[0]?.puuid ?? null)
+  const blame = win ? null : (allies[allies.length - 1]?.puuid ?? null)
 
   // --- highlights
   const h: string[] = []

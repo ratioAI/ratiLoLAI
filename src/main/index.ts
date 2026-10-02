@@ -392,6 +392,7 @@ const lcu = new LcuManager({
       updateOverlay(s)
     },
     imported: (r) => emit('imported', r),
+    gameStarted: (gameId) => emit('journey', { seed: gameId }),
     summary: (s) => {
       diag.log(`game summary ready: ${s.gameId} (${s.win ? 'win' : 'loss'}, curve from ${s.curveSource})`)
       void games.save(s).then(() => emit('gameSummary', s))

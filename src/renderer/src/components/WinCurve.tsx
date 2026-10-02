@@ -12,7 +12,7 @@ const kfmt = (g: number): string => `${g > 0 ? '+' : g < 0 ? '−' : ''}${(Math.
  * Gold lead over time from your team's point of view – blue above the line (ahead), red below
  * (behind) – with every champion kill as a dot on the strip underneath. Hover for exact values.
  */
-export function WinCurve({ curve, kills, duration }: { curve: CurvePoint[]; kills: { t: number; ally: boolean }[]; duration: number }) {
+export function WinCurve({ curve, kills, duration, height = 220 }: { curve: CurvePoint[]; kills: { t: number; ally: boolean }[]; duration: number; height?: number }) {
   const box = useRef<HTMLDivElement>(null)
   const [w, setW] = useState(800)
   const [hover, setHover] = useState<number | null>(null)
@@ -26,7 +26,7 @@ export function WinCurve({ curve, kills, duration }: { curve: CurvePoint[]; kill
   }, [])
 
   if (curve.length < 2) return <p className="text-sm text-muted">No timeline for this game.</p>
-  const H = 220
+  const H = height
   const pad = { l: 48, r: 14, t: 12, b: 26 }
   const strip = 22
   const tMax = Math.max(duration, curve[curve.length - 1].t)

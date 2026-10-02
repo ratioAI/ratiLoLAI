@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSummary, impactScores, type RawGame } from '../src/shared/summary'
+import { buildSummary, explainImpact, impactScores, teamBlame, type RawGame } from '../src/shared/summary'
 
 const player = (i: number, team: number, k: number, d: number, a: number, dmg: number, win: boolean) => ({
   participantId: i,
@@ -35,14 +35,19 @@ describe('post-game summary', () => {
     expect(s[1]).toBeLessThan(40)
   })
 
-  it('finds the result, MVP, blame within the premade group and everyone’s augments', () => {
+  it('finds the result, MVP, blame across the whole team and everyone’s augments', () => {
     const s = buildSummary(game, null, 'p1', new Set(['p2']))
     expect(s.win).toBe(false)
     expect(s.players.filter((p) => p.ally)).toHaveLength(5)
     expect(s.players.find((p) => p.me)?.riotId).toBe('N1#EUW')
     expect(s.players.find((p) => p.puuid === 'p2')?.premade).toBe(true)
     expect(s.mvp).toBe('p2')
-    expect(s.blame).toBe('p1') // only you and your premade compete for the blame
+    expect(s.blame).toBe('p1') // weakest of the whole team
+    const old: typeof s = { ...s, blame: 'p2' }
+    expect(teamBlame(old)?.puuid).toBe('p1') // older summaries are re-evaluated
+    const why = explainImpact(s.players, 'p1')
+    expect(why[0].label).toMatch(/Deaths|Damage/)
+    expect(why.find((x) => x.label.startsWith('Deaths'))!.points).toBeLessThan(0)
     expect(s.players.find((p) => p.puuid === 'p7')?.augments).toEqual([1007])
     expect(s.curveSource).toBe('none')
   })
@@ -74,6 +79,6 @@ describe('post-game summary', () => {
       { t: 50, ally: true },
       { t: 55, ally: false }
     ])
-    expect(s.blame).toBe('p1') // alone: weakest of the team
+    expect(s.blame).toBe('p1') // weakest of the team
   })
 })

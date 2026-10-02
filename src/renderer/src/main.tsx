@@ -1,6 +1,6 @@
-import { StrictMode } from 'react'
+import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { HashRouter, Route, Routes } from 'react-router-dom'
+import { HashRouter, Route, Routes, useLocation } from 'react-router-dom'
 import '@fontsource/inter/400.css'
 import '@fontsource/inter/500.css'
 import '@fontsource/inter/600.css'
@@ -23,12 +23,41 @@ import { Settings } from './pages/Settings'
 import { Mayhem } from './pages/Mayhem'
 import { Overlay } from './pages/Overlay'
 import { TripBackground } from './components/TripBackground'
+import { CosmosBackground, cosmicSeed } from './components/CosmosBackground'
+import { api } from './lib/api'
 import { OverlayFrames } from './pages/OverlayFrames'
 import { OverlayMinimap } from './pages/OverlayMinimap'
 import { OverlayLoading } from './pages/OverlayLoading'
 
+/** Which galaxy we are in: the last game's id, a new one on every game start (→ wormhole jump). */
+function useCosmicSeed(): number {
+  const [seed, setSeed] = useState(() => {
+    try {
+      return Number(localStorage.getItem('rc.cosmos')) || cosmicSeed(Date.now() >> 20)
+    } catch {
+      return cosmicSeed(1)
+    }
+  })
+  useEffect(
+    () =>
+      api.on('journey', ({ seed: s }) => {
+        const v = cosmicSeed(s)
+        setSeed(v)
+        try {
+          localStorage.setItem('rc.cosmos', String(v))
+        } catch {
+          /* private mode */
+        }
+      }),
+    []
+  )
+  return seed
+}
+
 function Shell() {
   const { settings, live } = useApp()
+  const location = useLocation()
+  const seed = useCosmicSeed()
   const hash = window.location.hash
   if (hash.startsWith('#/overlay/panel')) return <Overlay part="panel" />
   if (hash.startsWith('#/overlay/frames')) return <OverlayFrames />
@@ -37,7 +66,11 @@ function Shell() {
   if (hash.startsWith('#/overlay')) return <Overlay />
   return (
     <>
-      <TripBackground mode={settings?.ui.background ?? 'animated'} inGame={!!live?.active} />
+      {location.pathname.startsWith('/games') ? (
+        <CosmosBackground seed={seed} mode={settings?.ui.background ?? 'animated'} inGame={!!live?.active} />
+      ) : (
+        <TripBackground mode={settings?.ui.background ?? 'animated'} inGame={!!live?.active} />
+      )}
       <MainShell />
     </>
   )

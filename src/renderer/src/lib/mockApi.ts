@@ -306,6 +306,8 @@ function demoProfile(d: StaticData, riotId: string): ProfileData {
 export function createMockApi(): RcApi {
   const listeners = new Map<string, Set<(p: unknown) => void>>()
   const emit = <K extends keyof RcEvents>(e: K, p: RcEvents[K]): void => listeners.get(e)?.forEach((cb) => cb(p))
+  // lets screenshot scripts fire app events in the web demo (e.g. the galaxy jump)
+  ;(window as unknown as { __rcEmit: typeof emit }).__rcEmit = emit
 
   let staticData: Promise<StaticData> | null = null
   const getStatic = (): Promise<StaticData> =>
@@ -485,7 +487,7 @@ export function createMockApi(): RcApi {
           win: s.win,
           championId: me.championId,
           kda: [me.kills, me.deaths, me.assists] as [number, number, number],
-          blamedPremade: s.players.find((p) => p.puuid === s.blame)?.riotId ?? null
+          blamedPremade: s.win ? null : (s.players.filter((p) => p.ally).sort((a, b) => a.score - b.score)[0]?.riotId ?? null)
         }
       ]
     },

@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { GameListEntry } from '@shared/types'
-import type { GameSummary } from '@shared/summary'
+import { teamBlame, type GameSummary } from '@shared/summary'
 
 /** Post-game summaries on disk (userData/games/<gameId>.json), newest 60 kept. */
 export class GameStore {
@@ -40,7 +40,7 @@ export class GameStore {
         win: s.win,
         championId: me?.championId ?? 0,
         kda: me ? [me.kills, me.deaths, me.assists] : [0, 0, 0],
-        blamedPremade: s.blame ? (s.players.find((p) => p.puuid === s.blame)?.riotId ?? null) : null
+        blamedPremade: teamBlame(s)?.riotId ?? null
       })
     }
     return out.sort((a, b) => b.createdAt - a.createdAt)

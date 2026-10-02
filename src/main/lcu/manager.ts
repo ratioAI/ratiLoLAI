@@ -42,6 +42,7 @@ export interface LcuManagerDeps {
     imported(r: ImportResult & { championId: number }): void
     loading(s: LoadingState | null): void
     summary(s: GameSummary): void
+    gameStarted(gameId: number): void
   }
   /** gold/kill lead recorded from the live data (fallback when the client has no timeline) */
   liveCurve(): CurvePoint[]
@@ -373,6 +374,7 @@ export class LcuManager {
         .then((s) => {
           this.gameQueueId = s?.gameData?.queue?.id ?? null
           this.currentGameId = s?.gameData?.gameId ?? null
+          if (this.currentGameId) this.deps.emit.gameStarted(this.currentGameId)
         })
         .catch(() => undefined)
       this.startLivePolling()

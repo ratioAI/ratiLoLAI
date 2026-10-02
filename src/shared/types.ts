@@ -684,6 +684,8 @@ export interface RcEvents {
   /** offer with card rects relative to the frames window (sent to that window only) */
   framesOffer: AugmentOffer | null
   augmentsOwned: number[]
+  /** a new game started – the Games page jumps to the next galaxy */
+  journey: { seed: number }
   /** a post-game summary is ready */
   gameSummary: GameSummary
   loading: LoadingState | null
