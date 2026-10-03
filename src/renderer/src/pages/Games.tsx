@@ -12,6 +12,7 @@ import { EmptyState, PageHeader } from '@/components/Layout'
 import { AugmentFrame } from '@/components/AugmentFrame'
 import { useMayhemData } from '@/components/mayhem'
 import { WinCurve } from '@/components/WinCurve'
+import { quips } from '@shared/quips'
 
 const MODE: Record<string, string> = { KIWI: 'ARAM: Mayhem', ARAM: 'ARAM', CLASSIC: "Summoner's Rift" }
 const ago = (t: number): string => {
@@ -64,7 +65,7 @@ export function Games() {
   )
 }
 
-function PlayerRow({ p, s, blame, tierOf }: { p: SummaryPlayer; s: GameSummary; blame: string | null; tierOf: TierOf }) {
+function PlayerRow({ p, s, blame, quip, tierOf }: { p: SummaryPlayer; s: GameSummary; blame: string | null; quip?: string; tierOf: TierOf }) {
   const { data: mayhem } = useMayhemData()
   const team = s.players.filter((x) => x.ally === p.ally)
   const maxDmg = Math.max(...team.map((x) => x.damage), 1)
@@ -95,14 +96,19 @@ function PlayerRow({ p, s, blame, tierOf }: { p: SummaryPlayer; s: GameSummary; 
         ))}
       </span>
       {/* every player's augments with the tier they have for that champion */}
-      <span className="ml-1 flex items-center gap-1.5 py-1">
+      <span className="ml-2 flex w-[164px] shrink-0 items-center gap-3 py-1.5">
         {p.augments.map((id) => {
           const a = mayhem?.augments[id]
           if (!a) return null
           const t = tierOf(p.championId, id)
-          return <AugmentFrame key={id} augment={a} tier={t?.tier ?? 'C'} size={22} note={t?.note ?? null} />
+          return <AugmentFrame key={id} augment={a} tier={t?.tier ?? 'C'} size={24} note={t?.note ?? null} />
         })}
       </span>
+      {quip && (
+        <span className="line-clamp-2 min-w-0 flex-1 pl-2 text-[12px] leading-snug text-[#cfc6ee] italic" title={quip}>
+          {quip}
+        </span>
+      )}
     </div>
   )
 }
@@ -139,7 +145,7 @@ function VerdictCard({ kind, p, s }: { kind: 'mvp' | 'blame'; p: SummaryPlayer; 
       style={{ border: `1px solid ${accent}80`, background: `${accent}14` }}
     >
       <div className="mb-1 flex items-center gap-2 text-[11px] font-bold tracking-wider uppercase" style={{ color: accent }}>
-        {mvp ? <Crown size={13} /> : <Skull size={13} />} {mvp ? 'MVP' : 'Most to blame'}
+        {mvp ? <Crown size={13} /> : <Skull size={13} />} {mvp ? 'MVP' : s.win ? 'Biggest troll' : 'Most to blame'}
         <Info size={12} className="ml-auto opacity-60" />
       </div>
       <div className="flex items-center gap-3">
@@ -156,7 +162,7 @@ function VerdictCard({ kind, p, s }: { kind: 'mvp' | 'blame'; p: SummaryPlayer; 
         className="pointer-events-none absolute top-full right-0 z-30 mt-2 w-[390px] translate-y-1 rounded-xl border border-white/15 bg-[#120b24]/97 p-3 text-xs opacity-0 shadow-2xl backdrop-blur transition duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus:translate-y-0 group-focus:opacity-100"
       >
         <div className="mb-2 font-semibold text-text">
-          {mvp ? 'Why MVP' : 'Why most to blame'} – compared with an even share of your team of {s.players.filter((x) => x.ally).length}
+          {mvp ? 'Why MVP' : s.win ? 'Why biggest troll' : 'Why most to blame'} – compared with an even share of your team of {s.players.filter((x) => x.ally).length}
         </div>
         <p className="mb-2.5 text-[13px] leading-snug text-text">{verdictText(why, mvp)}</p>
         <div className="space-y-1.5">
@@ -209,9 +215,10 @@ export function GameDetail() {
   if (s === undefined) return null
   if (!s) return <EmptyState title="Game not found" />
   const blame = teamBlame(s)
+  const lines = quips(s)
   const mvp = s.players.find((p) => p.puuid === s.mvp)
   return (
-    <div className="fade-in mx-auto max-w-6xl px-8 py-5">
+    <div className="fade-in mx-auto max-w-7xl px-8 py-5">
       <div className="mb-3 flex items-end gap-4">
         <h1 className={`font-display text-3xl font-extrabold ${s.win ? 'text-[#5fb4ff]' : 'text-[#ff7a62]'}`}>{s.win ? 'Victory' : 'Defeat'}</h1>
         <span className="pb-1 text-sm text-muted">
@@ -250,7 +257,7 @@ export function GameDetail() {
             {s.players
               .filter((p) => p.ally === ally)
               .map((p) => (
-                <PlayerRow key={p.puuid} p={p} s={s} blame={blame?.puuid ?? null} tierOf={tierOf} />
+                <PlayerRow key={p.puuid} p={p} s={s} blame={blame?.puuid ?? null} quip={lines[p.puuid]} tierOf={tierOf} />
               ))}
           </div>
         </div>

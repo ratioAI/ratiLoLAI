@@ -49,7 +49,7 @@ export interface GameSummary {
   curveSource: 'timeline' | 'live' | 'none'
   kills: { t: number; ally: boolean }[]
   mvp: string | null
-  /** lowest impact of your whole team in a loss */
+  /** lowest impact of your whole team ("most to blame" in a loss, "biggest troll" in a win) */
   blame: string | null
   highlights: string[]
 }
@@ -103,9 +103,8 @@ export function impactScores(team: Pick<SummaryPlayer, 'kills' | 'deaths' | 'ass
   })
 }
 
-/** Whole-team blame for any summary (also older ones saved with group-only blame). */
+/** Lowest impact of the whole own team, in wins too (also for older summaries saved differently). */
 export function teamBlame(s: Pick<GameSummary, 'win' | 'players'>): SummaryPlayer | null {
-  if (s.win) return null
   const allies = s.players.filter((p) => p.ally).sort((a, b) => a.score - b.score)
   return allies[0] ?? null
 }
@@ -214,7 +213,7 @@ export function buildSummary(
   // --- MVP & blame
   const allies = players.filter((p) => p.ally).sort((a, b) => b.score - a.score)
   const mvp = allies[0]?.puuid ?? null
-  const blame = win ? null : (allies[allies.length - 1]?.puuid ?? null)
+  const blame = allies.length > 1 ? (allies[allies.length - 1]?.puuid ?? null) : null
 
   // --- highlights
   const h: string[] = []

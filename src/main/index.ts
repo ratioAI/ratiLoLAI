@@ -176,6 +176,9 @@ const minimap = new MinimapWatcher(
 
 // --- loading screen panel (Mayhem / ARAM win rates of all players, Space to show/hide) ---
 let loadingHidden = false
+/** the galaxy of the current game – the loading screen shows the one the app jumped to */
+let cosmosSeed = Date.now()
+
 function refreshLoading(): void {
   const state = lcu.getLoading()
   const live = lcu.getLive()
@@ -189,7 +192,7 @@ function refreshLoading(): void {
     if (loadingHidden) overlay.hideLoading()
     else {
       overlay.showLoading(gameDisplay.get())
-      void overlay.loading.send('loading', state)
+      void overlay.loading.send('loading', { ...state, seed: cosmosSeed })
     }
   } else {
     overlay.holdKey(null)
@@ -392,7 +395,10 @@ const lcu = new LcuManager({
       updateOverlay(s)
     },
     imported: (r) => emit('imported', r),
-    gameStarted: (gameId) => emit('journey', { seed: gameId }),
+    matchAccepted: () => {
+      cosmosSeed = Date.now()
+      emit('journey', { seed: cosmosSeed })
+    },
     summary: (s) => {
       diag.log(`game summary ready: ${s.gameId} (${s.win ? 'win' : 'loss'}, curve from ${s.curveSource})`)
       void games.save(s).then(() => emit('gameSummary', s))

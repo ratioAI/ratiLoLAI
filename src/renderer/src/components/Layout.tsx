@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { Database, Gauge, History, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy } from 'lucide-react'
 import type { GameMode, UpdateState } from '@shared/types'
 import type { GameSummary } from '@shared/summary'
@@ -57,12 +57,12 @@ export function Wordmark({ className = '' }: { className?: string }) {
 export function Layout({ children }: { children: ReactNode }) {
   const { client, patches, patch, setPatch, crawler, mode, setMode } = useApp()
   const [update, setUpdate] = useState<UpdateState | null>(null)
-  const [summary, setSummary] = useState<GameSummary | null>(null)
+  const navigate = useNavigate()
   useEffect(() => {
     api.appInfo().then((i) => setUpdate(i.update))
-    const offs = [api.on('update', setUpdate), api.on('gameSummary', setSummary)]
+    const offs = [api.on('update', setUpdate), api.on('gameSummary', (g: GameSummary) => navigate(`/games/${g.gameId}`))]
     return () => offs.forEach((o) => o())
-  }, [])
+  }, [navigate])
   return (
     <div className="flex h-full">
       <aside className="flex w-[76px] shrink-0 flex-col items-center border-r border-line bg-bg-2 pt-3 pb-4">
@@ -149,20 +149,6 @@ export function Layout({ children }: { children: ReactNode }) {
           </span>
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
-        {summary && (
-          <div className="panel fixed right-5 bottom-5 z-50 flex items-center gap-3 p-3 pr-2 shadow-2xl">
-            <span className={`font-display font-extrabold ${summary.win ? 'text-[#5fb4ff]' : 'text-[#ff7a62]'}`}>
-              {summary.win ? 'Victory' : 'Defeat'}
-            </span>
-            <span className="text-sm text-muted">Game summary is ready</span>
-            <NavLink to={`/games/${summary.gameId}`} onClick={() => setSummary(null)} className="btn btn-primary px-3 py-1 text-xs">
-              Open
-            </NavLink>
-            <button onClick={() => setSummary(null)} className="px-1 text-muted hover:text-text" aria-label="Dismiss">
-              ×
-            </button>
-          </div>
-        )}
       </div>
     </div>
   )

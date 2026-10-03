@@ -42,7 +42,8 @@ export interface LcuManagerDeps {
     imported(r: ImportResult & { championId: number }): void
     loading(s: LoadingState | null): void
     summary(s: GameSummary): void
-    gameStarted(gameId: number): void
+    /** everyone accepted the match (ready check → champ select): time to travel to a new galaxy */
+    matchAccepted(): void
   }
   /** gold/kill lead recorded from the live data (fallback when the client has no timeline) */
   liveCurve(): CurvePoint[]
@@ -354,7 +355,11 @@ export class LcuManager {
     await Promise.all([worker(), worker(), worker()])
   }
 
+  private lastPhase = 'None'
+
   private onPhase(phase: string): void {
+    if (phase === 'ChampSelect' && this.lastPhase === 'ReadyCheck') this.deps.emit.matchAccepted()
+    this.lastPhase = phase
     if (['Lobby', 'Matchmaking', 'ReadyCheck', 'ChampSelect'].includes(phase)) void this.fetchParty()
     if (phase === 'InProgress') void this.fetchLoading()
     else if (this.loadingState) {
@@ -374,7 +379,6 @@ export class LcuManager {
         .then((s) => {
           this.gameQueueId = s?.gameData?.queue?.id ?? null
           this.currentGameId = s?.gameData?.gameId ?? null
-          if (this.currentGameId) this.deps.emit.gameStarted(this.currentGameId)
         })
         .catch(() => undefined)
       this.startLivePolling()

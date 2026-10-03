@@ -323,6 +323,8 @@ export interface LoadingPlayer {
 export interface LoadingState {
   mode: 'mayhem' | 'aram'
   players: LoadingPlayer[]
+  /** galaxy seed of this game (set by the main process) */
+  seed?: number
 }
 
 /** One finished game in the list of post-game summaries. */

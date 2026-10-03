@@ -487,7 +487,7 @@ export function createMockApi(): RcApi {
           win: s.win,
           championId: me.championId,
           kda: [me.kills, me.deaths, me.assists] as [number, number, number],
-          blamedPremade: s.win ? null : (s.players.filter((p) => p.ally).sort((a, b) => a.score - b.score)[0]?.riotId ?? null)
+          blamedPremade: s.players.filter((p) => p.ally).sort((a, b) => a.score - b.score)[0]?.riotId ?? null
         }
       ]
     },

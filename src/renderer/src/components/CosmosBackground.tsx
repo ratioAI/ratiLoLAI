@@ -194,7 +194,7 @@ void main(){
   vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;     // y in [-0.5, 0.5]
   float t = u_time;
   float w = u_warp;
-  float k = sin(3.14159 * w);                             // 0 → 1 → 0 over the jump
+  float k = smoothstep(0.0, 0.2, w) * smoothstep(1.0, 0.8, w); // dive in, travel, come out
 
   // flying into the centre while the jump builds up
   vec2 sp = p / (1.0 + k * 2.5);
@@ -215,27 +215,37 @@ void main(){
 
   // ---- wormhole jump: light streaks rushing outward, a lensing ring, a flash at the peak
   if (w > 0.0) {
-    // inside the wormhole: a twisting tube of lensed starlight, streaks rushing past, the light of
-    // the other side growing at the end of the tube
+    // the trip through the wormhole: a twisting tube of smeared, flowing light – colours melting
+    // into each other – streaks rushing past and the light of the other side at the end
     float r = length(p);
     float z = 0.22 / (r + 0.02);                                // depth along the tube
-    float ang = atan(p.y, p.x) + z * 0.35 * k + t * 0.4;       // the tube twists
+    float ang = atan(p.y, p.x) + z * 0.5 * k + t * 0.35;       // the tube twists
     float u = ang / 6.28318;
-    float v = z - t * 6.0;
-    float lane = floor(u * 140.0);
+    float v = z - t * 4.5;
+    // seamless around the tube: noise on a circle, moving with the depth
+    vec2 tc = vec2(cos(ang), sin(ang)) * 1.6 + vec2(v * 0.32, v * 0.21);
+    vec2 wq = vec2(fbm(tc + t * 0.25), fbm(tc + 5.2 - t * 0.2));
+    float flowv = fbm(tc * 1.3 + wq * 2.4);
+    float silk = pow(fbm(tc * 2.6 + wq * 3.2 + 1.7), 2.0);
+    vec3 wall = neb(flowv * 1.5 + u + w * 0.8) * smoothstep(0.3, 0.85, flowv) * 1.5;
+    wall += neb(flowv + 0.5 + w) * silk * 1.6;
+    wall *= smoothstep(0.0, 0.35, r) * (0.6 + 0.4 * sin(v * 0.8 + flowv * 6.0));
+    // streaks of starlight, tinted, smeared along the tube
+    float lane = floor(u * 160.0);
     float rnd = h11(lane + 3.0);
-    float sv = fract((z - t * 9.0 * (0.4 + rnd)) * 0.35 + rnd * 11.0);
-    float streak = smoothstep(0.0, 0.08, sv) * smoothstep(0.5, 0.08, sv) * step(0.55, h11(lane + 17.0));
-    vec3 sc = mix(vec3(0.5, 0.68, 1.0), vec3(1.0, 0.86, 0.72), rnd);
-    float wall = fbm(vec2(u * 10.0, v * 0.5)) * fbm(vec2(u * 23.0 + 4.0, v * 1.3));
-    vec3 tube = mix(neb(u + 0.2 * v * 0.05), vec3(0.9, 0.95, 1.0), 0.25) * wall * 1.4 * smoothstep(0.0, 0.3, r);
-    vec3 tunnel = tube + sc * streak * smoothstep(0.03, 0.3, r) * 0.9;
-    tunnel += vec3(0.75, 0.85, 1.0) * exp(-r * 9.0) * (0.4 + 1.2 * w);   // the exit
-    float ringR = 0.05 + 0.6 * w * w;                            // lensing ring sweeping outward
-    tunnel += vec3(0.8, 0.9, 1.0) * exp(-pow((r - ringR) / 0.01, 2.0)) * (1.0 - w) * 0.8;
-    col = mix(col, col * 0.2 + tunnel, smoothstep(0.05, 0.45, k));
-    col += vec3(0.80, 0.88, 1.0) * exp(-pow((w - 0.5) / 0.06, 2.0)) * 0.45;  // soft flash, not blinding
+    float sv = fract((z - t * 8.0 * (0.4 + rnd)) * 0.3 + rnd * 11.0);
+    float streak = smoothstep(0.0, 0.1, sv) * smoothstep(0.6, 0.1, sv) * step(0.6, h11(lane + 17.0));
+    float across = fract(u * 160.0);
+    streak *= smoothstep(0.0, 0.45, across) * smoothstep(1.0, 0.55, across); // soft edges, no wedges
+    vec3 sc = mix(neb(rnd * 3.0), vec3(1.0, 0.95, 0.9), 0.55);
+    vec3 tunnel = wall + sc * streak * smoothstep(0.03, 0.3, r) * 0.6;
+    tunnel += vec3(0.75, 0.85, 1.0) * exp(-r * 8.0) * (0.3 + 1.1 * w);   // the exit
+    float ringR = 0.04 + 0.7 * w * w;                            // lensing ring sweeping outward
+    tunnel += vec3(0.8, 0.9, 1.0) * exp(-pow((r - ringR) / 0.012, 2.0)) * (1.0 - w) * 0.6;
+    col = mix(col, col * 0.15 + tunnel, k);
+    col += vec3(0.80, 0.88, 1.0) * exp(-pow((w - 0.5) / 0.08, 2.0)) * 0.3;  // soft glow at the crossing
   }
+
 
   col = 1.0 - exp(-col * 1.25);                           // soft tone mapping
   col *= 0.75 + 0.25 * smoothstep(1.1, 0.2, length(p));   // vignette
@@ -243,7 +253,7 @@ void main(){
 }`
 
 const FPS = { animated: 24, calm: 10, static: 0 } as const
-const JUMP_MS = 4200
+export const JUMP_MS = 8000
 
 /** Numeric seed from any value (game id, string …). */
 export const cosmicSeed = (v: number | string): number => {
@@ -260,28 +270,35 @@ export function CosmosBackground({
   seed,
   mode,
   inGame,
-  jumpOnMount = false
+  jumpOnMount = false,
+  from,
+  animateChanges = true,
+  className = 'pointer-events-none fixed inset-0 -z-10 h-full w-full'
 }: {
   seed: number
   mode: Settings['ui']['background']
   inGame: boolean
-  /** start with the wormhole jump (loading screen: arriving at the next game) */
+  /** start with the wormhole jump (from `from`, or a random galaxy) */
   jumpOnMount?: boolean
+  from?: number
+  /** jump when `seed` changes – off when a full-window journey overlay does the jump instead */
+  animateChanges?: boolean
+  className?: string
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
   const effective: keyof typeof FPS = reduced ? 'static' : inGame && mode === 'animated' ? 'calm' : mode
   const target = useRef(seed)
   const jump = useRef<{ from: number; to: number; start: number } | null>(null)
-  const shown = useRef(jumpOnMount ? seed + 13.7 : seed)
+  const shown = useRef(jumpOnMount ? (from ?? seed + 13.7) : seed)
 
   // a new seed → jump (unless everything is still)
   useEffect(() => {
     if (seed === target.current && !jumpOnMount) return
     target.current = seed
-    if (effective === 'static') shown.current = seed
+    if (effective === 'static' || (!animateChanges && !jumpOnMount)) shown.current = seed
     else jump.current = { from: shown.current, to: seed, start: performance.now() }
-  }, [seed, effective, jumpOnMount])
+  }, [seed, effective, jumpOnMount, animateChanges])
 
   useEffect(() => {
     const canvas = ref.current
@@ -356,5 +373,5 @@ export function CosmosBackground({
     }
   }, [effective])
 
-  return <canvas key={effective} ref={ref} aria-hidden className="pointer-events-none fixed inset-0 -z-10 h-full w-full" />
+  return <canvas key={effective} ref={ref} aria-hidden className={className} />
 }

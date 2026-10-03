@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState } from 'react'
+import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter, Route, Routes, useLocation } from 'react-router-dom'
 import '@fontsource/inter/400.css'
@@ -23,14 +23,17 @@ import { Settings } from './pages/Settings'
 import { Mayhem } from './pages/Mayhem'
 import { Overlay } from './pages/Overlay'
 import { TripBackground } from './components/TripBackground'
-import { CosmosBackground, cosmicSeed } from './components/CosmosBackground'
+import { CosmosBackground, JUMP_MS, cosmicSeed } from './components/CosmosBackground'
 import { api } from './lib/api'
 import { OverlayFrames } from './pages/OverlayFrames'
 import { OverlayMinimap } from './pages/OverlayMinimap'
 import { OverlayLoading } from './pages/OverlayLoading'
 
-/** Which galaxy we are in: the last game's id, a new one on every game start (→ wormhole jump). */
-function useCosmicSeed(): number {
+/**
+ * Which galaxy we are in. A new one every time a match is accepted – then the whole window
+ * travels through a wormhole to it (`journey` holds the jump while it runs).
+ */
+function useCosmos(): { seed: number; journey: { from: number; to: number; key: number } | null } {
   const [seed, setSeed] = useState(() => {
     try {
       return Number(localStorage.getItem('rc.cosmos')) || cosmicSeed(Date.now() >> 20)
@@ -38,26 +41,62 @@ function useCosmicSeed(): number {
       return cosmicSeed(1)
     }
   })
-  useEffect(
-    () =>
-      api.on('journey', ({ seed: s }) => {
-        const v = cosmicSeed(s)
-        setSeed(v)
-        try {
-          localStorage.setItem('rc.cosmos', String(v))
-        } catch {
-          /* private mode */
-        }
-      }),
-    []
+  const [journey, setJourney] = useState<{ from: number; to: number; key: number } | null>(null)
+  const current = useRef(seed)
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const off = api.on('journey', ({ seed: s }) => {
+      const v = cosmicSeed(s)
+      setJourney({ from: current.current, to: v, key: Date.now() })
+      current.current = v
+      setSeed(v)
+      clearTimeout(timer)
+      timer = setTimeout(() => setJourney(null), JUMP_MS + 900)
+      try {
+        localStorage.setItem('rc.cosmos', String(v))
+      } catch {
+        /* private mode */
+      }
+    })
+    return () => {
+      off()
+      clearTimeout(timer)
+    }
+  }, [])
+  return { seed, journey }
+}
+
+/** The jump through the wormhole over the whole window; fades out when the new galaxy is reached. */
+function JourneyOverlay({ journey, mode }: { journey: { from: number; to: number; key: number }; mode: 'animated' | 'calm' | 'static' }) {
+  const [leaving, setLeaving] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setLeaving(true), JUMP_MS - 200)
+    return () => clearTimeout(t)
+  }, [])
+  return (
+    <div
+      className="pointer-events-none fixed inset-0 z-[200] transition-opacity duration-700"
+      style={{ opacity: leaving ? 0 : 1, animation: 'fade 0.6s ease-out' }}
+      aria-hidden
+    >
+      <CosmosBackground
+        key={journey.key}
+        seed={journey.to}
+        from={journey.from}
+        jumpOnMount
+        mode={mode === 'static' ? 'animated' : mode}
+        inGame={false}
+        className="h-full w-full"
+      />
+    </div>
   )
-  return seed
 }
 
 function Shell() {
   const { settings, live } = useApp()
   const location = useLocation()
-  const seed = useCosmicSeed()
+  const { seed, journey } = useCosmos()
+  const bg = settings?.ui.background ?? 'animated'
   const hash = window.location.hash
   if (hash.startsWith('#/overlay/panel')) return <Overlay part="panel" />
   if (hash.startsWith('#/overlay/frames')) return <OverlayFrames />
@@ -67,11 +106,12 @@ function Shell() {
   return (
     <>
       {location.pathname.startsWith('/games') ? (
-        <CosmosBackground seed={seed} mode={settings?.ui.background ?? 'animated'} inGame={!!live?.active} />
+        <CosmosBackground seed={seed} mode={bg} inGame={!!live?.active} animateChanges={false} />
       ) : (
         <TripBackground mode={settings?.ui.background ?? 'animated'} inGame={!!live?.active} />
       )}
       <MainShell />
+      {journey && bg !== 'static' && <JourneyOverlay key={journey.key} journey={journey} mode={bg} />}
     </>
   )
 }

@@ -83,12 +83,11 @@ export function OverlayLoading() {
   const enemies = state.players.filter((p) => !p.ally)
   return (
     <div className="fixed inset-1 overflow-hidden rounded-[22px] border border-white/15 shadow-2xl select-none" style={{ transform: 'translateZ(0)' }}>
-      {/* arriving at the next game: a wormhole jump into a new galaxy */}
+      {/* the galaxy the app jumped to when the match was accepted */}
       <CosmosBackground
-        seed={cosmicSeed(state.players.map((p) => p.puuid).join())}
+        seed={cosmicSeed(state.seed ?? state.players.map((p) => p.puuid).join())}
         mode={settings?.ui.background === 'static' ? 'static' : 'animated'}
         inGame={false}
-        jumpOnMount
       />
       <div className="relative flex h-full flex-col bg-black/25 p-4">
         <div className="mb-3 flex items-center gap-2.5">
