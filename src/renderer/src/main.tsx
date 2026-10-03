@@ -1,6 +1,6 @@
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { HashRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { HashRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import '@fontsource/inter/400.css'
 import '@fontsource/inter/500.css'
 import '@fontsource/inter/600.css'
@@ -33,7 +33,7 @@ import { OverlayLoading } from './pages/OverlayLoading'
  * Which galaxy we are in. A new one every time a match is accepted – then the whole window
  * travels through a wormhole to it (`journey` holds the jump while it runs).
  */
-function useCosmos(): { seed: number; journey: { from: number; to: number; key: number } | null } {
+function useCosmos(onArrive: () => void): { seed: number; journey: { from: number; to: number; key: number } | null } {
   const [seed, setSeed] = useState(() => {
     try {
       return Number(localStorage.getItem('rc.cosmos')) || cosmicSeed(Date.now() >> 20)
@@ -43,14 +43,20 @@ function useCosmos(): { seed: number; journey: { from: number; to: number; key: 
   })
   const [journey, setJourney] = useState<{ from: number; to: number; key: number } | null>(null)
   const current = useRef(seed)
+  const arriveRef = useRef(onArrive)
+  arriveRef.current = onArrive
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined
+    let arrive: ReturnType<typeof setTimeout> | undefined
     const off = api.on('journey', ({ seed: s }) => {
       const v = cosmicSeed(s)
       setJourney({ from: current.current, to: v, key: Date.now() })
       current.current = v
       setSeed(v)
       clearTimeout(timer)
+      clearTimeout(arrive)
+      // at the far end of the wormhole: the new game – switch to the Live tab under the overlay
+      arrive = setTimeout(() => arriveRef.current(), JUMP_MS * 0.6)
       timer = setTimeout(() => setJourney(null), JUMP_MS + 900)
       try {
         localStorage.setItem('rc.cosmos', String(v))
@@ -61,6 +67,7 @@ function useCosmos(): { seed: number; journey: { from: number; to: number; key: 
     return () => {
       off()
       clearTimeout(timer)
+      clearTimeout(arrive)
     }
   }, [])
   return { seed, journey }
@@ -95,7 +102,11 @@ function JourneyOverlay({ journey, mode }: { journey: { from: number; to: number
 function Shell() {
   const { settings, live } = useApp()
   const location = useLocation()
-  const { seed, journey } = useCosmos()
+  const navigate = useNavigate()
+  // overlay windows get the event too – only the main window changes tabs
+  const { seed, journey } = useCosmos(() => {
+    if (!window.location.hash.startsWith('#/overlay')) navigate('/live')
+  })
   const bg = settings?.ui.background ?? 'animated'
   const hash = window.location.hash
   if (hash.startsWith('#/overlay/panel')) return <Overlay part="panel" />
