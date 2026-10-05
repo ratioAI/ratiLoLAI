@@ -38,6 +38,14 @@ export class RiotClient {
     private readonly fetchImpl: FetchLike = fetch
   ) {}
 
+  /**
+   * A new key is a new application for Riot: its rate limits and any pause from a 429 of the old
+   * key no longer apply (and must not delay the first requests with the new key).
+   */
+  resetForNewKey(): void {
+    this.limiters.clear()
+  }
+
   private limiter(host: string): RateLimiter {
     let l = this.limiters.get(host)
     if (!l) this.limiters.set(host, (l = new RateLimiter()))

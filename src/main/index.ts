@@ -80,6 +80,28 @@ function emit<K extends keyof RcEvents>(event: K, payload: RcEvents[K]): void {
   if (OVERLAY_EVENTS.has(event)) overlay.broadcast(event, payload)
 }
 
+/**
+ * Checks the saved key against the Challenger league endpoint (available for every key type). A
+ * freshly (re)generated development key is sometimes rejected for a short moment until Riot has
+ * activated it everywhere – so 401/403 are retried for ~20 s before the key counts as bad.
+ */
+async function testApiKey(): Promise<{ ok: boolean; message: string }> {
+  const waits = [0, 2000, 4000, 6000, 8000]
+  let last: unknown = null
+  for (const ms of waits) {
+    if (ms) await new Promise((r) => setTimeout(r, ms))
+    try {
+      await riot.request(settings.get().platform, '/lol/league/v4/challengerleagues/by-queue/RANKED_SOLO_5x5')
+      return { ok: true, message: last ? 'API key saved and valid ✔ (Riot needed a moment to activate it)' : 'API key saved and valid ✔' }
+    } catch (e) {
+      last = e
+      const status = (e as { status?: number }).status
+      if (status !== 401 && status !== 403) break // only "not (yet) known" is worth waiting for
+    }
+  }
+  return { ok: false, message: `Key saved, but the test failed: ${(last as Error).message}` }
+}
+
 function loadRenderer(w: BrowserWindow, hash = ''): void {
   if (process.env.ELECTRON_RENDERER_URL) void w.loadURL(`${process.env.ELECTRON_RENDERER_URL}#${hash}`)
   else void w.loadFile(join(__dirname, '../renderer/index.html'), { hash })
@@ -487,13 +509,11 @@ function registerIpc(): void {
       return { ok: false, message: 'This does not look like a Riot API key (format: RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).' }
     }
     settings.setApiKey(clean)
-    try {
-      // the Challenger league endpoint is available for every key type (dev, personal, production)
-      await riot.request(settings.get().platform, '/lol/league/v4/challengerleagues/by-queue/RANKED_SOLO_5x5')
-      return { ok: true, message: 'API key saved and valid ✔' }
-    } catch (e) {
-      return { ok: false, message: `Key saved, but the test failed: ${(e as Error).message}` }
-    }
+    riot.resetForNewKey()
+    const result = await testApiKey()
+    diag.log(`API key saved – test: ${result.ok ? 'ok' : result.message}`)
+    if (result.ok) crawler.clearKeyError()
+    return result
   })
   handle('getPatches', (mode: GameMode) => store.patches(assertMode(mode)))
   handle('getTierList', (patch: string, mode: GameMode) => tierList(patch, assertMode(mode)))

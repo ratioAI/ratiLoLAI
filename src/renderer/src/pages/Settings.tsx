@@ -34,6 +34,7 @@ export function Settings() {
   const save = async (patch: Partial<Omit<SettingsT, 'hasApiKey'>>) => setSettings(await api.saveSettings(patch))
   const saveKey = async () => {
     setSaving(true)
+    setKeyMsg(null)
     const res = await api.setApiKey(key)
     setKeyMsg(res)
     setSettings(await api.getSettings())
@@ -68,7 +69,10 @@ export function Settings() {
             {key ? 'Save & test' : 'Remove key'}
           </button>
         </div>
-        {keyMsg && <p className={`mt-2 text-sm ${keyMsg.ok ? 'text-win' : 'text-loss'}`}>{keyMsg.message}</p>}
+        {saving && key && (
+          <p className="mt-2 text-sm text-muted">Testing the key … a freshly generated key can take Riot a few seconds to activate.</p>
+        )}
+        {!saving && keyMsg && <p className={`mt-2 text-sm ${keyMsg.ok ? 'text-win' : 'text-loss'}`}>{keyMsg.message}</p>}
         <button
           className="mt-3 inline-flex items-center gap-1 text-sm text-accent"
           onClick={() => api.openExternal('https://developer.riotgames.com/')}

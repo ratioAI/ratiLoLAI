@@ -50,6 +50,31 @@ describe('Crawler', () => {
     expect(crawler.getStatus().matchesThisRun).toBe(0)
   })
 
+  it('keeps matches whose fetch failed (expired key) for the next run and clears the old key error', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rc-key-'))
+    const store = new StatsStore(dir)
+    const ok = fakeRiot()
+    let keyValid = true
+    const fetch = async (url: string) => {
+      // the key expires right after the match list was loaded
+      if (new URL(url).pathname.includes('/matches/EUW1_')) keyValid = false
+      return keyValid ? ok(url) : new Response(JSON.stringify({ status: { message: 'Forbidden' } }), { status: 403 })
+    }
+    const crawler = new Crawler(new RiotClient(() => 'k', fetch), store, () => undefined, () => undefined)
+    const opts = { patch: '15.19', platforms: ['euw1'] as const, seedTiers: ['CHALLENGER'] as const, maxMatches: 100, matchesPerPlayer: 10, classify }
+    await crawler.start({ ...opts, platforms: [...opts.platforms], seedTiers: [...opts.seedTiers] })
+    expect(crawler.getStatus().phase).toBe('error')
+    expect((await new StatsStore(dir).load('15.19')).processed.has('EUW1_1')).toBe(false)
+
+    crawler.clearKeyError()
+    expect(crawler.getStatus()).toMatchObject({ phase: 'idle', lastError: null })
+
+    // with a working key the same matches are crawled
+    const again = new Crawler(new RiotClient(() => 'k', ok), new StatsStore(dir), () => undefined, () => undefined)
+    await again.start({ ...opts, platforms: [...opts.platforms], seedTiers: [...opts.seedTiers] })
+    expect(again.getStatus().matchesThisRun).toBe(3)
+  })
+
   it('compares patches numerically', () => {
     expect(comparePatch('15.9', '15.10')).toBeLessThan(0)
     expect(comparePatch('16.1', '15.24')).toBeGreaterThan(0)

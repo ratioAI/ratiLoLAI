@@ -79,6 +79,12 @@ export class Crawler {
     this.onStatus(this.getStatus())
   }
 
+  /** A new API key was saved: an error left over from the old key is no longer true. */
+  clearKeyError(): void {
+    if (this.status.running || this.status.phase !== 'error') return
+    this.update({ phase: 'idle', message: 'Ready – new API key saved', lastError: null })
+  }
+
   stop(): void {
     if (this.abort) {
       this.update({ phase: 'stopping', message: 'Stopping …' })
@@ -145,8 +151,10 @@ export class Crawler {
           for (const id of ids) {
             if (enough()) break
             if (stored.processed.has(id)) continue
-            stored.processed.add(id)
+            // only marked as done once it has been fetched: a request that fails (expired key,
+            // network) must not lose the match for the next run
             const match = await this.client.match(regional, id, signal)
+            stored.processed.add(id)
             if (!match) continue
             const matchPatch = patchOf(match.info.gameVersion)
             if (matchPatch !== opts.patch) {
