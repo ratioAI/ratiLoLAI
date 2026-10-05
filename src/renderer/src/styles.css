@@ -696,3 +696,17 @@ html.overlay-mode .btn-primary {
   animation-iteration-count: 1, infinite;
   animation-fill-mode: both, none;
 }
+
+/* "ratioAI approved": only S-tier augments picked */
+.ratio-approved {
+  color: #1a0d2c;
+  background-image: linear-gradient(100deg, #ff7ad9, #ffd36b 30%, #6fe8ff 60%, #b58bff 85%, #ff7ad9);
+  background-size: 200% 100%;
+  box-shadow: 0 0 14px -4px rgb(255 211 107 / 0.8);
+  animation: shimmer 4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ratio-approved {
+    animation: none;
+  }
+}

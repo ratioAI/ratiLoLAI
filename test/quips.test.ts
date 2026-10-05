@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { quips } from '../src/shared/quips'
+import { quips, ratioApproved } from '../src/shared/quips'
 import type { GameSummary, SummaryPlayer } from '../src/shared/summary'
 
 const pl = (id: string, ally: boolean, k: number, d: number, a: number, dmg: number, score: number): SummaryPlayer => ({
@@ -26,5 +26,32 @@ describe('player quips', () => {
     expect(q.a5).not.toEqual(quips(game(false)).a5) // MVP line depends on the result
     expect(q.a3.length).toBeGreaterThan(10) // the troll of a won game is named too
     for (const line of Object.values(q)) expect(line).not.toMatch(/undefined|NaN/)
+  })
+})
+
+describe('player quips – traits', () => {
+  // the case from a real game: lots of kills, little damage compared to the team, only S-tier augments
+  const g = game(true)
+  g.players[0] = pl('a1', true, 20, 16, 26, 57900, 51)
+  g.players[1] = pl('a2', true, 18, 14, 40, 184000, 62)
+  g.players[2] = pl('a3', true, 9, 22, 30, 120000, 38)
+  g.players[3] = pl('a4', true, 6, 15, 35, 95000, 47)
+  g.players[4] = pl('a5', true, 12, 13, 33, 140000, 55)
+  g.mvp = 'a2'
+
+  it('never calls a 20-kill game unremarkable and names the S-tier augments', () => {
+    const q = quips(g, { a1: ['S', 'S', 'S+', 'S'] })
+    expect(q.a1).not.toMatch(/Unauffällig|Statist|Durchschnitt/)
+    expect(q.a1).toMatch(/20 Kills|Kills/)
+    expect(q.a1).toMatch(/ratioAI/)
+  })
+
+  it('flags bad augment picks and recognises ratioAI-approved picks', () => {
+    expect(ratioApproved(['S', 'S+', 'S'])).toBe(true)
+    expect(ratioApproved(['S', 'A'])).toBe(false)
+    expect(ratioApproved(['S'])).toBe(false)
+    expect(ratioApproved(['S', undefined])).toBe(false)
+    const q = quips(g, { a4: ['D', 'B', 'A'] })
+    expect(q.a4).toMatch(/Augment/)
   })
 })

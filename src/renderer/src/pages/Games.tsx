@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Crown, History, Info, Skull } from 'lucide-react'
+import { Crown, History, Info, Skull, Sparkles } from 'lucide-react'
 import type { GameListEntry } from '@shared/types'
 import { explainImpact, teamBlame, type GameSummary, type SummaryPlayer } from '@shared/summary'
 import { augmentTiersForChampion } from '@shared/mayhem'
@@ -12,7 +12,7 @@ import { EmptyState, PageHeader } from '@/components/Layout'
 import { AugmentFrame } from '@/components/AugmentFrame'
 import { useMayhemData } from '@/components/mayhem'
 import { WinCurve } from '@/components/WinCurve'
-import { quips } from '@shared/quips'
+import { quips, ratioApproved } from '@shared/quips'
 
 const MODE: Record<string, string> = { KIWI: 'ARAM: Mayhem', ARAM: 'ARAM', CLASSIC: "Summoner's Rift" }
 const ago = (t: number): string => {
@@ -72,12 +72,14 @@ function PlayerRow({
   s,
   blame,
   quip,
+  approved,
   tierOf
 }: {
   p: SummaryPlayer
   s: GameSummary
   blame: string | null
   quip?: string
+  approved: boolean
   tierOf: TierOf
 }) {
   const { data: mayhem } = useMayhemData()
@@ -122,12 +124,28 @@ function PlayerRow({
           )
         })}
       </span>
+      {approved && <ApprovedBadge />}
       {quip && (
         <span className="line-clamp-2 min-w-0 flex-1 pl-2 text-[12px] leading-snug text-[#cfc6ee] italic" title={quip}>
           {quip}
         </span>
       )}
     </div>
+  )
+}
+
+/** Only S/S+ augments for the champion – as if the player had used ratioAI. */
+function ApprovedBadge() {
+  return (
+    <span
+      className="pop-in shrink-0"
+      style={{ animationDelay: '700ms' }}
+      title="Took only S-tier augments for this champion – as if they used ratioAI"
+    >
+      <span className="ratio-approved flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold tracking-wide whitespace-nowrap uppercase">
+        <Sparkles size={11} /> ratioAI approved
+      </span>
+    </span>
   )
 }
 
@@ -232,7 +250,8 @@ export function GameDetail() {
   if (s === undefined) return null
   if (!s) return <EmptyState title="Game not found" />
   const blame = teamBlame(s)
-  const lines = quips(s)
+  const augTiers = Object.fromEntries(s.players.map((p) => [p.puuid, p.augments.map((id) => tierOf(p.championId, id)?.tier)]))
+  const lines = quips(s, augTiers)
   const mvp = s.players.find((p) => p.puuid === s.mvp)
   return (
     <div className="page-enter mx-auto max-w-7xl px-8 py-5">
@@ -276,7 +295,15 @@ export function GameDetail() {
             {s.players
               .filter((p) => p.ally === ally)
               .map((p) => (
-                <PlayerRow key={p.puuid} p={p} s={s} blame={blame?.puuid ?? null} quip={lines[p.puuid]} tierOf={tierOf} />
+                <PlayerRow
+                  key={p.puuid}
+                  p={p}
+                  s={s}
+                  blame={blame?.puuid ?? null}
+                  quip={lines[p.puuid]}
+                  approved={ratioApproved(augTiers[p.puuid])}
+                  tierOf={tierOf}
+                />
               ))}
           </div>
         </div>
