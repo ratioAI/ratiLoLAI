@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Settings } from '@shared/types'
+import { useIdleRef } from '@/lib/useIdle'
 
 const VERT = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`
 
@@ -20,6 +21,8 @@ uniform vec2 u_res;
 uniform float u_time;
 uniform float u_seed;
 uniform float u_warp;
+uniform float u_trip;   // seconds inside the wormhole
+uniform float u_tseed;  // which voyage (order of the scenes)
 
 float h11(float p){ p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
 float h21(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -190,6 +193,116 @@ vec3 sky(vec2 p, float t, float seed){
   return col;
 }
 
+// ---------------------------------------------------------------------------------------------
+// The voyage through the wormhole: four scenes that melt into each other every ten seconds, in an
+// order that differs per trip – so a long loading screen never looks the same for long.
+// ---------------------------------------------------------------------------------------------
+
+// 1 · silk: a twisting tube of smeared, flowing colour with streaks of starlight
+vec3 silkTunnel(vec2 p, float t, float w, float k){
+  float r = length(p);
+  float z = 0.22 / (r + 0.02);
+  float ang = atan(p.y, p.x) + z * 0.5 * k + t * 0.35;
+  float u = ang / 6.28318;
+  float v = z - t * 4.5;
+  vec2 tc = vec2(cos(ang), sin(ang)) * 1.6 + vec2(v * 0.32, v * 0.21);   // seamless around the tube
+  vec2 wq = vec2(fbm(tc + t * 0.25), fbm(tc + 5.2 - t * 0.2));
+  float flowv = fbm(tc * 1.3 + wq * 2.4);
+  float silk = pow(fbm(tc * 2.6 + wq * 3.2 + 1.7), 2.0);
+  vec3 wall = neb(flowv * 1.5 + u + w * 0.8) * smoothstep(0.3, 0.85, flowv) * 1.5;
+  wall += neb(flowv + 0.5 + w) * silk * 1.6;
+  wall *= smoothstep(0.0, 0.35, r) * (0.6 + 0.4 * sin(v * 0.8 + flowv * 6.0));
+  float lane = floor(u * 160.0);
+  float rnd = h11(lane + 3.0);
+  float sv = fract((z - t * 8.0 * (0.4 + rnd)) * 0.3 + rnd * 11.0);
+  float streak = smoothstep(0.0, 0.1, sv) * smoothstep(0.6, 0.1, sv) * step(0.6, h11(lane + 17.0));
+  float across = fract(u * 160.0);
+  streak *= smoothstep(0.0, 0.45, across) * smoothstep(1.0, 0.55, across);
+  return wall + mix(neb(rnd * 3.0), vec3(1.0, 0.95, 0.9), 0.55) * streak * smoothstep(0.03, 0.3, r) * 0.6;
+}
+
+// 2 · nebula: flying through veils of glowing gas that rush past the camera
+vec3 nebulaFlight(vec2 p, float t){
+  vec3 c = vec3(0.0);
+  for (int i = 0; i < 5; i++) {
+    float fi = float(i);
+    float phase = t * 0.11 + fi / 5.0;
+    float z = fract(phase);                                  // 0 far away → 1 passing us
+    float sc = mix(5.0, 0.3, z * z);
+    vec2 q = rot(fi * 1.7 + t * 0.04) * p * sc + vec2(fi * 7.3, fi * 3.1) + floor(phase) * 13.0;
+    float d = fbm(q + fbm(q * 1.7 + fi) * 1.6);
+    float a = smoothstep(0.0, 0.3, z) * smoothstep(1.0, 0.7, z);
+    c += neb(fi * 0.27 + d * 0.9 + t * 0.015) * pow(d, 3.0) * 2.0 * a;
+  }
+  float r = length(p);
+  float an = atan(p.y, p.x) / 6.28318;
+  float lane = floor(an * 120.0);
+  float s = fract(0.28 / (r + 0.01) * 0.3 - t * (0.8 + h11(lane) * 1.2) + h11(lane + 2.0) * 9.0);
+  float st = smoothstep(0.0, 0.04, s) * smoothstep(0.25, 0.04, s) * step(0.82, h11(lane + 7.0));
+  st *= smoothstep(0.0, 0.4, fract(an * 120.0)) * smoothstep(1.0, 0.6, fract(an * 120.0));
+  return c + vec3(0.9, 0.94, 1.0) * st * smoothstep(0.05, 0.4, r) * 0.7;
+}
+
+// 3 · kaleidoscope: mirrored, endlessly zooming fractal light – the mushroom trip in space
+vec3 kaleido(vec2 p, float t){
+  float r = length(p);
+  float seg = 6.28318 / 6.0;
+  float a = abs(mod(atan(p.y, p.x) + t * 0.08, seg) - seg * 0.5);
+  vec2 q = vec2(a * 1.7, log(r + 0.002) * 1.3 - t * 0.55);
+  vec2 wq = vec2(fbm(q * 2.0 + t * 0.08), fbm(q * 2.0 + 3.1 - t * 0.05));
+  float f = fbm(q * 3.0 + wq * 2.6);
+  vec3 c = neb(f * 1.8 + r * 0.6 - t * 0.04) * smoothstep(0.35, 0.9, f) * 1.6;
+  c += neb(f + 0.5) * pow(fbm(q * 6.0 - wq * 3.0), 3.0) * 1.8;
+  return c * smoothstep(0.0, 0.25, r);
+}
+
+// 4 · star stream: hyperspace – three layers of star trails in different speeds and colours,
+// with faint gas swirling between them
+vec3 starStream(vec2 p, float t){
+  vec3 c = vec3(0.0);
+  float r = length(p);
+  float an = atan(p.y, p.x) / 6.28318 + 0.5;
+  float z = 0.3 / (r + 0.01);
+  for (int l = 0; l < 3; l++) {
+    float fl = float(l);
+    float lanes = 80.0 + fl * 70.0;
+    float lane = floor(an * lanes);
+    float rnd = h11(lane + fl * 31.0);
+    float across = fract(an * lanes);
+    float s = fract(z * 0.25 - t * (1.0 + rnd * 1.6) + rnd * 7.0);
+    float st = smoothstep(0.0, 0.05, s) * smoothstep(0.45, 0.05, s) * step(0.68, h11(lane + fl * 13.0 + 5.0));
+    st *= smoothstep(0.0, 0.4, across) * smoothstep(1.0, 0.6, across);
+    c += mix(neb(rnd * 2.0 + fl * 0.3), vec3(1.0), 0.45) * st * (0.55 + fl * 0.25);
+  }
+  vec2 tc = vec2(cos(an * 6.28318), sin(an * 6.28318)) * 1.3 + vec2(log(r + 0.01) * 1.5 - t * 0.9, 0.0);
+  c += neb(an * 2.0 + t * 0.04) * pow(fbm(tc * 2.0 + fbm(tc * 3.0)), 2.0) * 0.9;
+  return c * smoothstep(0.02, 0.25, r);
+}
+
+vec3 voyageScene(float id, vec2 p, float t, float w, float k){
+  if (id < 0.5) return silkTunnel(p, t, w, k);
+  if (id < 1.5) return nebulaFlight(p, t);
+  if (id < 2.5) return kaleido(p, t);
+  return starStream(p, t);
+}
+
+vec3 voyage(vec2 p, float t, float w, float k){
+  float L = 10.0;
+  float idx = floor(u_trip / L);
+  float off = floor(h11(u_tseed) * 4.0);
+  float step2 = h11(u_tseed + 1.0) < 0.5 ? 1.0 : 3.0;         // forwards or backwards through them
+  float a = mod(off + idx * step2, 4.0);
+  float b = mod(off + (idx + 1.0) * step2, 4.0);
+  float bl = smoothstep(L - 3.0, L, mod(u_trip, L));
+  vec3 c = voyageScene(a, p, t, w, k);
+  if (bl > 0.001) c = mix(c, voyageScene(b, p, t, w, k), bl);
+  float r = length(p);
+  c += vec3(0.75, 0.85, 1.0) * exp(-r * 8.0) * (0.3 + 1.1 * w);   // the light at the end
+  float ringR = 0.04 + 0.7 * w * w;                               // lensing ring sweeping outward
+  c += vec3(0.8, 0.9, 1.0) * exp(-pow((r - ringR) / 0.012, 2.0)) * (1.0 - w) * 0.6 * (1.0 - smoothstep(3.0, 5.0, u_trip));
+  return c;
+}
+
 void main(){
   vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;     // y in [-0.5, 0.5]
   float t = u_time;
@@ -215,36 +328,10 @@ void main(){
 
   // ---- wormhole jump: light streaks rushing outward, a lensing ring, a flash at the peak
   if (w > 0.0) {
-    // the trip through the wormhole: a twisting tube of smeared, flowing light – colours melting
-    // into each other – streaks rushing past and the light of the other side at the end
-    float r = length(p);
-    float z = 0.22 / (r + 0.02);                                // depth along the tube
-    float ang = atan(p.y, p.x) + z * 0.5 * k + t * 0.35;       // the tube twists
-    float u = ang / 6.28318;
-    float v = z - t * 4.5;
-    // seamless around the tube: noise on a circle, moving with the depth
-    vec2 tc = vec2(cos(ang), sin(ang)) * 1.6 + vec2(v * 0.32, v * 0.21);
-    vec2 wq = vec2(fbm(tc + t * 0.25), fbm(tc + 5.2 - t * 0.2));
-    float flowv = fbm(tc * 1.3 + wq * 2.4);
-    float silk = pow(fbm(tc * 2.6 + wq * 3.2 + 1.7), 2.0);
-    vec3 wall = neb(flowv * 1.5 + u + w * 0.8) * smoothstep(0.3, 0.85, flowv) * 1.5;
-    wall += neb(flowv + 0.5 + w) * silk * 1.6;
-    wall *= smoothstep(0.0, 0.35, r) * (0.6 + 0.4 * sin(v * 0.8 + flowv * 6.0));
-    // streaks of starlight, tinted, smeared along the tube
-    float lane = floor(u * 160.0);
-    float rnd = h11(lane + 3.0);
-    float sv = fract((z - t * 8.0 * (0.4 + rnd)) * 0.3 + rnd * 11.0);
-    float streak = smoothstep(0.0, 0.1, sv) * smoothstep(0.6, 0.1, sv) * step(0.6, h11(lane + 17.0));
-    float across = fract(u * 160.0);
-    streak *= smoothstep(0.0, 0.45, across) * smoothstep(1.0, 0.55, across); // soft edges, no wedges
-    vec3 sc = mix(neb(rnd * 3.0), vec3(1.0, 0.95, 0.9), 0.55);
-    vec3 tunnel = wall + sc * streak * smoothstep(0.03, 0.3, r) * 0.6;
-    tunnel += vec3(0.75, 0.85, 1.0) * exp(-r * 8.0) * (0.3 + 1.1 * w);   // the exit
-    float ringR = 0.04 + 0.7 * w * w;                            // lensing ring sweeping outward
-    tunnel += vec3(0.8, 0.9, 1.0) * exp(-pow((r - ringR) / 0.012, 2.0)) * (1.0 - w) * 0.6;
-    col = mix(col, col * 0.15 + tunnel, k);
+    col = mix(col, col * 0.15 + voyage(p, t, w, k), k);
     col += vec3(0.80, 0.88, 1.0) * exp(-pow((w - 0.5) / 0.08, 2.0)) * 0.3;  // soft glow at the crossing
   }
+
 
 
   col = 1.0 - exp(-col * 1.25);                           // soft tone mapping
@@ -254,6 +341,9 @@ void main(){
 
 const FPS = { animated: 24, calm: 10, static: 0 } as const
 export const JUMP_MS = 8000
+/** warp while holding inside the tunnel, and how long coming out of it takes */
+const HOLD = 0.32
+const EXIT_MS = 3800
 
 /** Numeric seed from any value (game id, string …). */
 export const cosmicSeed = (v: number | string): number => {
@@ -272,6 +362,8 @@ export function CosmosBackground({
   inGame,
   jumpOnMount = false,
   from,
+  travel = false,
+  arrive = false,
   animateChanges = true,
   className = 'pointer-events-none fixed inset-0 -z-10 h-full w-full'
 }: {
@@ -281,6 +373,9 @@ export function CosmosBackground({
   /** start with the wormhole jump (from `from`, or a random galaxy) */
   jumpOnMount?: boolean
   from?: number
+  /** stay inside the wormhole (loading screen) until `arrive` – then come out in the `seed` galaxy */
+  travel?: boolean
+  arrive?: boolean
   /** jump when `seed` changes – off when a full-window journey overlay does the jump instead */
   animateChanges?: boolean
   className?: string
@@ -288,9 +383,16 @@ export function CosmosBackground({
   const ref = useRef<HTMLCanvasElement>(null)
   const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
   const effective: keyof typeof FPS = reduced ? 'static' : inGame && mode === 'animated' ? 'calm' : mode
+  const idle = useIdleRef(inGame)
   const target = useRef(seed)
   const jump = useRef<{ from: number; to: number; start: number } | null>(null)
   const shown = useRef(jumpOnMount ? (from ?? seed + 13.7) : seed)
+  const voyage = useRef<{ start: number; exitAt: number | null } | null>(travel ? { start: performance.now(), exitAt: null } : null)
+  useEffect(() => {
+    if (travel && !voyage.current) voyage.current = { start: performance.now(), exitAt: null }
+    if (!travel) voyage.current = null
+    if (travel && arrive && voyage.current && voyage.current.exitAt === null) voyage.current.exitAt = performance.now()
+  }, [travel, arrive])
 
   // a new seed → jump (unless everything is still)
   useEffect(() => {
@@ -326,6 +428,8 @@ export function CosmosBackground({
     const uTime = gl.getUniformLocation(prog, 'u_time')
     const uSeed = gl.getUniformLocation(prog, 'u_seed')
     const uWarp = gl.getUniformLocation(prog, 'u_warp')
+    const uTrip = gl.getUniformLocation(prog, 'u_trip')
+    const uTseed = gl.getUniformLocation(prog, 'u_tseed')
 
     const SCALE = Math.min(1, (window.devicePixelRatio || 1) * 0.5)
     const resize = () => {
@@ -335,13 +439,30 @@ export function CosmosBackground({
     }
     const draw = (now: number) => {
       let warp = 0
+      let trip = 0
+      let tseed = shown.current
       const j = jump.current
-      if (j) {
+      const v = voyage.current
+      if (v) {
+        // loading screen: inside the tunnel as long as the game loads, then out into the galaxy
+        trip = (now - v.start) / 1000
+        tseed = target.current
+        shown.current = target.current
+        if (v.exitAt === null) warp = HOLD
+        else {
+          const x = (now - v.exitAt) / EXIT_MS
+          warp = x >= 1 ? 0 : HOLD + (1 - HOLD) * x
+        }
+      } else if (j) {
         const x = Math.min(1, (now - j.start) / JUMP_MS)
         warp = x
+        trip = (now - j.start) / 1000
+        tseed = j.to
         shown.current = x < 0.5 ? j.from : j.to
         if (x >= 1) jump.current = null
       }
+      gl.uniform1f(uTrip, trip)
+      gl.uniform1f(uTseed, tseed)
       gl.uniform2f(uRes, canvas.width, canvas.height)
       gl.uniform1f(uTime, now / 1000)
       gl.uniform1f(uSeed, shown.current)
@@ -355,8 +476,9 @@ export function CosmosBackground({
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop)
       // the jump always runs smoothly, the idle sky at the chosen rate
-      if (!jump.current && now - last < 1000 / (fps || 1) - 2) return
-      if (!jump.current && !fps && last) return
+      const moving = !!jump.current || !!voyage.current
+      if (!moving && now - last < 1000 / (fps || 1) - 2) return
+      if (!moving && (!fps || idle.current) && last) return
       last = now
       draw(now)
     }

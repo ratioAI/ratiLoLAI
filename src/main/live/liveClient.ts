@@ -6,22 +6,19 @@ const agent = new https.Agent({ rejectUnauthorized: false })
 /** Riot's official in-game Live Client Data API (only available while a game is running). */
 export function fetchAllGameData(): Promise<unknown | null> {
   return new Promise((resolve) => {
-    const req = https.get(
-      { host: '127.0.0.1', port: 2999, path: '/liveclientdata/allgamedata', agent, timeout: 2000 },
-      (res) => {
-        let raw = ''
-        res.setEncoding('utf8')
-        res.on('data', (c) => (raw += c))
-        res.on('end', () => {
-          if (res.statusCode !== 200) return resolve(null)
-          try {
-            resolve(JSON.parse(raw))
-          } catch {
-            resolve(null)
-          }
-        })
-      }
-    )
+    const req = https.get({ host: '127.0.0.1', port: 2999, path: '/liveclientdata/allgamedata', agent, timeout: 2000 }, (res) => {
+      let raw = ''
+      res.setEncoding('utf8')
+      res.on('data', (c) => (raw += c))
+      res.on('end', () => {
+        if (res.statusCode !== 200) return resolve(null)
+        try {
+          resolve(JSON.parse(raw))
+        } catch {
+          resolve(null)
+        }
+      })
+    })
     req.on('timeout', () => req.destroy())
     req.on('error', () => resolve(null))
   })

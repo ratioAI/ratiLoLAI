@@ -54,7 +54,9 @@ export class MayhemService {
     try {
       const [en, local, augments, combos, lists] = await Promise.all([
         json<CherryAugment[]>(`${CDRAGON}/default/v1/cherry-augments.json`),
-        locale === 'en_us' ? Promise.resolve(null) : json<CherryAugment[]>(`${CDRAGON}/${locale}/v1/cherry-augments.json`).catch(() => null),
+        locale === 'en_us'
+          ? Promise.resolve(null)
+          : json<CherryAugment[]>(`${CDRAGON}/${locale}/v1/cherry-augments.json`).catch(() => null),
         json<AmFile<AmAugmentRow>>(`${AM}/augments.json`).catch(() => null),
         json<AmFile<AmComboRow>>(`${AM}/combos.json`).catch(() => null),
         json<AugmentList[]>(`${CDRAGON}/default/v1/augment-lists.json`).catch(() => null)

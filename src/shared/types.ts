@@ -688,6 +688,8 @@ export interface RcEvents {
   augmentsOwned: number[]
   /** a new game started – the Games page jumps to the next galaxy */
   journey: { seed: number }
+  /** the game has loaded: the loading screen flies out of the wormhole, then closes */
+  loadingArrive: null
   /** a post-game summary is ready */
   gameSummary: GameSummary
   loading: LoadingState | null

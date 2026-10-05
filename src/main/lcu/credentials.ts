@@ -32,9 +32,7 @@ export const DEFAULT_LEAGUE_PATHS =
 
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 }, (err, stdout) =>
-      resolve(err ? '' : String(stdout))
-    )
+    execFile(cmd, args, { windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 }, (err, stdout) => resolve(err ? '' : String(stdout)))
   })
 }
 
@@ -44,7 +42,7 @@ async function fromProcessList(): Promise<LcuCredentials | null> {
     out = await run('powershell.exe', [
       '-NoProfile',
       '-Command',
-      "Get-CimInstance Win32_Process -Filter \"Name='LeagueClientUx.exe'\" | Select-Object -ExpandProperty CommandLine"
+      'Get-CimInstance Win32_Process -Filter "Name=\'LeagueClientUx.exe\'" | Select-Object -ExpandProperty CommandLine'
     ])
   } else if (process.platform === 'darwin') {
     out = await run('ps', ['-A', '-o', 'args'])

@@ -141,12 +141,7 @@ export class Crawler {
         while (!enough() && cursor < players.length) {
           const { platform, puuid } = players[cursor++]
           const regional = regionalOf(platform)
-          const ids = await this.client.matchIds(
-            regional,
-            puuid,
-            { queue, count: opts.matchesPerPlayer, startTime },
-            signal
-          )
+          const ids = await this.client.matchIds(regional, puuid, { queue, count: opts.matchesPerPlayer, startTime }, signal)
           for (const id of ids) {
             if (enough()) break
             if (stored.processed.has(id)) continue

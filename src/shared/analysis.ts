@@ -1,15 +1,4 @@
-import type {
-  ChampionBuild,
-  ChampionRoleStats,
-  Matchup,
-  Option,
-  PatchStats,
-  RunePage,
-  StatRole,
-  Tier,
-  TierEntry,
-  WG
-} from '@shared/types'
+import type { ChampionBuild, ChampionRoleStats, Matchup, Option, PatchStats, RunePage, StatRole, Tier, TierEntry, WG } from '@shared/types'
 import { GAME_MODES } from '@shared/types'
 
 /** Prior strength for the Bayesian win-rate estimate (virtual 50% games). */
@@ -137,7 +126,8 @@ export function buildChampionView(
   role: StatRole | undefined,
   tierList: TierEntry[]
 ): ChampionBuild | null {
-  const available = rolesOf(stats).map((r) => ({ role: r, games: stats.champions[`${championId}:${r}`]?.g ?? 0 }))
+  const available = rolesOf(stats)
+    .map((r) => ({ role: r, games: stats.champions[`${championId}:${r}`]?.g ?? 0 }))
     .filter((r) => r.games > 0)
     .sort((a, b) => b.games - a.games)
   if (!available.length) return null

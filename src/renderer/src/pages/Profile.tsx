@@ -39,7 +39,7 @@ export function Profile() {
   }
 
   return (
-    <div className="fade-in mx-auto max-w-6xl p-8">
+    <div className="page-enter mx-auto max-w-6xl p-8">
       <PageHeader title="Player profile" subtitle="Rank, match history and champion stats – like op.gg, just without ads">
         <form onSubmit={search} className="flex gap-2">
           <input className="input w-64" placeholder="Name#TAG" value={riotId} onChange={(e) => setRiotId(e.target.value)} />
@@ -198,7 +198,10 @@ function MatchRow({ m, puuid }: { m: MatchSummary; puuid: string }) {
   return (
     <div
       className="panel flex items-center gap-4 overflow-hidden border-l-4 p-3"
-      style={{ borderLeftColor: color, background: `linear-gradient(90deg, color-mix(in srgb, ${color} 7%, var(--color-panel)), var(--color-panel) 45%)` }}
+      style={{
+        borderLeftColor: color,
+        background: `linear-gradient(90deg, color-mix(in srgb, ${color} 7%, var(--color-panel)), var(--color-panel) 45%)`
+      }}
     >
       <div className="w-24 shrink-0 text-xs whitespace-nowrap">
         <div className="font-bold" style={{ color }}>

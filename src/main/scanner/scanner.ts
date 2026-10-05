@@ -78,6 +78,8 @@ export class AugmentScanner {
   private signature: number[][] | null = null
   private gameDisplay: number | null = null
   private lastRead = 0
+  /** unreadable reads in a row of the selection that is open */
+  private misreads = 0
   private readonly ocr: TitleOcr
   readonly schedule = new AugmentSchedule()
 
@@ -322,7 +324,10 @@ export class AugmentScanner {
             bgra[i] = bgra[i + 2]
             bgra[i + 2] = r
           }
-        await writeFile(join(this.snapshotDir, name), nativeImage.createFromBitmap(bgra, { width: img.width, height: img.height }).toJPEG(80))
+        await writeFile(
+          join(this.snapshotDir, name),
+          nativeImage.createFromBitmap(bgra, { width: img.width, height: img.height }).toJPEG(80)
+        )
         this.log(
           `no cards found for ${this.missStreak} looks – saved ${name} (${bitmap.width}×${bitmap.height}, brightness ${Math.round(meanBrightness(bitmap))}, frame/body % per card: ${m})`
         )
@@ -385,8 +390,14 @@ export class AugmentScanner {
       this.signature = sig
       this.lastRead = Date.now()
       const offer = await this.readDisplay(shot.display)
+      // one unreadable read while the same selection stays open (a tooltip, the cursor, an animation
+      // over a title) keeps the frames; only a second one in a row drops them – no flicker
+      if (!offer && this.state.offer && this.state.displayId === displayId && this.misreads++ < 1)
+        return { visible: true, offer: this.state.offer, displayId }
+      if (offer) this.misreads = 0
       return { visible: true, offer, displayId }
     }
+    this.misreads = 0
     return { visible: false, offer: null, displayId: null }
   }
 
@@ -412,9 +423,7 @@ export class AugmentScanner {
       return null
     }
     const offer = await this.read(bitmap, display)
-    this.log(
-      `OCR ${Date.now() - t0} ms: ${offer ? offer.cards.map((c) => `"${c.text}"→${c.augmentId ?? '?'}`).join(', ') : 'unreadable'}`
-    )
+    this.log(`OCR ${Date.now() - t0} ms: ${offer ? offer.cards.map((c) => `"${c.text}"→${c.augmentId ?? '?'}`).join(', ') : 'unreadable'}`)
     return offer
   }
 

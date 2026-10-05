@@ -2,13 +2,49 @@ import type { StaticData, StaticItem, StaticRune, StaticRuneTree, StaticSpell } 
 
 /** Stat shards are not part of runesReforged.json – they are hard-coded here. */
 export const STAT_SHARDS: StaticRune[] = [
-  { id: 5008, key: 'AdaptiveForce', name: 'Adaptive Force', icon: 'perk-images/StatMods/StatModsAdaptiveForceIcon.png', shortDesc: '+9 Adaptive Force' },
-  { id: 5005, key: 'AttackSpeed', name: 'Attack Speed', icon: 'perk-images/StatMods/StatModsAttackSpeedIcon.png', shortDesc: '+10% Attack Speed' },
-  { id: 5007, key: 'AbilityHaste', name: 'Ability Haste', icon: 'perk-images/StatMods/StatModsCDRScalingIcon.png', shortDesc: '+8 Ability Haste' },
-  { id: 5010, key: 'MoveSpeed', name: 'Move Speed', icon: 'perk-images/StatMods/StatModsMovementSpeedIcon.png', shortDesc: '+2% Move Speed' },
-  { id: 5001, key: 'HealthScaling', name: 'Health Scaling', icon: 'perk-images/StatMods/StatModsHealthPlusIcon.png', shortDesc: '+10-180 Health (lvl)' },
+  {
+    id: 5008,
+    key: 'AdaptiveForce',
+    name: 'Adaptive Force',
+    icon: 'perk-images/StatMods/StatModsAdaptiveForceIcon.png',
+    shortDesc: '+9 Adaptive Force'
+  },
+  {
+    id: 5005,
+    key: 'AttackSpeed',
+    name: 'Attack Speed',
+    icon: 'perk-images/StatMods/StatModsAttackSpeedIcon.png',
+    shortDesc: '+10% Attack Speed'
+  },
+  {
+    id: 5007,
+    key: 'AbilityHaste',
+    name: 'Ability Haste',
+    icon: 'perk-images/StatMods/StatModsCDRScalingIcon.png',
+    shortDesc: '+8 Ability Haste'
+  },
+  {
+    id: 5010,
+    key: 'MoveSpeed',
+    name: 'Move Speed',
+    icon: 'perk-images/StatMods/StatModsMovementSpeedIcon.png',
+    shortDesc: '+2% Move Speed'
+  },
+  {
+    id: 5001,
+    key: 'HealthScaling',
+    name: 'Health Scaling',
+    icon: 'perk-images/StatMods/StatModsHealthPlusIcon.png',
+    shortDesc: '+10-180 Health (lvl)'
+  },
   { id: 5011, key: 'Health', name: 'Health', icon: 'perk-images/StatMods/StatModsHealthScalingIcon.png', shortDesc: '+65 Health' },
-  { id: 5013, key: 'Tenacity', name: 'Tenacity & Slow Resist', icon: 'perk-images/StatMods/StatModsTenacityIcon.png', shortDesc: '+10% Tenacity and Slow Resist' },
+  {
+    id: 5013,
+    key: 'Tenacity',
+    name: 'Tenacity & Slow Resist',
+    icon: 'perk-images/StatMods/StatModsTenacityIcon.png',
+    shortDesc: '+10% Tenacity and Slow Resist'
+  },
   { id: 5002, key: 'Armor', name: 'Armor', icon: 'perk-images/StatMods/StatModsArmorIcon.png', shortDesc: '+6 Armor' },
   { id: 5003, key: 'MagicRes', name: 'Magic Resist', icon: 'perk-images/StatMods/StatModsMagicResIcon.png', shortDesc: '+8 Magic Resist' }
 ]
@@ -134,11 +170,7 @@ function stripTags(html: string): string {
 export const DDRAGON = 'https://ddragon.leagueoflegends.com'
 
 /** Downloads the four Data Dragon files needed by the app and converts them to StaticData. */
-export async function loadStaticData(
-  getJson: <T>(path: string) => Promise<T>,
-  version: string,
-  language: string
-): Promise<StaticData> {
+export async function loadStaticData(getJson: <T>(path: string) => Promise<T>, version: string, language: string): Promise<StaticData> {
   const base = `/cdn/${version}/data/${language}`
   const [champs, items, runes, spells] = await Promise.all([
     getJson<{ data: Record<string, RawChampion> }>(`${base}/champion.json`),

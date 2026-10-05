@@ -102,9 +102,7 @@ export function Layout({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="drag flex h-10 shrink-0 items-center gap-4 border-b border-line pr-40 pl-5 text-xs">
           <Wordmark className="text-[15px] text-text" />
-          {isDemo && (
-            <span className="rounded-md bg-gold/15 px-2 py-0.5 font-semibold text-gold">Web demo · synthetic data</span>
-          )}
+          {isDemo && <span className="rounded-md bg-gold/15 px-2 py-0.5 font-semibold text-gold">Web demo · synthetic data</span>}
           <div className="flex-1" />
           {update?.status === 'ready' && (
             <button className="no-drag rounded-md bg-accent/15 px-2 py-0.5 font-semibold text-accent" onClick={() => api.installUpdate()}>
@@ -145,7 +143,11 @@ export function Layout({ children }: { children: ReactNode }) {
           </label>
           <span className="flex items-center gap-2 text-muted">
             <span className={`h-2 w-2 rounded-full ${client.connected ? 'bg-win' : 'bg-loss/70'}`} />
-            {client.connected ? (client.summoner ? `${client.summoner.gameName}#${client.summoner.tagLine}` : 'Client connected') : 'Client offline'}
+            {client.connected
+              ? client.summoner
+                ? `${client.summoner.gameName}#${client.summoner.tagLine}`
+                : 'Client connected'
+              : 'Client offline'}
           </span>
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>

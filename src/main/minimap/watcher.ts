@@ -72,7 +72,9 @@ export class MinimapWatcher {
     // (Butcher's Bridge, Koeshin's Crossing) put them elsewhere
     if (live.mapNumber !== this.loggedMap) {
       this.loggedMap = live.mapNumber ?? null
-      this.log(`map ${live.mapNumber ?? '?'}${live.mapNumber != null && live.mapNumber !== 12 ? ' – relic timers off (pads unknown on this map)' : ''}`)
+      this.log(
+        `map ${live.mapNumber ?? '?'}${live.mapNumber != null && live.mapNumber !== 12 ? ' – relic timers off (pads unknown on this map)' : ''}`
+      )
     }
     const knownMap = live.mapNumber == null || live.mapNumber === 12
     this.relicsOn = knownMap
@@ -100,7 +102,10 @@ export class MinimapWatcher {
       })
       const frames = await this.capture.grab(d, regions)
       if (!frames) return
-      const taken = this.relics.observe(this.now(), frames.map((f) => relicSeen(f)))
+      const taken = this.relics.observe(
+        this.now(),
+        frames.map((f) => relicSeen(f))
+      )
       if (taken.length) this.log(`relic taken: ${taken.join(', ')} at ${Math.round(this.now())} s`)
       this.publish()
     } finally {

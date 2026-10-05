@@ -29,14 +29,14 @@ export function Games() {
     return api.on('gameSummary', load)
   }, [])
   return (
-    <div className="fade-in mx-auto max-w-6xl p-8">
+    <div className="page-enter mx-auto max-w-6xl p-8">
       <PageHeader title="Games" subtitle="Summary, gold curve and impact of every player – saved after each game" />
       {!list?.length ? (
         <EmptyState icon={<History size={28} />} title="No games yet">
           Play a game with ratioAI running – its summary appears here as soon as the client has the results.
         </EmptyState>
       ) : (
-        <div className="space-y-2">
+        <div className="stagger space-y-2">
           {list.map((g) => (
             <Link
               key={g.gameId}
@@ -45,7 +45,9 @@ export function Games() {
               style={{ borderLeft: `3px solid ${g.win ? '#2f95dc' : '#e2553f'}` }}
             >
               <ChampIcon id={g.championId} size={40} tooltip={false} />
-              <span className={`w-20 font-display font-extrabold ${g.win ? 'text-[#5fb4ff]' : 'text-[#ff7a62]'}`}>{g.win ? 'Victory' : 'Defeat'}</span>
+              <span className={`w-20 font-display font-extrabold ${g.win ? 'text-[#5fb4ff]' : 'text-[#ff7a62]'}`}>
+                {g.win ? 'Victory' : 'Defeat'}
+              </span>
               <span className="w-28 text-sm text-muted">{MODE[g.mode] ?? g.mode}</span>
               <span className="w-24 font-semibold tabular-nums">
                 {g.kda[0]}/<span className="text-loss">{g.kda[1]}</span>/{g.kda[2]}
@@ -65,7 +67,19 @@ export function Games() {
   )
 }
 
-function PlayerRow({ p, s, blame, quip, tierOf }: { p: SummaryPlayer; s: GameSummary; blame: string | null; quip?: string; tierOf: TierOf }) {
+function PlayerRow({
+  p,
+  s,
+  blame,
+  quip,
+  tierOf
+}: {
+  p: SummaryPlayer
+  s: GameSummary
+  blame: string | null
+  quip?: string
+  tierOf: TierOf
+}) {
   const { data: mayhem } = useMayhemData()
   const team = s.players.filter((x) => x.ally === p.ally)
   const maxDmg = Math.max(...team.map((x) => x.damage), 1)
@@ -83,7 +97,7 @@ function PlayerRow({ p, s, blame, quip, tierOf }: { p: SummaryPlayer; s: GameSum
       </span>
       <span className="flex w-28 items-center gap-1.5" title="Damage to champions">
         <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
-          <span className="block h-full rounded-full bg-[#b58bff]" style={{ width: `${(p.damage / maxDmg) * 100}%` }} />
+          <span className="bar-grow block h-full rounded-full bg-[#b58bff]" style={{ width: `${(p.damage / maxDmg) * 100}%` }} />
         </span>
         <span className="w-10 text-right text-xs tabular-nums text-muted">{(p.damage / 1000).toFixed(1)}k</span>
       </span>
@@ -97,11 +111,15 @@ function PlayerRow({ p, s, blame, quip, tierOf }: { p: SummaryPlayer; s: GameSum
       </span>
       {/* every player's augments with the tier they have for that champion */}
       <span className="ml-2 flex w-[164px] shrink-0 items-center gap-3 py-1.5">
-        {p.augments.map((id) => {
+        {p.augments.map((id, i) => {
           const a = mayhem?.augments[id]
           if (!a) return null
           const t = tierOf(p.championId, id)
-          return <AugmentFrame key={id} augment={a} tier={t?.tier ?? 'C'} size={24} note={t?.note ?? null} />
+          return (
+            <span key={id} className="pop-in" style={{ animationDelay: `${300 + i * 90}ms` }}>
+              <AugmentFrame augment={a} tier={t?.tier ?? 'C'} size={24} note={t?.note ?? null} />
+            </span>
+          )
         })}
       </span>
       {quip && (
@@ -158,11 +176,10 @@ function VerdictCard({ kind, p, s }: { kind: 'mvp' | 'blame'; p: SummaryPlayer; 
         </div>
       </div>
       {/* explanation popover */}
-      <div
-        className="pointer-events-none absolute top-full right-0 z-30 mt-2 w-[390px] translate-y-1 rounded-xl border border-white/15 bg-[#120b24]/97 p-3 text-xs opacity-0 shadow-2xl backdrop-blur transition duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus:translate-y-0 group-focus:opacity-100"
-      >
+      <div className="pointer-events-none absolute top-full right-0 z-30 mt-2 w-[390px] translate-y-1 rounded-xl border border-white/15 bg-[#120b24]/97 p-3 text-xs opacity-0 shadow-2xl backdrop-blur transition duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus:translate-y-0 group-focus:opacity-100">
         <div className="mb-2 font-semibold text-text">
-          {mvp ? 'Why MVP' : s.win ? 'Why biggest troll' : 'Why most to blame'} – compared with an even share of your team of {s.players.filter((x) => x.ally).length}
+          {mvp ? 'Why MVP' : s.win ? 'Why biggest troll' : 'Why most to blame'} – compared with an even share of your team of{' '}
+          {s.players.filter((x) => x.ally).length}
         </div>
         <p className="mb-2.5 text-[13px] leading-snug text-text">{verdictText(why, mvp)}</p>
         <div className="space-y-1.5">
@@ -189,8 +206,8 @@ function VerdictCard({ kind, p, s }: { kind: 'mvp' | 'blame'; p: SummaryPlayer; 
           })}
         </div>
         <p className="mt-2.5 border-t border-white/10 pt-2 leading-snug text-muted">
-          Score = 50 + these points (clamped 0–100). {mvp ? 'Highest' : 'Lowest'} score of all {s.players.filter((x) => x.ally).length} players
-          on your team – a heuristic for fun, not a verdict.
+          Score = 50 + these points (clamped 0–100). {mvp ? 'Highest' : 'Lowest'} score of all {s.players.filter((x) => x.ally).length}{' '}
+          players on your team – a heuristic for fun, not a verdict.
         </p>
       </div>
     </div>
@@ -218,9 +235,11 @@ export function GameDetail() {
   const lines = quips(s)
   const mvp = s.players.find((p) => p.puuid === s.mvp)
   return (
-    <div className="fade-in mx-auto max-w-7xl px-8 py-5">
+    <div className="page-enter mx-auto max-w-7xl px-8 py-5">
       <div className="mb-3 flex items-end gap-4">
-        <h1 className={`font-display text-3xl font-extrabold ${s.win ? 'text-[#5fb4ff]' : 'text-[#ff7a62]'}`}>{s.win ? 'Victory' : 'Defeat'}</h1>
+        <h1 className={`font-display text-3xl font-extrabold ${s.win ? 'text-[#5fb4ff]' : 'text-[#ff7a62]'}`}>
+          {s.win ? 'Victory' : 'Defeat'}
+        </h1>
         <span className="pb-1 text-sm text-muted">
           {MODE[s.mode] ?? s.mode} · {duration(s.duration)} · {new Date(s.createdAt).toLocaleString()}
         </span>
@@ -229,7 +248,7 @@ export function GameDetail() {
         </Link>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
+      <div className="stagger grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="panel px-4 pt-3 pb-2">
           <h2 className="mb-1 text-xs font-bold text-muted uppercase">Win / loss curve – gold lead of your team</h2>
           <WinCurve curve={s.curve} kills={s.kills} duration={s.duration} height={150} />
@@ -253,7 +272,7 @@ export function GameDetail() {
           <h2 className="mb-1 text-xs font-bold uppercase" style={{ color: ally ? '#5fb4ff' : '#ff7a62' }}>
             {ally ? 'Your team' : 'Enemy team'}
           </h2>
-          <div>
+          <div className="stagger">
             {s.players
               .filter((p) => p.ally === ally)
               .map((p) => (

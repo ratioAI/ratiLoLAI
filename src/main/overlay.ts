@@ -86,6 +86,11 @@ class OverlayWindow {
     if (this.win && !this.win.isDestroyed()) this.win.webContents.send('rc:event', event, payload)
   }
 
+  /** Sends only if the window already exists and has loaded (a broadcast never creates a window). */
+  sendIfOpen<K extends keyof RcEvents>(event: K, payload: RcEvents[K]): void {
+    if (this.win && !this.win.isDestroyed() && !this.win.webContents.isLoading()) this.win.webContents.send('rc:event', event, payload)
+  }
+
   destroy(): void {
     this.win?.destroy()
     this.win = null
@@ -108,7 +113,11 @@ export class OverlayManager {
   private previewTimer: NodeJS.Timeout | null = null
   private displayId: number | null = null
 
-  constructor(preload: string, load: (win: BrowserWindow, hash: string) => void, private readonly onToggle: () => void) {
+  constructor(
+    preload: string,
+    load: (win: BrowserWindow, hash: string) => void,
+    private readonly onToggle: () => void
+  ) {
     this.panel = new OverlayWindow('panel', preload, load, '/overlay/panel')
     this.frames = new OverlayWindow('frames', preload, load, '/overlay/frames')
     this.minimap = new OverlayWindow('minimap', preload, load, `/overlay/minimap?m=${MINIMAP_MARGIN}`)
@@ -263,6 +272,11 @@ export class OverlayManager {
     } catch {
       /* invalid accelerator */
     }
+  }
+
+  /** An app-wide event for all overlay windows that exist. */
+  broadcast<K extends keyof RcEvents>(event: K, payload: RcEvents[K]): void {
+    for (const w of [this.panel, this.frames, this.minimap, this.loading]) w.sendIfOpen(event, payload)
   }
 
   get anyVisible(): boolean {

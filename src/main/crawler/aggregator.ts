@@ -84,11 +84,7 @@ export interface PurchaseTimeline {
  * Replays the timeline events of one participant and returns the purchase order,
  * honouring ITEM_UNDO so that refunded items don't pollute the statistics.
  */
-export function replayParticipant(
-  events: TimelineEvent[],
-  participantId: number,
-  classify: ItemClassifier
-): PurchaseTimeline {
+export function replayParticipant(events: TimelineEvent[], participantId: number, classify: ItemClassifier): PurchaseTimeline {
   const purchases: { itemId: number; t: number }[] = []
   let skills = ''
 
@@ -164,12 +160,7 @@ export function isRemake(match: MatchDTO): boolean {
  * Adds one ranked match (and optionally its timeline) to the patch statistics.
  * Returns false if the match was not counted (remake, wrong patch, missing roles).
  */
-export function aggregateMatch(
-  stats: PatchStats,
-  match: MatchDTO,
-  timeline: TimelineDTO | null,
-  classify: ItemClassifier
-): boolean {
+export function aggregateMatch(stats: PatchStats, match: MatchDTO, timeline: TimelineDTO | null, classify: ItemClassifier): boolean {
   if (patchOf(match.info.gameVersion) !== stats.patch) return false
   if (isRemake(match)) return false
   const parts = match.info.participants

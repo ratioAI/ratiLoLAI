@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import type { LoadingPlayer, LoadingState } from '@shared/types'
 import { api } from '@/lib/api'
@@ -70,26 +70,33 @@ function Row({ p }: { p: LoadingPlayer }) {
 export function OverlayLoading() {
   const { settings } = useApp()
   const [state, setState] = useState<LoadingState | null>(null)
+  const [arrived, setArrived] = useState<number | null>(null)
 
   useEffect(() => {
     document.documentElement.classList.add('overlay-mode')
     // '#/overlay/loading?demo' – example data for screenshots / the web demo
     if (window.location.hash.includes('demo')) setState(DEMO)
-    return api.on('loading', setState)
+    const offs = [api.on('loading', setState), api.on('loadingArrive', () => setArrived(seedRef.current))]
+    return () => offs.forEach((o) => o())
   }, [])
 
+  const seed = state ? cosmicSeed(state.seed ?? state.players.map((p) => p.puuid).join()) : 0
+  const seedRef = useRef(seed)
+  seedRef.current = seed
   if (!state) return null
+  const arriving = arrived === seed
+  const still = settings?.ui.background === 'static'
   const allies = state.players.filter((p) => p.ally)
   const enemies = state.players.filter((p) => !p.ally)
   return (
-    <div className="fixed inset-1 overflow-hidden rounded-[22px] border border-white/15 shadow-2xl select-none" style={{ transform: 'translateZ(0)' }}>
-      {/* the galaxy the app jumped to when the match was accepted */}
-      <CosmosBackground
-        seed={cosmicSeed(state.seed ?? state.players.map((p) => p.puuid).join())}
-        mode={settings?.ui.background === 'static' ? 'static' : 'animated'}
-        inGame={false}
-      />
-      <div className="relative flex h-full flex-col bg-black/25 p-4">
+    <div
+      className="fixed inset-1 overflow-hidden rounded-[22px] border border-white/15 shadow-2xl select-none"
+      style={{ transform: 'translateZ(0)' }}
+    >
+      {/* flying through the wormhole while the game loads (a new voyage per game), and out into
+          the galaxy the app jumped to when the match was accepted once it has loaded */}
+      <CosmosBackground key={seed} seed={seed} mode={still ? 'static' : 'animated'} inGame={false} travel={!still} arrive={arriving} />
+      <div className="relative flex h-full flex-col bg-black/25 p-4 transition-opacity duration-1000" style={{ opacity: arriving ? 0 : 1 }}>
         <div className="mb-3 flex items-center gap-2.5">
           <Logo size={24} />
           <span className="font-display text-lg font-extrabold">

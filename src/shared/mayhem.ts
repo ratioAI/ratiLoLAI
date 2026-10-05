@@ -134,7 +134,10 @@ export function buildMayhemData(
   }
 
   for (const row of augments?.rows ?? []) {
-    const c = nameKeys(row.name.en ?? '').map((k) => byName.get(k)).find(Boolean) ?? byName.get(norm(row.augmentId))
+    const c =
+      nameKeys(row.name.en ?? '')
+        .map((k) => byName.get(k))
+        .find(Boolean) ?? byName.get(norm(row.augmentId))
     if (c) add(c, row.augmentId, row)
   }
   // every augment of the Mayhem pool, even without pick-rate data
@@ -144,7 +147,9 @@ export function buildMayhemData(
 
   const resolveSlug = (slug: string): number | null => {
     if (bySlug.has(slug)) return bySlug.get(slug)!
-    const c = nameKeys(slug.replace(/_/g, ' ')).map((k) => byName.get(k)).find(Boolean)
+    const c = nameKeys(slug.replace(/_/g, ' '))
+      .map((k) => byName.get(k))
+      .find(Boolean)
     return c ? add(c, slug) : null
   }
 
@@ -178,7 +183,9 @@ export function combosForChampion(data: MayhemData, statics: StaticData, champio
   if (!champ) return []
   const keys = new Set([norm(champ.id), norm(champ.name)])
   const rank = (c: MayhemCombo): number => (c.types.length ? Math.min(...c.types.map((t) => TYPE_ORDER.indexOf(t))) : 50)
-  return data.combos.filter((c) => keys.has(norm(c.championAlias))).sort((a, b) => rank(a) - rank(b) || a.augments.length - b.augments.length)
+  return data.combos
+    .filter((c) => keys.has(norm(c.championAlias)))
+    .sort((a, b) => rank(a) - rank(b) || a.augments.length - b.augments.length)
 }
 
 /** Most picked augments per rarity (global, all champions). */
@@ -264,10 +271,7 @@ export function augmentTiersForChampion(data: MayhemData, statics: StaticData, c
       else if (!fitTags.includes('any') && TIERS.indexOf(tier) >= 2) tier = shift(tier, -1)
       return { augment, tier, note, source: 'rating' as const, fits }
     })
-    .sort(
-      (a, b) =>
-        TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || (b.augment.pickRate ?? 0) - (a.augment.pickRate ?? 0)
-    )
+    .sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || (b.augment.pickRate ?? 0) - (a.augment.pickRate ?? 0))
 }
 
 // ---------------------------------------------------------------------------
@@ -289,9 +293,7 @@ export function synergyFor(combos: MayhemCombo[], owned: number[], augmentId: nu
     const cand: Synergy = { type, with: have, missing }
     // a trap only counts when nothing better exists
     const better =
-      !best ||
-      (best.type === 'trap' && type !== 'trap') ||
-      ((best.type === 'trap') === (type === 'trap') && score(cand) < score(best))
+      !best || (best.type === 'trap' && type !== 'trap') || ((best.type === 'trap') === (type === 'trap') && score(cand) < score(best))
     if (better) best = cand
   }
   return best
@@ -302,12 +304,7 @@ export function synergyFor(combos: MayhemCombo[], owned: number[], augmentId: nu
  * the augment to at least the combo's tier (top combo → S+), being one step away lifts it one
  * tier, and completing a known trap drops it to D.
  */
-export function augmentTiersWithOwned(
-  data: MayhemData,
-  statics: StaticData,
-  championId: number,
-  owned: number[]
-): AugmentTier[] {
+export function augmentTiersWithOwned(data: MayhemData, statics: StaticData, championId: number, owned: number[]): AugmentTier[] {
   const base = augmentTiersForChampion(data, statics, championId)
   if (!owned.length) return base
   const combos = combosForChampion(data, statics, championId)
@@ -317,7 +314,8 @@ export function augmentTiersWithOwned(
       if (!synergy) return t
       let tier = t.tier
       if (synergy.type === 'trap') tier = synergy.missing.length ? tier : 'D'
-      else if (!synergy.missing.length) tier = TIERS.indexOf(COMBO_TIER[synergy.type]) < TIERS.indexOf(tier) ? COMBO_TIER[synergy.type] : tier
+      else if (!synergy.missing.length)
+        tier = TIERS.indexOf(COMBO_TIER[synergy.type]) < TIERS.indexOf(tier) ? COMBO_TIER[synergy.type] : tier
       else if (synergy.missing.length === 1) tier = TIERS[Math.max(0, TIERS.indexOf(tier) - 1)]
       return { ...t, tier, synergy }
     })

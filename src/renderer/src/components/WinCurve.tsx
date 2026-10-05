@@ -12,7 +12,17 @@ const kfmt = (g: number): string => `${g > 0 ? '+' : g < 0 ? '−' : ''}${(Math.
  * Gold lead over time from your team's point of view – blue above the line (ahead), red below
  * (behind) – with every champion kill as a dot on the strip underneath. Hover for exact values.
  */
-export function WinCurve({ curve, kills, duration, height = 220 }: { curve: CurvePoint[]; kills: { t: number; ally: boolean }[]; duration: number; height?: number }) {
+export function WinCurve({
+  curve,
+  kills,
+  duration,
+  height = 220
+}: {
+  curve: CurvePoint[]
+  kills: { t: number; ally: boolean }[]
+  duration: number
+  height?: number
+}) {
   const box = useRef<HTMLDivElement>(null)
   const [w, setW] = useState(800)
   const [hover, setHover] = useState<number | null>(null)
@@ -74,10 +84,44 @@ export function WinCurve({ curve, kills, duration, height = 220 }: { curve: Curv
             {t / 60}m
           </text>
         ))}
-        <path d={area} fill={AHEAD} fillOpacity={0.22} clipPath="url(#wc-above)" />
-        <path d={area} fill={BEHIND} fillOpacity={0.22} clipPath="url(#wc-below)" />
-        <path d={line} fill="none" stroke={AHEAD} strokeWidth={2} clipPath="url(#wc-above)" strokeLinejoin="round" />
-        <path d={line} fill="none" stroke={BEHIND} strokeWidth={2} clipPath="url(#wc-below)" strokeLinejoin="round" />
+        <path
+          d={area}
+          fill={AHEAD}
+          fillOpacity={0.22}
+          clipPath="url(#wc-above)"
+          className="page-enter"
+          style={{ animationDelay: '0.5s' }}
+        />
+        <path
+          d={area}
+          fill={BEHIND}
+          fillOpacity={0.22}
+          clipPath="url(#wc-below)"
+          className="page-enter"
+          style={{ animationDelay: '0.5s' }}
+        />
+        <path
+          d={line}
+          fill="none"
+          stroke={AHEAD}
+          strokeWidth={2}
+          clipPath="url(#wc-above)"
+          strokeLinejoin="round"
+          pathLength={1}
+          strokeDasharray={1}
+          className="draw-line"
+        />
+        <path
+          d={line}
+          fill="none"
+          stroke={BEHIND}
+          strokeWidth={2}
+          clipPath="url(#wc-below)"
+          strokeLinejoin="round"
+          pathLength={1}
+          strokeDasharray={1}
+          className="draw-line"
+        />
         <line x1={pad.l} x2={w - pad.r} y1={zero} y2={zero} stroke="rgb(255 255 255 / 0.35)" />
         <text x={w - pad.r} y={pad.t + 10} textAnchor="end" fontSize="11" fontWeight="700" fill="#f1edfb">
           ▲ ahead
@@ -92,6 +136,8 @@ export function WinCurve({ curve, kills, duration, height = 220 }: { curve: Curv
             cx={x(kk.t)}
             cy={H - pad.b - strip / 2 + (kk.ally ? -4 : 4)}
             r={4}
+            className="pop-in"
+            style={{ animationDelay: `${0.3 + (kk.t / tMax) * 1.2}s`, transformBox: 'fill-box', transformOrigin: 'center' }}
             fill={kk.ally ? AHEAD : BEHIND}
             stroke="#140d28"
             strokeWidth={2}

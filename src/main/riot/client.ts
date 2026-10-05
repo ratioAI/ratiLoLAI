@@ -2,16 +2,7 @@ import type { Platform, Regional, SeedTier } from '@shared/types'
 import { PLATFORMS } from '@shared/types'
 import { describeKeyError } from './apiKey'
 import { parseRateLimitHeader, RateLimiter } from './rateLimiter'
-import type {
-  AccountDTO,
-  CurrentGameInfo,
-  LeagueEntryDTO,
-  LeagueListDTO,
-  MasteryDTO,
-  MatchDTO,
-  SummonerDTO,
-  TimelineDTO
-} from './types'
+import type { AccountDTO, CurrentGameInfo, LeagueEntryDTO, LeagueListDTO, MasteryDTO, MatchDTO, SummonerDTO, TimelineDTO } from './types'
 
 export class RiotApiError extends Error {
   constructor(
@@ -103,11 +94,9 @@ export class RiotClient {
   // --- account / summoner -------------------------------------------------
 
   accountByRiotId(regional: Regional, gameName: string, tagLine: string): Promise<AccountDTO | null> {
-    return this.request(
-      regional,
-      `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`,
-      { allow404: true }
-    )
+    return this.request(regional, `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`, {
+      allow404: true
+    })
   }
 
   summonerByPuuid(platform: Platform, puuid: string): Promise<SummonerDTO | null> {
@@ -120,11 +109,9 @@ export class RiotClient {
 
   async topMastery(platform: Platform, puuid: string, count = 5): Promise<MasteryDTO[]> {
     return (
-      (await this.request<MasteryDTO[]>(
-        platform,
-        `/lol/champion-mastery/v4/champion-masteries/by-puuid/${puuid}/top?count=${count}`,
-        { allow404: true }
-      )) ?? []
+      (await this.request<MasteryDTO[]>(platform, `/lol/champion-mastery/v4/champion-masteries/by-puuid/${puuid}/top?count=${count}`, {
+        allow404: true
+      })) ?? []
     )
   }
 

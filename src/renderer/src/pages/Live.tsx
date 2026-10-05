@@ -39,7 +39,7 @@ export function Live() {
   const scoutMe = () => me && runScout(`${me.gameName}#${me.tagLine}`, me.platform ?? settings?.platform ?? 'euw1')
 
   return (
-    <div className="fade-in mx-auto max-w-6xl p-8">
+    <div className="page-enter mx-auto max-w-6xl p-8">
       <PageHeader
         title="Live"
         subtitle={
@@ -58,8 +58,8 @@ export function Live() {
 
       {!champSelect?.active && !live?.active && !scout && (
         <EmptyState icon={<Radio size={34} />} title="Waiting for champion select …">
-          As soon as you enter champion select in the League client, your build, your teammates and the enemy picks
-          show up here. Runes and items are imported automatically.
+          As soon as you enter champion select in the League client, your build, your teammates and the enemy picks show up here. Runes and
+          items are imported automatically.
         </EmptyState>
       )}
 
@@ -103,94 +103,101 @@ function ChampSelectView() {
   }, [patch, cs.myChampionId, role, statsMode, statsVersion])
   return (
     <>
-    <div className="mb-3 text-xs font-semibold text-muted">
-      Mode: <span className="text-accent">{MODE_LABELS[cs.mode]}</span>
-      {cs.mode === 'mayhem' && ' · builds from ARAM data, augments below'}
-    </div>
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_1.3fr_1fr]">
-      <TeamColumn title="Your team" players={cs.allies} />
-      <div className="panel p-5">
-        {cs.myChampionId ? (
-          <>
-            <div className="mb-4 flex items-center gap-4">
-              <ChampIcon id={cs.myChampionId} size={64} className="rounded-2xl" tooltip={false} />
-              <div className="flex-1">
-                <div className="text-xl font-extrabold">{data?.champions[cs.myChampionId]?.name}</div>
-                <div className="flex items-center gap-1.5 text-sm text-muted">
-                  {cs.myRole && <RoleIcon role={cs.myRole} size={14} />}
-                  {statsMode === 'aram'
-                    ? `${MODE_LABELS[cs.mode]} · random champion`
-                    : `${cs.myRole ? ROLE_LABELS[cs.myRole] : 'No role'} · ${cs.locked ? 'locked in' : 'hovering'}`}
-                </div>
-              </div>
-              {build && <TierBadge tier={build.tier} size="lg" />}
-            </div>
-            {build ? (
-              <>
-                <div className="mb-4 grid grid-cols-3 gap-2 text-center">
-                  <Mini label="Win rate" value={pct(build.winRate)} color={wrColor(build.winRate)} />
-                  <Mini label="Pick rate" value={pct(build.pickRate)} />
-                  <Mini label="Games" value={num(build.games)} />
-                </div>
-                {build.runes[0] && (
-                  <div className="mb-3 flex items-center gap-2">
-                    {build.runes[0].value.primary.map((id, i) => (
-                      <RuneIcon key={id} id={id} size={i === 0 ? 40 : 28} />
-                    ))}
-                    <span className="mx-1 h-6 w-px bg-line" />
-                    {build.runes[0].value.secondary.map((id) => (
-                      <RuneIcon key={id} id={id} size={24} />
-                    ))}
-                  </div>
-                )}
-                <div className="mb-3 flex items-center gap-1.5">
-                  {build.spells[0]?.value.map((id) => <SpellIcon key={id} id={id} size={30} />)}
-                  <span className="mx-2 h-6 w-px bg-line" />
-                  {build.core[0]?.value.map((id) => <ItemIcon key={id} id={id} size={34} />)}
-                  {build.boots[0] && <ItemIcon id={build.boots[0].value} size={34} />}
-                </div>
-                <div className="flex items-center justify-between">
-                  <Link to={`/champion/${cs.myChampionId}/${build.role}`} className="text-sm font-semibold text-accent">
-                    Full build →
-                  </Link>
-                  <button className="btn btn-primary" onClick={() => api.importBuild(cs.myChampionId, role ?? null, undefined, statsMode)}>
-                    Import
-                  </button>
-                </div>
-                {lastImport && lastImport.championId === cs.myChampionId && (
-                  <p className={`mt-3 text-xs ${lastImport.errors.length ? 'text-loss' : 'text-win'}`}>
-                    {lastImport.errors.length ? lastImport.errors.join(' · ') : '✔ Runes & items imported automatically'}
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="text-sm text-muted">No data for this champion yet.</p>
-            )}
-          </>
-        ) : (
-          <p className="text-sm text-muted">Pick a champion …</p>
-        )}
-        {cs.bans.length > 0 && (
-          <div className="mt-5 border-t border-line pt-4">
-            <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted">
-              <Ban size={13} /> Bans
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {cs.bans.map((id, i) => (
-                <ChampIcon key={i} id={id} size={28} className="opacity-60 grayscale" />
-              ))}
-            </div>
-          </div>
-        )}
+      <div className="mb-3 text-xs font-semibold text-muted">
+        Mode: <span className="text-accent">{MODE_LABELS[cs.mode]}</span>
+        {cs.mode === 'mayhem' && ' · builds from ARAM data, augments below'}
       </div>
-      <TeamColumn title="Enemies" players={cs.enemies} enemy />
-    </div>
-    {cs.mode === 'mayhem' && cs.myChampionId > 0 && (
-      <section className="panel mt-5 p-5">
-        <h2 className="mb-4 text-sm font-bold tracking-wide text-gold uppercase">ARAM: Mayhem – Augments</h2>
-        <MayhemChampionPanel championId={cs.myChampionId} />
-      </section>
-    )}
+      <div className="stagger grid grid-cols-1 gap-5 lg:grid-cols-[1fr_1.3fr_1fr]">
+        <TeamColumn title="Your team" players={cs.allies} />
+        <div className="panel p-5">
+          {cs.myChampionId ? (
+            <>
+              <div className="mb-4 flex items-center gap-4">
+                <ChampIcon id={cs.myChampionId} size={64} className="rounded-2xl" tooltip={false} />
+                <div className="flex-1">
+                  <div className="text-xl font-extrabold">{data?.champions[cs.myChampionId]?.name}</div>
+                  <div className="flex items-center gap-1.5 text-sm text-muted">
+                    {cs.myRole && <RoleIcon role={cs.myRole} size={14} />}
+                    {statsMode === 'aram'
+                      ? `${MODE_LABELS[cs.mode]} · random champion`
+                      : `${cs.myRole ? ROLE_LABELS[cs.myRole] : 'No role'} · ${cs.locked ? 'locked in' : 'hovering'}`}
+                  </div>
+                </div>
+                {build && <TierBadge tier={build.tier} size="lg" />}
+              </div>
+              {build ? (
+                <>
+                  <div className="mb-4 grid grid-cols-3 gap-2 text-center">
+                    <Mini label="Win rate" value={pct(build.winRate)} color={wrColor(build.winRate)} />
+                    <Mini label="Pick rate" value={pct(build.pickRate)} />
+                    <Mini label="Games" value={num(build.games)} />
+                  </div>
+                  {build.runes[0] && (
+                    <div className="mb-3 flex items-center gap-2">
+                      {build.runes[0].value.primary.map((id, i) => (
+                        <RuneIcon key={id} id={id} size={i === 0 ? 40 : 28} />
+                      ))}
+                      <span className="mx-1 h-6 w-px bg-line" />
+                      {build.runes[0].value.secondary.map((id) => (
+                        <RuneIcon key={id} id={id} size={24} />
+                      ))}
+                    </div>
+                  )}
+                  <div className="mb-3 flex items-center gap-1.5">
+                    {build.spells[0]?.value.map((id) => (
+                      <SpellIcon key={id} id={id} size={30} />
+                    ))}
+                    <span className="mx-2 h-6 w-px bg-line" />
+                    {build.core[0]?.value.map((id) => (
+                      <ItemIcon key={id} id={id} size={34} />
+                    ))}
+                    {build.boots[0] && <ItemIcon id={build.boots[0].value} size={34} />}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Link to={`/champion/${cs.myChampionId}/${build.role}`} className="text-sm font-semibold text-accent">
+                      Full build →
+                    </Link>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => api.importBuild(cs.myChampionId, role ?? null, undefined, statsMode)}
+                    >
+                      Import
+                    </button>
+                  </div>
+                  {lastImport && lastImport.championId === cs.myChampionId && (
+                    <p className={`mt-3 text-xs ${lastImport.errors.length ? 'text-loss' : 'text-win'}`}>
+                      {lastImport.errors.length ? lastImport.errors.join(' · ') : '✔ Runes & items imported automatically'}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-muted">No data for this champion yet.</p>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-muted">Pick a champion …</p>
+          )}
+          {cs.bans.length > 0 && (
+            <div className="mt-5 border-t border-line pt-4">
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted">
+                <Ban size={13} /> Bans
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {cs.bans.map((id, i) => (
+                  <ChampIcon key={i} id={id} size={28} className="opacity-60 grayscale" />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <TeamColumn title="Enemies" players={cs.enemies} enemy />
+      </div>
+      {cs.mode === 'mayhem' && cs.myChampionId > 0 && (
+        <section className="panel mt-5 p-5">
+          <h2 className="mb-4 text-sm font-bold tracking-wide text-gold uppercase">ARAM: Mayhem – Augments</h2>
+          <MayhemChampionPanel championId={cs.myChampionId} />
+        </section>
+      )}
     </>
   )
 }
@@ -202,9 +209,12 @@ function TeamColumn({ title, players, enemy = false }: { title: string; players:
   return (
     <div className="panel p-5">
       <h2 className={`mb-3 text-sm font-bold tracking-wide uppercase ${enemy ? 'text-loss' : 'text-accent'}`}>{title}</h2>
-      <div className="space-y-2">
+      <div className="stagger space-y-2">
         {players.map((p) => (
-          <div key={p.cellId} className={`flex items-center gap-3 rounded-xl p-2 ${p.isLocal ? 'bg-accent/8 ring-1 ring-accent/30' : 'bg-bg-2'}`}>
+          <div
+            key={p.cellId}
+            className={`flex items-center gap-3 rounded-xl p-2 ${p.isLocal ? 'bg-accent/8 ring-1 ring-accent/30' : 'bg-bg-2'}`}
+          >
             {p.championId ? (
               <ChampIcon id={p.championId} size={40} tooltip={false} />
             ) : (
@@ -230,7 +240,8 @@ function OwnedAugments({ championId, owned }: { championId: number; owned: numbe
   const { data: statics } = useApp()
   const { data } = useMayhemData()
   const tiers = useMemo(
-    () => (data && statics && championId ? new Map(augmentTiersForChampion(data, statics, championId).map((t) => [t.augment.id, t])) : null),
+    () =>
+      data && statics && championId ? new Map(augmentTiersForChampion(data, statics, championId).map((t) => [t.augment.id, t])) : null,
     [data, statics, championId]
   )
   if (!data || !tiers) return null
@@ -272,7 +283,10 @@ function MapTimers({ gameMode }: { gameMode: string }) {
   const [t, setT] = useState<MinimapState | null>(null)
   const [, tick] = useState(0)
   useEffect(() => {
-    void api.getMapTimers().then(setT).catch(() => undefined)
+    void api
+      .getMapTimers()
+      .then(setT)
+      .catch(() => undefined)
     const off = api.on('mapTimers', setT)
     const i = setInterval(() => tick((x) => x + 1), 1000)
     return () => {
@@ -282,7 +296,8 @@ function MapTimers({ gameMode }: { gameMode: string }) {
   }, [])
   if (!t || (gameMode !== 'KIWI' && gameMode !== 'ARAM')) return null
   const now = t.gameTime + (Date.now() - t.measuredAt) / 1000
-  const label = (id: string) => ({ 'order-inner': 'Blue inner', 'order-outer': 'Blue outer', 'chaos-outer': 'Red outer', 'chaos-inner': 'Red inner' })[id] ?? id
+  const label = (id: string) =>
+    ({ 'order-inner': 'Blue inner', 'order-outer': 'Blue outer', 'chaos-outer': 'Red outer', 'chaos-inner': 'Red inner' })[id] ?? id
   return (
     <div className="panel p-4">
       <h2 className="mb-3 text-sm font-bold text-muted uppercase">Map timers</h2>
@@ -294,7 +309,13 @@ function MapTimers({ gameMode }: { gameMode: string }) {
               {label(r.id)}
             </span>
             <span className="font-bold tabular-nums">
-              {r.state === 'spawn' && r.at !== null && r.at > now ? fmtClock(r.at - now) : r.state === 'up' ? <span className="text-win">up</span> : <span className="text-muted">up?</span>}
+              {r.state === 'spawn' && r.at !== null && r.at > now ? (
+                fmtClock(r.at - now)
+              ) : r.state === 'up' ? (
+                <span className="text-win">up</span>
+              ) : (
+                <span className="text-muted">up?</span>
+              )}
             </span>
           </div>
         ))}
@@ -323,7 +344,7 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
   // the Live Client API only updates other players' CS in steps of 10 – meaningless in ARAM
   const showCs = live.gameMode !== 'ARAM' && live.gameMode !== 'KIWI'
   return (
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[2fr_1fr]">
+    <div className="stagger grid grid-cols-1 gap-5 lg:grid-cols-[2fr_1fr]">
       <div className="space-y-4">
         {order.map((team) => {
           const st = TEAM_STYLE[team]
@@ -428,7 +449,7 @@ function ScoutView({ result }: { result: ScoutResult }) {
       {teams.map((players, ti) => (
         <div key={ti}>
           <h3 className={`mb-2 text-xs font-bold uppercase ${ti ? 'text-loss' : 'text-accent'}`}>{ti ? 'Red team' : 'Blue team'}</h3>
-          <div className="space-y-1.5">
+          <div className="stagger space-y-1.5">
             {players.map((p) => {
               const r = p.ranked
               const wr = r ? r.wins / Math.max(1, r.wins + r.losses) : 0
@@ -444,7 +465,8 @@ function ScoutView({ result }: { result: ScoutResult }) {
                   {r ? (
                     <span className="text-right text-xs">
                       <b style={{ color: RANK_COLORS[r.tier] }}>
-                        {r.tier.charAt(0) + r.tier.slice(1).toLowerCase()} {['MASTER', 'GRANDMASTER', 'CHALLENGER'].includes(r.tier) ? '' : r.rank}
+                        {r.tier.charAt(0) + r.tier.slice(1).toLowerCase()}{' '}
+                        {['MASTER', 'GRANDMASTER', 'CHALLENGER'].includes(r.tier) ? '' : r.rank}
                       </b>{' '}
                       {r.leaguePoints} LP
                       <span className="block" style={{ color: wrColor(wr) }}>

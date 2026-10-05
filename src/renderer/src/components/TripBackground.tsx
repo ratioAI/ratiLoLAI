@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Settings } from '@shared/types'
+import { useIdleRef } from '@/lib/useIdle'
 
 const VERT = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`
 
@@ -61,6 +62,7 @@ export function TripBackground({ mode, inGame }: { mode: Settings['ui']['backgro
   const ref = useRef<HTMLCanvasElement>(null)
   const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
   const effective: keyof typeof FPS = reduced ? 'static' : inGame && mode === 'animated' ? 'calm' : mode
+  const idle = useIdleRef(inGame)
 
   useEffect(() => {
     const canvas = ref.current
@@ -108,6 +110,7 @@ export function TripBackground({ mode, inGame }: { mode: Settings['ui']['backgro
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop)
       if (now - last < 1000 / fps - 2) return
+      if (idle.current && last) return // behind the game or hidden: keep the last frame
       last = now
       draw((now - t0) / 1000)
     }

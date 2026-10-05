@@ -36,7 +36,7 @@ export function ChampionPage() {
   if (!champ) return <div className="p-8">Unbekannter Champion.</div>
 
   return (
-    <div className="fade-in mx-auto max-w-6xl p-8">
+    <div className="page-enter mx-auto max-w-6xl p-8">
       {/* header */}
       <div className="panel relative mb-6 overflow-hidden p-6">
         <div
@@ -454,4 +454,3 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
 function Muted({ children }: { children: ReactNode }) {
   return <p className="text-sm text-muted">{children}</p>
 }
-

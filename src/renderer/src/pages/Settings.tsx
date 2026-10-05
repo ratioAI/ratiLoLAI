@@ -47,7 +47,7 @@ export function Settings() {
   }
 
   return (
-    <div className="fade-in mx-auto max-w-3xl p-8">
+    <div className="page-enter mx-auto max-w-3xl p-8">
       <PageHeader title="Settings" />
 
       <Group title="Riot API">
@@ -122,13 +122,16 @@ export function Settings() {
 
       <Group title="In-game overlay (ARAM: Mayhem)">
         <p className="mb-2 text-sm text-muted">
-          Frames the augment cards by tier right in the game. It only looks at the screen while an augment is waiting to be
-          picked (level 1, 7, 11, 15) and only while the choice can open – when you are dead, at the start of the game, right
-          after respawning or shopping – and disappears as soon as you have picked one. No screenshots are taken while you
-          are fighting. League must run in <b className="text-text">Borderless</b> or <b className="text-text">Windowed</b>{' '}
-          mode – exclusive fullscreen cannot be overlaid.
+          Frames the augment cards by tier right in the game. It only looks at the screen while an augment is waiting to be picked (level 1,
+          7, 11, 15) and only while the choice can open – when you are dead, at the start of the game, right after respawning or shopping –
+          and disappears as soon as you have picked one. No screenshots are taken while you are fighting. League must run in{' '}
+          <b className="text-text">Borderless</b> or <b className="text-text">Windowed</b> mode – exclusive fullscreen cannot be overlaid.
         </p>
-        <Toggle label="Enable overlay" value={settings.overlay.enabled} onChange={(v) => save({ overlay: { ...settings.overlay, enabled: v } })} />
+        <Toggle
+          label="Enable overlay"
+          value={settings.overlay.enabled}
+          onChange={(v) => save({ overlay: { ...settings.overlay, enabled: v } })}
+        />
         <Toggle
           label="Show the overlay in screen shares and recordings (Discord, OBS)"
           value={settings.overlay.showInCapture}
@@ -185,11 +188,15 @@ export function Settings() {
 
       <Group title="Minimap timers (ARAM)">
         <p className="mb-2 text-sm text-muted">
-          Health relic respawns (the game only counts down the first spawn) and inhibitor respawns, right on the minimap and
-          on the Live page. Inhibitors come from the game's live data; relics are recognised by looking at the four relic
-          pads on the minimap once per second.
+          Health relic respawns (the game only counts down the first spawn) and inhibitor respawns, right on the minimap and on the Live
+          page. Inhibitors come from the game's live data; relics are recognised by looking at the four relic pads on the minimap once per
+          second.
         </p>
-        <Toggle label="Show minimap timers" value={settings.minimap.enabled} onChange={(v) => save({ minimap: { ...settings.minimap, enabled: v } })} />
+        <Toggle
+          label="Show minimap timers"
+          value={settings.minimap.enabled}
+          onChange={(v) => save({ minimap: { ...settings.minimap, enabled: v } })}
+        />
         <Toggle
           label="Inhibitor respawn timers"
           value={settings.minimap.inhibitors}
@@ -212,13 +219,27 @@ export function Settings() {
             onKeyUp={(e) => save({ minimap: { ...settings.minimap, scale: Number((e.target as HTMLInputElement).value) } })}
           />
         </Field>
-        <p className="pt-2 text-xs text-muted">"Preview overlay" above also shows example timers, so you can check they sit on the inhibitors.</p>
+        <p className="pt-2 text-xs text-muted">
+          "Preview overlay" above also shows example timers, so you can check they sit on the inhibitors.
+        </p>
       </Group>
 
       <Group title="League client">
-        <Toggle label="Import runes automatically" value={settings.client.autoImportRunes} onChange={(v) => save({ client: { ...settings.client, autoImportRunes: v } })} />
-        <Toggle label="Import item set automatically" value={settings.client.autoImportItems} onChange={(v) => save({ client: { ...settings.client, autoImportItems: v } })} />
-        <Toggle label="Set summoner spells automatically" value={settings.client.autoImportSpells} onChange={(v) => save({ client: { ...settings.client, autoImportSpells: v } })} />
+        <Toggle
+          label="Import runes automatically"
+          value={settings.client.autoImportRunes}
+          onChange={(v) => save({ client: { ...settings.client, autoImportRunes: v } })}
+        />
+        <Toggle
+          label="Import item set automatically"
+          value={settings.client.autoImportItems}
+          onChange={(v) => save({ client: { ...settings.client, autoImportItems: v } })}
+        />
+        <Toggle
+          label="Set summoner spells automatically"
+          value={settings.client.autoImportSpells}
+          onChange={(v) => save({ client: { ...settings.client, autoImportSpells: v } })}
+        />
         <Field label="Flash on key">
           <div className="flex rounded-xl border border-line bg-bg-2 p-1">
             {(['D', 'F'] as const).map((k) => (
@@ -232,7 +253,11 @@ export function Settings() {
             ))}
           </div>
         </Field>
-        <Toggle label="Auto-accept match" value={settings.client.autoAccept} onChange={(v) => save({ client: { ...settings.client, autoAccept: v } })} />
+        <Toggle
+          label="Auto-accept match"
+          value={settings.client.autoAccept}
+          onChange={(v) => save({ client: { ...settings.client, autoAccept: v } })}
+        />
         {settings.client.autoAccept && (
           <Field label="Accept after">
             <div className="flex rounded-xl border border-line bg-bg-2 p-1">
@@ -301,7 +326,9 @@ export function Settings() {
                       save({
                         crawler: {
                           ...settings.crawler,
-                          extraPlatforms: on ? settings.crawler.extraPlatforms.filter((x) => x !== p) : [...settings.crawler.extraPlatforms, p]
+                          extraPlatforms: on
+                            ? settings.crawler.extraPlatforms.filter((x) => x !== p)
+                            : [...settings.crawler.extraPlatforms, p]
                         }
                       })
                     }
@@ -313,9 +340,27 @@ export function Settings() {
               })}
           </div>
         </Field>
-        <NumberField label="Max. new matches per run" value={settings.crawler.maxMatchesPerRun} min={50} max={100000} onChange={(v) => save({ crawler: { ...settings.crawler, maxMatchesPerRun: v } })} />
-        <NumberField label="Matches per player" value={settings.crawler.matchesPerPlayer} min={1} max={100} onChange={(v) => save({ crawler: { ...settings.crawler, matchesPerPlayer: v } })} />
-        <NumberField label="Min. games for the tier list" value={settings.crawler.minGamesForTierList} min={1} max={5000} onChange={(v) => save({ crawler: { ...settings.crawler, minGamesForTierList: v } })} />
+        <NumberField
+          label="Max. new matches per run"
+          value={settings.crawler.maxMatchesPerRun}
+          min={50}
+          max={100000}
+          onChange={(v) => save({ crawler: { ...settings.crawler, maxMatchesPerRun: v } })}
+        />
+        <NumberField
+          label="Matches per player"
+          value={settings.crawler.matchesPerPlayer}
+          min={1}
+          max={100}
+          onChange={(v) => save({ crawler: { ...settings.crawler, matchesPerPlayer: v } })}
+        />
+        <NumberField
+          label="Min. games for the tier list"
+          value={settings.crawler.minGamesForTierList}
+          min={1}
+          max={5000}
+          onChange={(v) => save({ crawler: { ...settings.crawler, minGamesForTierList: v } })}
+        />
       </Group>
 
       <Group title="Updates">
@@ -324,8 +369,8 @@ export function Settings() {
 
       <p className="mt-8 text-xs leading-relaxed text-muted">
         ratioAI {isDemo ? '(web demo)' : ''} isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone
-        officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered
-        trademarks of Riot Games, Inc.
+        officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or
+        registered trademarks of Riot Games, Inc.
       </p>
     </div>
   )
@@ -392,7 +437,19 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
   )
 }
 
-function NumberField({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (v: number) => void }) {
+function NumberField({
+  label,
+  value,
+  min,
+  max,
+  onChange
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  onChange: (v: number) => void
+}) {
   return (
     <Field label={label}>
       <input
@@ -421,7 +478,11 @@ function OverlayDiagnosticsPanel() {
   useEffect(() => {
     if (!open) return
     let alive = true
-    const load = () => void api.overlayDiagnostics().then((d) => alive && setDiag(d)).catch(() => undefined)
+    const load = () =>
+      void api
+        .overlayDiagnostics()
+        .then((d) => alive && setDiag(d))
+        .catch(() => undefined)
     load()
     const t = setInterval(load, 2000)
     return () => {
@@ -450,21 +511,30 @@ function OverlayDiagnosticsPanel() {
         <div className="mt-3 space-y-3">
           {diag && (
             <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
-              <div>Game mode: <b className="text-text">{diag.gameMode ?? '–'}</b></div>
-              <div>Queue: <b className="text-text">{diag.queueId ?? '–'}</b></div>
+              <div>
+                Game mode: <b className="text-text">{diag.gameMode ?? '–'}</b>
+              </div>
+              <div>
+                Queue: <b className="text-text">{diag.queueId ?? '–'}</b>
+              </div>
               <div>Mayhem detected: {yes(diag.mayhem)}</div>
-              <div>Level: <b className="text-text">{diag.level || '–'}</b>{diag.dead ? ' (dead)' : ''}</div>
+              <div>
+                Level: <b className="text-text">{diag.level || '–'}</b>
+                {diag.dead ? ' (dead)' : ''}
+              </div>
               <div>Augment pending: {yes(diag.augmentPending)}</div>
               <div>Choice can be open: {yes(diag.canOpen)}</div>
               <div>Scanning: {yes(diag.scanning)}</div>
               <div>Cards on screen: {yes(diag.cardsVisible)}</div>
               <div>Overlay visible: {yes(diag.overlayVisible)}</div>
-              <div>Screen stream: <b className="text-text">{diag.captureStream}</b></div>
+              <div>
+                Screen stream: <b className="text-text">{diag.captureStream}</b>
+              </div>
             </div>
           )}
           <p className="text-muted">
-            Open the augment choice in game (alt-tab is fine in borderless mode) and click <b>Test screen recognition</b>. The
-            screenshots are saved to the log folder – attach them together with <code>overlay.log</code> when reporting a problem.
+            Open the augment choice in game (alt-tab is fine in borderless mode) and click <b>Test screen recognition</b>. The screenshots
+            are saved to the log folder – attach them together with <code>overlay.log</code> when reporting a problem.
           </p>
           <div className="flex flex-wrap gap-2">
             <button className="btn btn-ghost" disabled={testing} onClick={runTest}>
@@ -476,10 +546,13 @@ function OverlayDiagnosticsPanel() {
           </div>
           {test && (
             <div className="space-y-1">
-              <div>Capture took <b className="text-text">{test.captureMs} ms</b> for {test.screens.length} screen(s)</div>
+              <div>
+                Capture took <b className="text-text">{test.captureMs} ms</b> for {test.screens.length} screen(s)
+              </div>
               {test.screens.map((s, i) => (
                 <div key={i}>
-                  Screen {i + 1} ({s.size}): {s.black ? <span className="text-red-400">black image – use Borderless mode</span> : <>cards {yes(s.visible)}</>}
+                  Screen {i + 1} ({s.size}):{' '}
+                  {s.black ? <span className="text-red-400">black image – use Borderless mode</span> : <>cards {yes(s.visible)}</>}
                   {s.titles.length > 0 && <> · read: {s.titles.map((t, j) => `"${t}"${s.matches[j] ? ' ✓' : ' ✗'}`).join(', ')}</>}
                 </div>
               ))}

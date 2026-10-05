@@ -51,4 +51,3 @@ export function titleRects(width: number, height: number): Rect[] {
     height: h
   }))
 }
-

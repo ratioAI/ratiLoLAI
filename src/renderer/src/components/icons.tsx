@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from 'react'
+import { memo, useState, type ReactNode } from 'react'
 import type { StatRole, Tier } from '@shared/types'
-import { useApp } from '@/lib/store'
+import { useGameData } from '@/lib/store'
 import { img } from '@/lib/img'
 import { TIER_COLORS } from '@/lib/format'
 
@@ -54,8 +54,18 @@ export function GameImage({
   return <Tooltip content={tooltip}>{el}</Tooltip>
 }
 
-export function ChampIcon({ id, size = 40, className = '', tooltip = true }: { id: number; size?: number; className?: string; tooltip?: boolean }) {
-  const { data } = useApp()
+export const ChampIcon = memo(function ChampIcon({
+  id,
+  size = 40,
+  className = '',
+  tooltip = true
+}: {
+  id: number
+  size?: number
+  className?: string
+  tooltip?: boolean
+}) {
+  const data = useGameData()
   if (!data) return null
   const c = data.champions[id]
   return (
@@ -67,10 +77,10 @@ export function ChampIcon({ id, size = 40, className = '', tooltip = true }: { i
       tooltip={tooltip && c ? <b>{c.name}</b> : undefined}
     />
   )
-}
+})
 
-export function ItemIcon({ id, size = 36, count }: { id: number; size?: number; count?: number }) {
-  const { data } = useApp()
+export const ItemIcon = memo(function ItemIcon({ id, size = 36, count }: { id: number; size?: number; count?: number }) {
+  const data = useGameData()
   if (!data || !id) return <span className="inline-block shrink-0 rounded-md bg-bg-2" style={{ width: size, height: size }} />
   const it = data.items[id]
   return (
@@ -94,10 +104,10 @@ export function ItemIcon({ id, size = 36, count }: { id: number; size?: number; 
       ) : null}
     </span>
   )
-}
+})
 
-export function RuneIcon({ id, size = 32, dim = false }: { id: number; size?: number; dim?: boolean }) {
-  const { data } = useApp()
+export const RuneIcon = memo(function RuneIcon({ id, size = 32, dim = false }: { id: number; size?: number; dim?: boolean }) {
+  const data = useGameData()
   if (!data) return null
   const r = data.runes[id] ?? data.runeTrees.find((t) => t.id === id)
   return (
@@ -117,22 +127,16 @@ export function RuneIcon({ id, size = 32, dim = false }: { id: number; size?: nu
       }
     />
   )
-}
+})
 
-export function SpellIcon({ id, size = 30 }: { id: number; size?: number }) {
-  const { data } = useApp()
+export const SpellIcon = memo(function SpellIcon({ id, size = 30 }: { id: number; size?: number }) {
+  const data = useGameData()
   if (!data) return null
   const s = data.spells[id]
   return (
-    <GameImage
-      src={img.spell(data, id)}
-      size={size}
-      alt={s?.name ?? '?'}
-      rounded="rounded-md"
-      tooltip={s ? <b>{s.name}</b> : undefined}
-    />
+    <GameImage src={img.spell(data, id)} size={size} alt={s?.name ?? '?'} rounded="rounded-md" tooltip={s ? <b>{s.name}</b> : undefined} />
   )
-}
+})
 
 export function TierBadge({ tier, size = 'md' }: { tier: Tier | null; size?: 'sm' | 'md' | 'lg' }) {
   if (!tier) return <span className="text-muted">–</span>

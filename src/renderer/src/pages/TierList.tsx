@@ -13,7 +13,15 @@ import { NoDataHint } from './NoDataHint'
 type SortKey = 'rank' | 'tier' | 'winRate' | 'pickRate' | 'banRate' | 'games' | 'name'
 const TIER_ORDER: Tier[] = ['S+', 'S', 'A', 'B', 'C', 'D']
 
-export function RoleTabs({ value, onChange, withAll = true }: { value: Role | 'ALL'; onChange: (r: Role | 'ALL') => void; withAll?: boolean }) {
+export function RoleTabs({
+  value,
+  onChange,
+  withAll = true
+}: {
+  value: Role | 'ALL'
+  onChange: (r: Role | 'ALL') => void
+  withAll?: boolean
+}) {
   const options: (Role | 'ALL')[] = withAll ? ['ALL', ...ROLES] : [...ROLES]
   return (
     <div className="flex rounded-xl border border-line bg-bg-2 p-1">
@@ -76,7 +84,7 @@ export function TierList() {
   const Th = ({ k, children, className = '' }: { k: SortKey; children: React.ReactNode; className?: string }) => (
     <th
       className={`cursor-pointer px-3 py-3 font-semibold select-none hover:text-text ${className}`}
-      onClick={() => setSort((s) => ({ key: k, dir: s.key === k ? ((-s.dir) as 1 | -1) : 1 }))}
+      onClick={() => setSort((s) => ({ key: k, dir: s.key === k ? (-s.dir as 1 | -1) : 1 }))}
     >
       <span className="inline-flex items-center gap-1">
         {children}
@@ -86,7 +94,7 @@ export function TierList() {
   )
 
   return (
-    <div className="fade-in mx-auto max-w-6xl p-8">
+    <div className="page-enter mx-auto max-w-6xl p-8">
       <PageHeader
         title="Tier list"
         subtitle={
@@ -102,7 +110,11 @@ export function TierList() {
         {aram ? <span /> : <RoleTabs value={role} onChange={setRole} />}
         <div className="flex gap-1">
           {TIER_ORDER.map((t) => (
-            <button key={t} onClick={() => setTierFilter((cur) => (cur === t ? null : t))} className={tierFilter && tierFilter !== t ? 'opacity-35' : ''}>
+            <button
+              key={t}
+              onClick={() => setTierFilter((cur) => (cur === t ? null : t))}
+              className={tierFilter && tierFilter !== t ? 'opacity-35' : ''}
+            >
               <TierBadge tier={t} size="sm" />
             </button>
           ))}
@@ -144,7 +156,9 @@ export function TierList() {
                     className="cursor-pointer border-b border-line/50 transition last:border-0 hover:bg-panel-2"
                     onClick={() => navigate(`/champion/${e.championId}/${e.role}`)}
                   >
-                    <td className="px-3 py-2 text-center font-semibold text-muted">{sort.key === 'rank' && (role !== 'ALL' || aram) ? e.rank : i + 1}</td>
+                    <td className="px-3 py-2 text-center font-semibold text-muted">
+                      {sort.key === 'rank' && (role !== 'ALL' || aram) ? e.rank : i + 1}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-3">
                         <ChampIcon id={e.championId} size={38} tooltip={false} />

@@ -63,7 +63,10 @@ export interface RawGame {
   queueId: number
   gameMode: string
   participants: { participantId: number; championId: number; teamId: number; stats: Record<string, unknown> }[]
-  participantIdentities?: { participantId: number; player?: { puuid?: string; gameName?: string; tagLine?: string; summonerName?: string } }[]
+  participantIdentities?: {
+    participantId: number
+    player?: { puuid?: string; gameName?: string; tagLine?: string; summonerName?: string }
+  }[]
 }
 
 export interface RawTimeline {
@@ -137,7 +140,12 @@ export function explainImpact(players: SummaryPlayer[], puuid: string): ImpactFa
     { label: 'Deaths of the team', value: pct(share((x) => x.deaths)), avg: pct(even), points: -36 * (share((x) => x.deaths) - even) },
     { label: 'Kill participation', value: pct(kp), avg: '50 %', points: 18 * (kp - 0.5) },
     { label: 'Damage soaked', value: pct(share((x) => x.tanked)), avg: pct(even), points: 14 * (share((x) => x.tanked) - even) },
-    { label: 'Heals & shields on allies', value: pct(share((x) => x.support)), avg: pct(even), points: 12 * (share((x) => x.support) - even) }
+    {
+      label: 'Heals & shields on allies',
+      value: pct(share((x) => x.support)),
+      avg: pct(even),
+      points: 12 * (share((x) => x.support) - even)
+    }
   ]
   return f.sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
 }
@@ -226,12 +234,19 @@ export function buildSummary(
     else if (top.gold > 1000) h.push(`Biggest lead: +${k(top.gold)} gold at ${clock(top.t)}.`)
     if (low.gold < -1000 && !(win && low.gold < -2500)) h.push(`Biggest deficit: −${k(low.gold)} gold at ${clock(low.t)}.`)
   }
-  const most = <K extends keyof SummaryPlayer>(key: K, list = players) => [...list].sort((a, b) => (b[key] as number) - (a[key] as number))[0]
+  const most = <K extends keyof SummaryPlayer>(key: K, list = players) =>
+    [...list].sort((a, b) => (b[key] as number) - (a[key] as number))[0]
   const dmgTop = most('damage')
   if (dmgTop) h.push(`Most damage: ${name(dmgTop)} (${(dmgTop.damage / 1000).toFixed(1)}k).`)
-  const deathTop = most('deaths', players.filter((p) => p.ally))
+  const deathTop = most(
+    'deaths',
+    players.filter((p) => p.ally)
+  )
   if (deathTop && deathTop.deaths > 0) h.push(`Most deaths on your team: ${name(deathTop)} (${deathTop.deaths}).`)
-  const tankTop = most('tanked', players.filter((p) => p.ally))
+  const tankTop = most(
+    'tanked',
+    players.filter((p) => p.ally)
+  )
   if (tankTop) h.push(`Frontline: ${name(tankTop)} soaked ${(tankTop.tanked / 1000).toFixed(1)}k damage.`)
   const allyKills = players.filter((p) => p.ally).reduce((s, p) => s + p.kills, 0)
   const enemyKills = players.filter((p) => !p.ally).reduce((s, p) => s + p.kills, 0)

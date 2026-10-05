@@ -7,7 +7,7 @@
 export type AugmentFit = 'ap' | 'ad' | 'crit' | 'onhit' | 'tank' | 'sup' | 'any'
 
 export const AUGMENT_NOTES: Record<number, [string, AugmentFit[]]> = {
-  1001: ["Stacks fast in teamfights – tanks and bruisers become unkillable", ['tank', 'ad']],
+  1001: ['Stacks fast in teamfights – tanks and bruisers become unkillable', ['tank', 'ad']],
   1002: ['Item actives on half cooldown – great with Zhonya/Stopwatch/Everfrost', ['any']],
   1004: ['No ultimate, but huge ability damage – best for basic-ability champs', ['ap', 'ad', 'sup']],
   1005: ['Stronger heals and shields on low allies – enchanter pick', ['sup']],

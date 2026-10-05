@@ -78,7 +78,9 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
   if (!championId)
     return (
       <div className="pointer-events-none fixed inset-0 select-none">
-        <div className={`overlay-panel absolute ${part === 'panel' ? 'right-1 top-1' : 'right-3 top-[14%]'} flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#f0e6d2]`}>
+        <div
+          className={`overlay-panel absolute ${part === 'panel' ? 'right-1 top-1' : 'right-3 top-[14%]'} flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#f0e6d2]`}
+        >
           <Sparkles size={14} className="text-gold" /> Augments
           <span className="text-[10px] font-medium text-muted">waiting for your champion…</span>
         </div>
@@ -89,9 +91,7 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none">
-      {part === 'demo' && offer && (
-        <CardFrames offer={offer} tierById={tierById} animation={settings?.overlay.animation ?? 'smooth'} />
-      )}
+      {part === 'demo' && offer && <CardFrames offer={offer} tierById={tierById} animation={settings?.overlay.animation ?? 'smooth'} />}
       <div
         className={`pointer-events-auto absolute ${part === 'panel' ? 'right-1 top-1' : 'right-3 top-[14%]'}`}
         onMouseEnter={() => setHover(true)}
@@ -114,9 +114,7 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
               <ChampIcon id={championId} size={34} tooltip={false} className="ring-1 ring-gold/50" />
               <div className="min-w-0 flex-1">
                 <div className="overlay-title truncate text-sm font-bold uppercase">{statics.champions[championId]?.name}</div>
-                <div className="text-[10px] text-muted">
-                  ARAM: Mayhem · augment tiers{level ? ` · level ${level}` : ''}
-                </div>
+                <div className="text-[10px] text-muted">ARAM: Mayhem · augment tiers{level ? ` · level ${level}` : ''}</div>
               </div>
               <button onClick={() => setExpanded(false)} className="rounded p-1 text-muted hover:text-text" title={`Hide (${hotkey})`}>
                 <X size={15} />
@@ -172,7 +170,11 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
                       {RARITY_LABELS[focus.augment.rarity]}
                     </span>
                     <span className="ml-auto text-[10px] text-muted">
-                      {focus.combo ? COMBO_TYPE_LABELS[focus.combo] : focus.augment.pickRate != null ? `picked ${focus.augment.pickRate.toFixed(1)}%` : ''}
+                      {focus.combo
+                        ? COMBO_TYPE_LABELS[focus.combo]
+                        : focus.augment.pickRate != null
+                          ? `picked ${focus.augment.pickRate.toFixed(1)}%`
+                          : ''}
                     </span>
                   </div>
                   <div className="mt-0.5 text-[11px] text-text/85">
@@ -185,8 +187,8 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
               )}
             </div>
             <div className="mt-2 border-t border-white/10 pt-2 text-[9px] leading-snug text-muted">
-              Tiers = curated combos + pick rate + champion fit (no win rates – Riot asks devs not to publish them). Data:
-              arammayhem.com (CC BY 4.0)
+              Tiers = curated combos + pick rate + champion fit (no win rates – Riot asks devs not to publish them). Data: arammayhem.com
+              (CC BY 4.0)
             </div>
           </div>
         )}
@@ -194,4 +196,3 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
     </div>
   )
 }
-

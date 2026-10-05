@@ -94,9 +94,7 @@ export function parseChampSelect(
   const allies = session.myTeam.map((c) => toPlayer(c, 'ally'))
   const enemies = (session.theirTeam ?? []).map((c) => toPlayer(c, 'enemy'))
   const me = allies.find((p) => p.isLocal)
-  const locked = actions.some(
-    (a) => a.type === 'pick' && a.actorCellId === session.localPlayerCellId && a.completed && a.championId > 0
-  )
+  const locked = actions.some((a) => a.type === 'pick' && a.actorCellId === session.localPlayerCellId && a.completed && a.championId > 0)
   const bans = actions.filter((a) => a.type === 'ban' && a.completed && a.championId > 0).map((a) => a.championId)
   return {
     active: true,
@@ -157,7 +155,10 @@ export function buildItemSet(build: ChampionBuild, data: StaticData) {
 
   build.starters.slice(0, 2).forEach((s, i) => block(`${i ? 'Alternative start' : 'Starting items'} (${pct(s.winRate)} WR)`, s.value))
   if (build.core[0]) block(`Core build (${pct(build.core[0].winRate)} WR, ${build.core[0].g} games)`, build.core[0].value)
-  block('Boots', build.boots.slice(0, 2).map((b) => b.value))
+  block(
+    'Boots',
+    build.boots.slice(0, 2).map((b) => b.value)
+  )
   const seen = new Set(build.core[0]?.value ?? [])
   const late = build.late
     .flat()

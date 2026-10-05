@@ -29,23 +29,20 @@ export function Mayhem() {
   }, [champQuery, statics])
 
   return (
-    <div className="fade-in mx-auto max-w-6xl p-8">
-      <PageHeader
-        title="ARAM: Mayhem"
-        subtitle="Augment tiers per champion, most picked augments and your own Mayhem stats"
-      />
+    <div className="page-enter mx-auto max-w-6xl p-8">
+      <PageHeader title="ARAM: Mayhem" subtitle="Augment tiers per champion, most picked augments and your own Mayhem stats" />
 
       <div className="panel mb-5 flex gap-3 border-gold/30 p-4 text-sm text-muted">
         <Info size={18} className="mt-0.5 shrink-0 text-gold" />
         <p>
-          Riot does not expose Mayhem matches in the official API and asks developers not to publish augment win rates.
-          ratioAI therefore rates augments by <b className="text-text">curated combos, pick rates and champion fit</b> (open
-          dataset of arammayhem.com, China servers) and shows your <b className="text-text">own</b> Mayhem results from the
-          League client. Items & runes for Mayhem come from your crawled ARAM games.
+          Riot does not expose Mayhem matches in the official API and asks developers not to publish augment win rates. ratioAI therefore
+          rates augments by <b className="text-text">curated combos, pick rates and champion fit</b> (open dataset of arammayhem.com, China
+          servers) and shows your <b className="text-text">own</b> Mayhem results from the League client. Items & runes for Mayhem come from
+          your crawled ARAM games.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+      <div className="stagger grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
         <section className="panel p-5">
           <div className="mb-4 flex items-center gap-3">
             <ChampIcon id={championId} size={48} tooltip={false} />

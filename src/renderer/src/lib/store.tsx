@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type {
   ChampSelectState,
   ClientStatus,
@@ -31,6 +31,11 @@ interface AppState {
 }
 
 const Ctx = createContext<AppState | null>(null)
+/**
+ * Static game data on its own: hundreds of icons read it, and they must not re-render every second
+ * when the live game state (part of the big context) changes.
+ */
+const DataCtx = createContext<StaticData | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<StaticData | null>(null)
@@ -109,29 +114,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     api.getStatic().then(setData)
   }, [language, data])
 
+  const value = useMemo<AppState>(
+    () => ({
+      data,
+      dataError,
+      settings,
+      setSettings,
+      mode,
+      setMode,
+      patches,
+      patch,
+      setPatch,
+      refreshPatches,
+      statsVersion,
+      client,
+      champSelect,
+      live,
+      crawler,
+      lastImport
+    }),
+    [data, dataError, settings, mode, setMode, patches, patch, refreshPatches, statsVersion, client, champSelect, live, crawler, lastImport]
+  )
   return (
-    <Ctx.Provider
-      value={{
-        data,
-        dataError,
-        settings,
-        setSettings,
-        mode,
-        setMode,
-        patches,
-        patch,
-        setPatch,
-        refreshPatches,
-        statsVersion,
-        client,
-        champSelect,
-        live,
-        crawler,
-        lastImport
-      }}
-    >
-      {children}
-    </Ctx.Provider>
+    <DataCtx.Provider value={data}>
+      <Ctx.Provider value={value}>{children}</Ctx.Provider>
+    </DataCtx.Provider>
   )
 }
 
@@ -139,6 +146,11 @@ export function useApp(): AppState {
   const ctx = useContext(Ctx)
   if (!ctx) throw new Error('useApp outside AppProvider')
   return ctx
+}
+
+/** Only the static game data (champions, items, …) – for components that need nothing else. */
+export function useGameData(): StaticData | null {
+  return useContext(DataCtx)
 }
 
 /** Small async helper: re-runs the loader whenever deps change. */

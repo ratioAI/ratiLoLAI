@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState } from 'react'
+import { StrictMode, Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import '@fontsource/inter/400.css'
@@ -11,16 +11,33 @@ import '@fontsource/syne/800.css'
 import './styles.css'
 import { AppProvider, useApp } from './lib/store'
 import { Layout, Spinner } from './components/Layout'
-import { Home } from './pages/Home'
-import { TierList } from './pages/TierList'
-import { Champions } from './pages/Champions'
-import { ChampionPage } from './pages/Champion'
-import { Live } from './pages/Live'
-import { GameDetail, Games } from './pages/Games'
-import { Profile } from './pages/Profile'
-import { Data } from './pages/Data'
-import { Settings } from './pages/Settings'
-import { Mayhem } from './pages/Mayhem'
+
+// Pages are separate chunks: the overlay windows (which load the same bundle) never parse them, and
+// the main window prefetches them right after its first paint so switching tabs stays instant.
+const pages = {
+  Home: () => import('./pages/Home').then((m) => ({ default: m.Home })),
+  TierList: () => import('./pages/TierList').then((m) => ({ default: m.TierList })),
+  Champions: () => import('./pages/Champions').then((m) => ({ default: m.Champions })),
+  ChampionPage: () => import('./pages/Champion').then((m) => ({ default: m.ChampionPage })),
+  Live: () => import('./pages/Live').then((m) => ({ default: m.Live })),
+  Games: () => import('./pages/Games').then((m) => ({ default: m.Games })),
+  GameDetail: () => import('./pages/Games').then((m) => ({ default: m.GameDetail })),
+  Profile: () => import('./pages/Profile').then((m) => ({ default: m.Profile })),
+  Data: () => import('./pages/Data').then((m) => ({ default: m.Data })),
+  Settings: () => import('./pages/Settings').then((m) => ({ default: m.Settings })),
+  Mayhem: () => import('./pages/Mayhem').then((m) => ({ default: m.Mayhem }))
+}
+const Home = lazy(pages.Home)
+const TierList = lazy(pages.TierList)
+const Champions = lazy(pages.Champions)
+const ChampionPage = lazy(pages.ChampionPage)
+const Live = lazy(pages.Live)
+const Games = lazy(pages.Games)
+const GameDetail = lazy(pages.GameDetail)
+const Profile = lazy(pages.Profile)
+const Data = lazy(pages.Data)
+const Settings = lazy(pages.Settings)
+const Mayhem = lazy(pages.Mayhem)
 import { Overlay } from './pages/Overlay'
 import { TripBackground } from './components/TripBackground'
 import { CosmosBackground, JUMP_MS, cosmicSeed } from './components/CosmosBackground'
@@ -148,21 +165,29 @@ function MainShell() {
   }
   return (
     <Layout>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/tierlist" element={<TierList />} />
-        <Route path="/champions" element={<Champions />} />
-        <Route path="/champion/:id/:role?" element={<ChampionPage />} />
-        <Route path="/live" element={<Live />} />
-        <Route path="/games" element={<Games />} />
-        <Route path="/games/:id" element={<GameDetail />} />
-        <Route path="/mayhem" element={<Mayhem />} />
-        <Route path="/profile" element={<Profile />} />
-        <Route path="/data" element={<Data />} />
-        <Route path="/settings" element={<Settings />} />
-      </Routes>
+      <Suspense fallback={null}>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/tierlist" element={<TierList />} />
+          <Route path="/champions" element={<Champions />} />
+          <Route path="/champion/:id/:role?" element={<ChampionPage />} />
+          <Route path="/live" element={<Live />} />
+          <Route path="/games" element={<Games />} />
+          <Route path="/games/:id" element={<GameDetail />} />
+          <Route path="/mayhem" element={<Mayhem />} />
+          <Route path="/profile" element={<Profile />} />
+          <Route path="/data" element={<Data />} />
+          <Route path="/settings" element={<Settings />} />
+        </Routes>
+      </Suspense>
     </Layout>
   )
+}
+
+if (!window.location.hash.startsWith('#/overlay')) {
+  const prefetch = () => Object.values(pages).forEach((load) => void load())
+  if ('requestIdleCallback' in window) requestIdleCallback(prefetch, { timeout: 3000 })
+  else setTimeout(prefetch, 1500)
 }
 
 createRoot(document.getElementById('root')!).render(

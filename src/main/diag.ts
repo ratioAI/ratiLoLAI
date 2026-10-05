@@ -20,7 +20,9 @@ export class DiagLog {
     this.queue = this.queue
       .then(async () => {
         await mkdir(dirname(file), { recursive: true })
-        const size = await stat(file).then((s) => s.size).catch(() => 0)
+        const size = await stat(file)
+          .then((s) => s.size)
+          .catch(() => 0)
         if (size > 1_000_000) await rename(file, file + '.old').catch(() => undefined)
         await appendFile(file, `${new Date().toISOString()} ${msg}\n`)
       })

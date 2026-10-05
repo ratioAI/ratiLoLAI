@@ -2,7 +2,21 @@ import { existsSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import type { ChampionBuild, GameMode, LiveGameState, PatchStats, Platform, RcEvents, Settings, StatRole, TierEntry, UpdateState, OverlayDiagnostics, MinimapState, AugmentOffer } from '@shared/types'
+import type {
+  ChampionBuild,
+  GameMode,
+  LiveGameState,
+  PatchStats,
+  Platform,
+  RcEvents,
+  Settings,
+  StatRole,
+  TierEntry,
+  UpdateState,
+  OverlayDiagnostics,
+  MinimapState,
+  AugmentOffer
+} from '@shared/types'
 import { PLATFORMS, QUEUE_IDS } from '@shared/types'
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { Crawler } from './crawler/crawler'
@@ -52,8 +66,18 @@ const mayhem = new MayhemService(join(userData, 'mayhem.json'), settings.get().l
 
 let win: BrowserWindow | null = null
 
+/** Events the overlay windows listen to – everything else only goes to the main window. */
+const OVERLAY_EVENTS = new Set<keyof RcEvents>(['live', 'overlayToggle', 'augmentCards', 'overlayPreview', 'augmentsOwned', 'minimap'])
+// ('loading' and 'framesOffer' are sent to their window directly, with window-specific data)
+
+/**
+ * Sends an event to the windows that use it: the main window gets everything, the overlay windows
+ * only their few events, the hidden capture page none. Every send is a structured clone plus an
+ * IPC hop per window – and the live state goes out every second during a game.
+ */
 function emit<K extends keyof RcEvents>(event: K, payload: RcEvents[K]): void {
-  for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('rc:event', event, payload)
+  if (win && !win.isDestroyed()) win.webContents.send('rc:event', event, payload)
+  if (OVERLAY_EVENTS.has(event)) overlay.broadcast(event, payload)
 }
 
 function loadRenderer(w: BrowserWindow, hash = ''): void {
@@ -179,10 +203,27 @@ let loadingHidden = false
 /** the galaxy of the current game – the loading screen shows the one the app jumped to */
 let cosmosSeed = Date.now()
 
+/** set while the loading screen plays its way out of the wormhole after the game has loaded */
+let arriving: NodeJS.Timeout | null = null
+
 function refreshLoading(): void {
   const state = lcu.getLoading()
   const live = lcu.getLive()
   const started = !!live?.active && live.gameTime > 1
+  // the game is there: let the loading screen come out of the wormhole before it closes
+  if (state && started && overlay.loading.visible && !arriving) {
+    void overlay.loading.send('loadingArrive', null)
+    arriving = setTimeout(() => {
+      overlay.hideLoading()
+      overlay.holdKey(null)
+    }, 4300)
+    return
+  }
+  if (arriving) {
+    if (state && started) return
+    clearTimeout(arriving)
+    arriving = null
+  }
   const want = !!state && !started && settings.get().overlay.loadingScreen
   if (want) {
     overlay.holdKey('Space', () => {
@@ -483,10 +524,8 @@ function registerIpc(): void {
   handle('clientStatus', () => lcu.getStatus())
   handle('champSelect', () => lcu.getChampSelect())
   handle('liveGame', () => lcu.getLive())
-  handle(
-    'importBuild',
-    (championId: number, role: StatRole | null, what: ('runes' | 'items' | 'spells')[] | undefined, mode: GameMode) =>
-      lcu.importBuild(championId, role, what, assertMode(mode))
+  handle('importBuild', (championId: number, role: StatRole | null, what: ('runes' | 'items' | 'spells')[] | undefined, mode: GameMode) =>
+    lcu.importBuild(championId, role, what, assertMode(mode))
   )
   handle('getMayhemData', () => mayhem.get())
   handle('getMayhemPersonal', () => lcu.personalMayhem())
@@ -640,7 +679,21 @@ void app.whenReady().then(async () => {
       activeChampion: 'Thresh',
       activeChampionKey: 'Thresh',
       players: [
-        { riotId: 'me#1', championName: 'Thresh', team: 'ORDER', level: 1, kills: 0, deaths: 0, assists: 0, creepScore: 0, items: [], spells: [], position: '', isDead: true, respawnTimer: 5 }
+        {
+          riotId: 'me#1',
+          championName: 'Thresh',
+          team: 'ORDER',
+          level: 1,
+          kills: 0,
+          deaths: 0,
+          assists: 0,
+          creepScore: 0,
+          items: [],
+          spells: [],
+          position: '',
+          isDead: true,
+          respawnTimer: 5
+        }
       ],
       events: [],
       inhibitorEvents: [{ type: 'killed', inhibitor: 'Barracks_T2_L1', time: gameTime - 60 }]
@@ -656,8 +709,13 @@ void app.whenReady().then(async () => {
     const { writeFileSync } = await import('node:fs')
     for (let i = 0; i < 100 && !overlay.frames.visible; i++) await new Promise((r) => setTimeout(r, 50))
     await new Promise((r) => setTimeout(r, 700))
-    for (const [name, part] of [['frames', overlay.frames], ['panel', overlay.panel], ['minimap', overlay.minimap]] as const) {
-      if (part.win?.isVisible()) writeFileSync(join(userData, 'logs', `part-${name}.png`), (await part.win.webContents.capturePage()).toPNG())
+    for (const [name, part] of [
+      ['frames', overlay.frames],
+      ['panel', overlay.panel],
+      ['minimap', overlay.minimap]
+    ] as const) {
+      if (part.win?.isVisible())
+        writeFileSync(join(userData, 'logs', `part-${name}.png`), (await part.win.webContents.capturePage()).toPNG())
     }
     await new Promise((r) => setTimeout(r, Number(process.env.RC_GAME_SELFTEST_MS ?? 6000)))
     clearInterval(timer)
@@ -673,7 +731,10 @@ void app.whenReady().then(async () => {
         bgra[i] = bgra[i + 2]
         bgra[i + 2] = r
       }
-      writeFileSync(join(userData, 'logs', 'game-selftest.png'), nativeImage.createFromBitmap(bgra, { width: f.width, height: f.height }).toPNG())
+      writeFileSync(
+        join(userData, 'logs', 'game-selftest.png'),
+        nativeImage.createFromBitmap(bgra, { width: f.width, height: f.height }).toPNG()
+      )
     }
     app.exit(0)
     return

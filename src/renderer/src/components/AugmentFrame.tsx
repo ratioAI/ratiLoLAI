@@ -66,20 +66,20 @@ export function AugmentFrame({
           rounded="rounded-none"
           tooltip={
             onHover ? undefined : (
-            <span className="block max-w-[240px]">
-              <span className="flex items-center gap-2">
-                <b>{augment.name}</b>
-                <span className="rounded px-1 text-[10px] font-black text-bg" style={{ background: 'var(--color-gold)' }}>
-                  {tier}
+              <span className="block max-w-[240px]">
+                <span className="flex items-center gap-2">
+                  <b>{augment.name}</b>
+                  <span className="rounded px-1 text-[10px] font-black text-bg" style={{ background: 'var(--color-gold)' }}>
+                    {tier}
+                  </span>
                 </span>
+                <span className="block text-[11px]" style={{ color: RARITY_COLORS[augment.rarity] }}>
+                  {RARITY_LABELS[augment.rarity]}
+                  {augment.pickRate != null && <span className="text-muted"> · picked {augment.pickRate.toFixed(1)}%</span>}
+                </span>
+                {note && <span className="mt-1 block text-text/90">{note}</span>}
+                {extra}
               </span>
-              <span className="block text-[11px]" style={{ color: RARITY_COLORS[augment.rarity] }}>
-                {RARITY_LABELS[augment.rarity]}
-                {augment.pickRate != null && <span className="text-muted"> · picked {augment.pickRate.toFixed(1)}%</span>}
-              </span>
-              {note && <span className="mt-1 block text-text/90">{note}</span>}
-              {extra}
-            </span>
             )
           }
         />

@@ -18,7 +18,7 @@ export function Data() {
   const platforms = settings ? [settings.platform, ...settings.crawler.extraPlatforms.filter((p) => p !== settings.platform)] : []
 
   return (
-    <div className="fade-in mx-auto max-w-5xl p-8">
+    <div className="page-enter mx-auto max-w-5xl p-8">
       <PageHeader
         title="Data & crawler"
         subtitle="Collects ranked or ARAM matches through the official Riot API and computes tier lists, builds and matchups from them."
@@ -79,7 +79,12 @@ export function Data() {
           <Metric label="API requests" value={num(crawler?.requests ?? 0)} />
           <Metric label="Old-patch games skipped" value={num(crawler?.skippedOldPatch ?? 0)} />
           <Metric label="Regions" value={platforms.map((p) => PLATFORMS[p].label).join(', ') || '–'} />
-          <Metric label="Seed" value={settings?.crawler.seedTiers.map((t) => ({ CHALLENGER: 'Chall', GRANDMASTER: 'GM', MASTER: 'Master' })[t]).join(' · ') || '–'} />
+          <Metric
+            label="Seed"
+            value={
+              settings?.crawler.seedTiers.map((t) => ({ CHALLENGER: 'Chall', GRANDMASTER: 'GM', MASTER: 'Master' })[t]).join(' · ') || '–'
+            }
+          />
         </div>
       </div>
 
@@ -120,11 +125,14 @@ export function Data() {
             <li>Downloads their recent matches incl. timeline (purchase order, skills).</li>
             <li>Only counts games of the current patch; remakes are ignored.</li>
             <li>Computes win rate (Bayesian-smoothed), pick & ban rate and the tiers from them.</li>
-            <li>ARAM: starts with high-elo players and adds everyone from each ARAM game to the pool. These builds are also used for ARAM: Mayhem (Riot blocks Mayhem itself in the API).</li>
+            <li>
+              ARAM: starts with high-elo players and adds everyone from each ARAM game to the pool. These builds are also used for ARAM:
+              Mayhem (Riot blocks Mayhem itself in the API).
+            </li>
           </ol>
           <p className="mt-3">
-            A development or personal key allows 100 requests / 2 min – about <b className="text-text">20–25 matches per minute</b> (each match needs 2 requests).
-            Let it run in the background – progress is saved continuously and resumed on every start.
+            A development or personal key allows 100 requests / 2 min – about <b className="text-text">20–25 matches per minute</b> (each
+            match needs 2 requests). Let it run in the background – progress is saved continuously and resumed on every start.
           </p>
         </div>
       </div>

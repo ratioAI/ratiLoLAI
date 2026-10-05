@@ -33,7 +33,7 @@ export function Champions() {
   }, [data, query, role, best, mode])
 
   return (
-    <div className="fade-in mx-auto max-w-6xl p-8">
+    <div className="page-enter mx-auto max-w-6xl p-8">
       <PageHeader title="Champions" subtitle={`${champs.length} champions · click for builds, runes & matchups`}>
         <input autoFocus className="input w-64" placeholder="Search champion …" value={query} onChange={(e) => setQuery(e.target.value)} />
       </PageHeader>
@@ -42,7 +42,7 @@ export function Champions() {
           <RoleTabs value={role} onChange={setRole} />
         </div>
       )}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-3">
+      <div className="stagger grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-3">
         {champs.map((c) => {
           const t = best.get(c.key)
           return (

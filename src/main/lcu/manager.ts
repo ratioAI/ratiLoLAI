@@ -185,9 +185,7 @@ export class LcuManager {
 
   private async fetchQueue(): Promise<void> {
     try {
-      const session = await this.client?.get<{ gameData?: { queue?: { id?: number; gameMode?: string } } }>(
-        '/lol-gameflow/v1/session'
-      )
+      const session = await this.client?.get<{ gameData?: { queue?: { id?: number; gameMode?: string } } }>('/lol-gameflow/v1/session')
       this.queue = { id: session?.gameData?.queue?.id ?? null, gameMode: session?.gameData?.queue?.gameMode ?? null }
     } catch {
       this.queue = { id: null, gameMode: null }
@@ -282,17 +280,13 @@ export class LcuManager {
   }
 
   private async riotIdOf(puuid: string): Promise<string> {
-    const s = await this.client
-      ?.get<{ gameName?: string; tagLine?: string }>(`/lol-summoner/v2/summoners/puuid/${puuid}`)
-      .catch(() => null)
+    const s = await this.client?.get<{ gameName?: string; tagLine?: string }>(`/lol-summoner/v2/summoners/puuid/${puuid}`).catch(() => null)
     return s?.gameName ? `${s.gameName}#${s.tagLine ?? ''}` : ''
   }
 
   /** Remembers who is in your party (lobby) – shown as premades during the game. */
   private async fetchParty(): Promise<void> {
-    const lobby = await this.client
-      ?.get<{ members?: { puuid?: string }[] }>('/lol-lobby/v2/lobby')
-      .catch(() => null)
+    const lobby = await this.client?.get<{ members?: { puuid?: string }[] }>('/lol-lobby/v2/lobby').catch(() => null)
     const me = this.status.summoner?.puuid
     const puuids = (lobby?.members ?? []).map((m) => m.puuid).filter((p): p is string => !!p && p !== me)
     if (!puuids.length && !lobby) return // no lobby right now – keep what we knew
@@ -309,9 +303,9 @@ export class LcuManager {
     if (!client) return
     type SessionPlayer = { puuid?: string; championId?: number; gameName?: string; tagLine?: string; summonerName?: string }
     const session = await client
-      .get<{ gameData?: { gameId?: number; queue?: { id?: number; gameMode?: string }; teamOne?: SessionPlayer[]; teamTwo?: SessionPlayer[] } }>(
-        '/lol-gameflow/v1/session'
-      )
+      .get<{
+        gameData?: { gameId?: number; queue?: { id?: number; gameMode?: string }; teamOne?: SessionPlayer[]; teamTwo?: SessionPlayer[] }
+      }>('/lol-gameflow/v1/session')
       .catch(() => null)
     const g = session?.gameData
     const queue = g?.queue?.id ?? null
@@ -324,11 +318,11 @@ export class LcuManager {
     if (!g || !mode || g.gameId === this.loadingGame) return
     this.loadingGame = g.gameId ?? null
     const me = this.status.summoner?.puuid
-    const mine = (g.teamOne ?? []).some((p) => p.puuid === me) ? g.teamOne ?? [] : g.teamTwo ?? []
+    const mine = (g.teamOne ?? []).some((p) => p.puuid === me) ? (g.teamOne ?? []) : (g.teamTwo ?? [])
     const all = [...(g.teamOne ?? []), ...(g.teamTwo ?? [])].filter((p) => p.puuid)
     const players: LoadingPlayer[] = all.map((p) => ({
       puuid: p.puuid!,
-      riotId: p.gameName ? `${p.gameName}#${p.tagLine ?? ''}` : p.summonerName ?? '',
+      riotId: p.gameName ? `${p.gameName}#${p.tagLine ?? ''}` : (p.summonerName ?? ''),
       championId: p.championId ?? 0,
       ally: mine.includes(p),
       me: p.puuid === me,
@@ -433,10 +427,15 @@ export class LcuManager {
 
   // --- live game ------------------------------------------------------------
 
+  /** bumped on every stop – a request still in flight then must not schedule the next poll */
+  private liveGen = 0
+
   private startLivePolling(): void {
     if (this.liveTimer) return
+    const gen = this.liveGen
     const poll = async (): Promise<void> => {
       const state = parseLiveData(await fetchAllGameData())
+      if (gen !== this.liveGen) return // the game ended while the request was running
       if (state) state.premades = this.premades
       this.liveState = state
       this.deps.emit.live(state)
@@ -446,6 +445,7 @@ export class LcuManager {
   }
 
   private stopLivePolling(): void {
+    this.liveGen++
     if (this.liveTimer) clearTimeout(this.liveTimer)
     this.liveTimer = null
     if (this.liveState) {
@@ -501,9 +501,7 @@ export class LcuManager {
   /** The player's own ARAM: Mayhem games from the client's match history. */
   async personalMayhem(): Promise<MayhemPersonal | null> {
     if (!this.client) return null
-    const history = await this.client.get<LcuHistory>(
-      '/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=100'
-    )
+    const history = await this.client.get<LcuHistory>('/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=100')
     return personalMayhemStats(history, this.status.summoner?.puuid ?? null)
   }
 
