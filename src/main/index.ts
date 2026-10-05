@@ -225,27 +225,10 @@ let loadingHidden = false
 /** the galaxy of the current game – the loading screen shows the one the app jumped to */
 let cosmosSeed = Date.now()
 
-/** set while the loading screen plays its way out of the wormhole after the game has loaded */
-let arriving: NodeJS.Timeout | null = null
-
 function refreshLoading(): void {
   const state = lcu.getLoading()
   const live = lcu.getLive()
   const started = !!live?.active && live.gameTime > 1
-  // the game is there: let the loading screen come out of the wormhole before it closes
-  if (state && started && overlay.loading.visible && !arriving) {
-    void overlay.loading.send('loadingArrive', null)
-    arriving = setTimeout(() => {
-      overlay.hideLoading()
-      overlay.holdKey(null)
-    }, 4300)
-    return
-  }
-  if (arriving) {
-    if (state && started) return
-    clearTimeout(arriving)
-    arriving = null
-  }
   const want = !!state && !started && settings.get().overlay.loadingScreen
   if (want) {
     overlay.holdKey('Space', () => {

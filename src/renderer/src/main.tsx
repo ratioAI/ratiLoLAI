@@ -41,6 +41,7 @@ const Mayhem = lazy(pages.Mayhem)
 import { Overlay } from './pages/Overlay'
 import { TripBackground } from './components/TripBackground'
 import { CosmosBackground, JUMP_MS, cosmicSeed } from './components/CosmosBackground'
+import { JourneyCanvas } from './components/JourneyCanvas'
 import { api } from './lib/api'
 import { OverlayFrames } from './pages/OverlayFrames'
 import { OverlayMinimap } from './pages/OverlayMinimap'
@@ -90,8 +91,8 @@ function useCosmos(onArrive: () => void): { seed: number; journey: { from: numbe
   return { seed, journey }
 }
 
-/** The jump through the wormhole over the whole window; fades out when the new galaxy is reached. */
-function JourneyOverlay({ journey, mode }: { journey: { from: number; to: number; key: number }; mode: 'animated' | 'calm' | 'static' }) {
+/** The flight to the next planet over the whole window; fades out once we have landed. */
+function JourneyOverlay({ journey }: { journey: { from: number; to: number; key: number } }) {
   const [leaving, setLeaving] = useState(false)
   useEffect(() => {
     const t = setTimeout(() => setLeaving(true), JUMP_MS - 200)
@@ -103,15 +104,7 @@ function JourneyOverlay({ journey, mode }: { journey: { from: number; to: number
       style={{ opacity: leaving ? 0 : 1, animation: 'fade 0.6s ease-out' }}
       aria-hidden
     >
-      <CosmosBackground
-        key={journey.key}
-        seed={journey.to}
-        from={journey.from}
-        jumpOnMount
-        mode={mode === 'static' ? 'animated' : mode}
-        inGame={false}
-        className="h-full w-full"
-      />
+      <JourneyCanvas key={journey.key} from={journey.from} to={journey.to} />
     </div>
   )
 }
@@ -134,12 +127,12 @@ function Shell() {
   return (
     <>
       {location.pathname.startsWith('/games') ? (
-        <CosmosBackground seed={seed} mode={bg} inGame={!!live?.active} animateChanges={false} />
+        <CosmosBackground seed={seed} mode={bg} inGame={!!live?.active} />
       ) : (
         <TripBackground mode={settings?.ui.background ?? 'animated'} inGame={!!live?.active} />
       )}
       <MainShell />
-      {journey && bg !== 'static' && <JourneyOverlay key={journey.key} journey={journey} mode={bg} />}
+      {journey && bg !== 'static' && <JourneyOverlay key={journey.key} journey={journey} />}
     </>
   )
 }
