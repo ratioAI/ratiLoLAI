@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { GameMode, PatchStats } from '@shared/types'
 import { emptyPatchStats } from './aggregator'
 
+/** Stats of one patch plus the match ids already counted, so a match is never added twice. */
 interface Stored {
   stats: PatchStats
   processed: Set<string>
@@ -15,7 +16,7 @@ export class StatsStore {
 
   constructor(private readonly dir: string) {}
 
-  /** Ranked keeps the v0.1 file names (stats-15.19.json); other modes are prefixed (stats-aram-15.19.json). */
+  /** Ranked keeps the old v0.1 file names (stats-15.19.json), other modes get a prefix (stats-aram-15.19.json). */
   private prefix(mode: GameMode): string {
     return mode === 'ranked' ? '' : `${mode}-`
   }
@@ -32,26 +33,26 @@ export class StatsStore {
   async patches(mode: GameMode = 'ranked'): Promise<{ patch: string; matches: number; updatedAt: number }[]> {
     await mkdir(this.dir, { recursive: true })
     const files = await readdir(this.dir)
-    const re = mode === 'ranked' ? /^stats-(\d+\.\d+)\.json$/ : new RegExp(`^stats-${mode}-(\\d+\\.\\d+)\\.json$`)
-    const patches = files.map((f) => re.exec(f)?.[1]).filter((p): p is string => !!p)
+    const filePattern = mode === 'ranked' ? /^stats-(\d+\.\d+)\.json$/ : new RegExp(`^stats-${mode}-(\\d+\\.\\d+)\\.json$`)
+    const patches = files.map((file) => filePattern.exec(file)?.[1]).filter((patch): patch is string => !!patch)
     const result = await Promise.all(
-      patches.map(async (p) => {
-        const { stats } = await this.load(p, mode)
-        return { patch: p, matches: stats.matches, updatedAt: stats.updatedAt }
+      patches.map(async (patch) => {
+        const { stats } = await this.load(patch, mode)
+        return { patch, matches: stats.matches, updatedAt: stats.updatedAt }
       })
     )
     return result.sort((a, b) => b.patch.localeCompare(a.patch, undefined, { numeric: true }))
   }
 
   async load(patch: string, mode: GameMode = 'ranked'): Promise<Stored> {
-    const k = this.key(patch, mode)
-    const cached = this.cache.get(k)
+    const cacheKey = this.key(patch, mode)
+    const cached = this.cache.get(cacheKey)
     if (cached) return cached
     let stats: PatchStats
     let processed: Set<string>
     try {
       stats = JSON.parse(await readFile(this.statsFile(patch, mode), 'utf8')) as PatchStats
-      stats.mode ??= mode
+      stats.mode ??= mode // files from before modes existed have no mode field
     } catch {
       stats = emptyPatchStats(patch, mode)
     }
@@ -61,7 +62,7 @@ export class StatsStore {
       processed = new Set()
     }
     const stored = { stats, processed }
-    this.cache.set(k, stored)
+    this.cache.set(cacheKey, stored)
     return stored
   }
 
@@ -71,27 +72,28 @@ export class StatsStore {
 
   async flush(): Promise<void> {
     await mkdir(this.dir, { recursive: true })
-    for (const k of [...this.dirty]) {
-      const s = this.cache.get(k)
-      if (!s) continue
-      const mode = (s.stats.mode ?? 'ranked') as GameMode
-      await atomicWrite(this.statsFile(s.stats.patch, mode), JSON.stringify(s.stats))
-      await atomicWrite(this.processedFile(s.stats.patch, mode), JSON.stringify([...s.processed]))
-      this.dirty.delete(k)
+    for (const cacheKey of [...this.dirty]) {
+      const stored = this.cache.get(cacheKey)
+      if (!stored) continue
+      const mode = (stored.stats.mode ?? 'ranked') as GameMode
+      await atomicWrite(this.statsFile(stored.stats.patch, mode), JSON.stringify(stored.stats))
+      await atomicWrite(this.processedFile(stored.stats.patch, mode), JSON.stringify([...stored.processed]))
+      this.dirty.delete(cacheKey)
     }
   }
 
   async reset(patch: string, mode: GameMode = 'ranked'): Promise<void> {
-    const k = this.key(patch, mode)
-    this.cache.delete(k)
-    this.dirty.delete(k)
+    const cacheKey = this.key(patch, mode)
+    this.cache.delete(cacheKey)
+    this.dirty.delete(cacheKey)
     await rm(this.statsFile(patch, mode), { force: true })
     await rm(this.processedFile(patch, mode), { force: true })
   }
 }
 
+/** Write to a temp file and rename it, so a crash mid-write can't leave a truncated JSON file. */
 async function atomicWrite(file: string, content: string): Promise<void> {
-  const tmp = `${file}.tmp`
-  await writeFile(tmp, content)
-  await rename(tmp, file)
+  const tempFile = `${file}.tmp`
+  await writeFile(tempFile, content)
+  await rename(tempFile, file)
 }

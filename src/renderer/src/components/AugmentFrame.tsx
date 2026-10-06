@@ -3,6 +3,7 @@ import type { MayhemAugment, Tier } from '@shared/types'
 import { GameImage } from './icons'
 import { RARITY_COLORS, RARITY_LABELS } from './mayhem'
 
+// small SVG crest, only the top three tiers get one
 function Crest({ tier }: { tier: Tier }) {
   if (tier === 'S+')
     return (
@@ -33,7 +34,7 @@ function Crest({ tier }: { tier: Tier }) {
   return null
 }
 
-/** An augment icon wrapped in a tier frame (S+ animated radiant, S royal, A crystal, B emerald, C steel, D bronze). */
+/** Augment icon inside a tier frame. S+, S and A also get a glow and a crest on top. */
 export function AugmentFrame({
   augment,
   tier,
@@ -47,7 +48,7 @@ export function AugmentFrame({
   size?: number
   note?: string | null
   extra?: ReactNode
-  /** when set, no tooltip is rendered – the caller shows the details itself */
+  /** if set, we skip the tooltip because the caller shows the details itself */
   onHover?: (hovered: boolean) => void
 }) {
   return (

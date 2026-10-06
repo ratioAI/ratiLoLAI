@@ -4,13 +4,13 @@ export const pct = (n: number, digits = 1): string => `${(n * 100).toFixed(digit
 export const num = (n: number): string => n.toLocaleString('en-US')
 
 export function duration(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${String(s).padStart(2, '0')}`
+  const minutes = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${minutes}:${String(secs).padStart(2, '0')}`
 }
 
-export function timeAgo(ts: number): string {
-  const diff = (Date.now() - ts) / 1000
+export function timeAgo(timestamp: number): string {
+  const diff = (Date.now() - timestamp) / 1000
   if (diff < 60) return 'just now'
   if (diff < 3600) return `${Math.floor(diff / 60)} min ago`
   if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`
@@ -27,7 +27,7 @@ export const TIER_COLORS: Record<Tier, string> = {
   D: 'var(--color-tier-d)'
 }
 
-/** Colour for a win rate: red below 48%, neutral around 50%, green above 52%. */
+/** Colour for a win rate: neutral between 49% and 51%, shading to red below and green above. */
 export function wrColor(wr: number): string {
   if (wr >= 0.53) return 'var(--color-win)'
   if (wr >= 0.51) return '#8fe3b5'

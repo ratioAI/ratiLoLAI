@@ -12,20 +12,20 @@ import './styles.css'
 import { AppProvider, useApp } from './lib/store'
 import { Layout, Spinner } from './components/Layout'
 
-// Pages are separate chunks: the overlay windows (which load the same bundle) never parse them, and
-// the main window prefetches them right after its first paint so switching tabs stays instant.
+// Each page is its own chunk. The overlay windows load the same bundle but never need the pages, and
+// the main window prefetches them once it's idle so switching tabs still feels instant.
 const pages = {
-  Home: () => import('./pages/Home').then((m) => ({ default: m.Home })),
-  TierList: () => import('./pages/TierList').then((m) => ({ default: m.TierList })),
-  Champions: () => import('./pages/Champions').then((m) => ({ default: m.Champions })),
-  ChampionPage: () => import('./pages/Champion').then((m) => ({ default: m.ChampionPage })),
-  Live: () => import('./pages/Live').then((m) => ({ default: m.Live })),
-  Games: () => import('./pages/Games').then((m) => ({ default: m.Games })),
-  GameDetail: () => import('./pages/Games').then((m) => ({ default: m.GameDetail })),
-  Profile: () => import('./pages/Profile').then((m) => ({ default: m.Profile })),
-  Data: () => import('./pages/Data').then((m) => ({ default: m.Data })),
-  Settings: () => import('./pages/Settings').then((m) => ({ default: m.Settings })),
-  Mayhem: () => import('./pages/Mayhem').then((m) => ({ default: m.Mayhem }))
+  Home: () => import('./pages/Home').then((mod) => ({ default: mod.Home })),
+  TierList: () => import('./pages/TierList').then((mod) => ({ default: mod.TierList })),
+  Champions: () => import('./pages/Champions').then((mod) => ({ default: mod.Champions })),
+  ChampionPage: () => import('./pages/Champion').then((mod) => ({ default: mod.ChampionPage })),
+  Live: () => import('./pages/Live').then((mod) => ({ default: mod.Live })),
+  Games: () => import('./pages/Games').then((mod) => ({ default: mod.Games })),
+  GameDetail: () => import('./pages/Games').then((mod) => ({ default: mod.GameDetail })),
+  Profile: () => import('./pages/Profile').then((mod) => ({ default: mod.Profile })),
+  Data: () => import('./pages/Data').then((mod) => ({ default: mod.Data })),
+  Settings: () => import('./pages/Settings').then((mod) => ({ default: mod.Settings })),
+  Mayhem: () => import('./pages/Mayhem').then((mod) => ({ default: mod.Mayhem }))
 }
 const Home = lazy(pages.Home)
 const TierList = lazy(pages.TierList)
@@ -48,8 +48,8 @@ import { OverlayMinimap } from './pages/OverlayMinimap'
 import { OverlayLoading } from './pages/OverlayLoading'
 
 /**
- * Which galaxy we are in. A new one every time a match is accepted – then the whole window
- * travels through a wormhole to it (`journey` holds the jump while it runs).
+ * The galaxy we're currently in. Every accepted match picks a new one and the window flies there
+ * through a wormhole; `journey` is set while that jump is running.
  */
 function useCosmos(onArrive: () => void): { seed: number; journey: { from: number; to: number; key: number } | null } {
   const [seed, setSeed] = useState(() => {
@@ -60,43 +60,43 @@ function useCosmos(onArrive: () => void): { seed: number; journey: { from: numbe
     }
   })
   const [journey, setJourney] = useState<{ from: number; to: number; key: number } | null>(null)
-  const current = useRef(seed)
+  const currentSeed = useRef(seed)
   const arriveRef = useRef(onArrive)
   arriveRef.current = onArrive
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let arrive: ReturnType<typeof setTimeout> | undefined
-    const off = api.on('journey', ({ seed: s }) => {
-      const v = cosmicSeed(s)
-      setJourney({ from: current.current, to: v, key: Date.now() })
-      current.current = v
-      setSeed(v)
-      clearTimeout(timer)
-      clearTimeout(arrive)
-      // at the far end of the wormhole: the new game – switch to the Live tab under the overlay
-      arrive = setTimeout(() => arriveRef.current(), JUMP_MS * 0.6)
-      timer = setTimeout(() => setJourney(null), JUMP_MS + 900)
+    let endTimer: ReturnType<typeof setTimeout> | undefined
+    let arriveTimer: ReturnType<typeof setTimeout> | undefined
+    const off = api.on('journey', ({ seed: rawSeed }) => {
+      const nextSeed = cosmicSeed(rawSeed)
+      setJourney({ from: currentSeed.current, to: nextSeed, key: Date.now() })
+      currentSeed.current = nextSeed
+      setSeed(nextSeed)
+      clearTimeout(endTimer)
+      clearTimeout(arriveTimer)
+      // switch to the Live tab while the overlay still covers the window, so we "land" in the new game
+      arriveTimer = setTimeout(() => arriveRef.current(), JUMP_MS * 0.6)
+      endTimer = setTimeout(() => setJourney(null), JUMP_MS + 900)
       try {
-        localStorage.setItem('rc.cosmos', String(v))
+        localStorage.setItem('rc.cosmos', String(nextSeed))
       } catch {
         /* private mode */
       }
     })
     return () => {
       off()
-      clearTimeout(timer)
-      clearTimeout(arrive)
+      clearTimeout(endTimer)
+      clearTimeout(arriveTimer)
     }
   }, [])
   return { seed, journey }
 }
 
-/** The flight to the next planet over the whole window; fades out once we have landed. */
+/** Full-window wormhole flight to the next galaxy. Fades out shortly before the jump ends. */
 function JourneyOverlay({ journey }: { journey: { from: number; to: number; key: number } }) {
   const [leaving, setLeaving] = useState(false)
   useEffect(() => {
-    const t = setTimeout(() => setLeaving(true), JUMP_MS - 200)
-    return () => clearTimeout(t)
+    const fadeTimer = setTimeout(() => setLeaving(true), JUMP_MS - 200)
+    return () => clearTimeout(fadeTimer)
   }, [])
   return (
     <div
@@ -113,11 +113,11 @@ function Shell() {
   const { settings, live } = useApp()
   const location = useLocation()
   const navigate = useNavigate()
-  // overlay windows get the event too – only the main window changes tabs
+  // overlay windows get the event too, but only the main window should change tabs
   const { seed, journey } = useCosmos(() => {
     if (!window.location.hash.startsWith('#/overlay')) navigate('/live')
   })
-  const bg = settings?.ui.background ?? 'animated'
+  const background = settings?.ui.background ?? 'animated'
   const hash = window.location.hash
   if (hash.startsWith('#/overlay/panel')) return <Overlay part="panel" />
   if (hash.startsWith('#/overlay/frames')) return <OverlayFrames />
@@ -127,12 +127,12 @@ function Shell() {
   return (
     <>
       {location.pathname.startsWith('/games') ? (
-        <CosmosBackground seed={seed} mode={bg} inGame={!!live?.active} />
+        <CosmosBackground seed={seed} mode={background} inGame={!!live?.active} />
       ) : (
         <TripBackground mode={settings?.ui.background ?? 'animated'} inGame={!!live?.active} />
       )}
       <MainShell />
-      {journey && bg !== 'static' && <JourneyOverlay key={journey.key} journey={journey} />}
+      {journey && background !== 'static' && <JourneyOverlay key={journey.key} journey={journey} />}
     </>
   )
 }

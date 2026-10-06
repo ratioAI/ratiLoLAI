@@ -1,7 +1,7 @@
 /**
- * Screen layout of the ARAM: Mayhem augment selection. The three cards are centred horizontally
- * and scale with the screen height (measured on 1920×1080: card centres 598 / 966 / 1334 px,
- * width 320 px, top 192 px, bottom 720 px, title around y = 444 px).
+ * Screen layout of the ARAM: Mayhem augment choice. The three cards are centred horizontally and
+ * scale with the screen height. Measured on 1920x1080: card centres at 598 / 966 / 1334 px, width
+ * 320 px, top 192 px, bottom 720 px, title around y = 444 px.
  */
 
 export interface Rect {
@@ -23,7 +23,7 @@ export const LAYOUT = {
   /** left frame band, relative to the card centre */
   frameFrom: -160 / 1080,
   frameTo: -143 / 1080,
-  /** empty area inside the card, used to check that the card body is dark */
+  /** empty spot inside the card, used to check that the card body is dark */
   emptyY: 620 / 1080
 }
 
@@ -33,8 +33,8 @@ export function cardCentres(width: number, height: number): number[] {
 }
 
 export function cardRects(width: number, height: number): Rect[] {
-  return cardCentres(width, height).map((cx) => ({
-    x: Math.round(cx - (LAYOUT.cardWidth * height) / 2),
+  return cardCentres(width, height).map((centreX) => ({
+    x: Math.round(centreX - (LAYOUT.cardWidth * height) / 2),
     y: Math.round(LAYOUT.cardTop * height),
     width: Math.round(LAYOUT.cardWidth * height),
     height: Math.round((LAYOUT.cardBottom - LAYOUT.cardTop) * height)
@@ -44,8 +44,8 @@ export function cardRects(width: number, height: number): Rect[] {
 export function titleRects(width: number, height: number): Rect[] {
   const w = Math.round(LAYOUT.titleWidth * height)
   const h = Math.round(LAYOUT.titleHeight * height)
-  return cardCentres(width, height).map((cx) => ({
-    x: Math.round(cx - w / 2),
+  return cardCentres(width, height).map((centreX) => ({
+    x: Math.round(centreX - w / 2),
     y: Math.round(LAYOUT.titleY * height - h / 2),
     width: w,
     height: h

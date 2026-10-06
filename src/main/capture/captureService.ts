@@ -9,38 +9,39 @@ interface Demand {
 }
 
 /**
- * Owns the hidden capture page and its screen streams. Several features can ask for pictures at
- * the same time (augment scanner, minimap timers); the streams run at the highest requested frame
- * rate on the union of the requested screens and are closed a few seconds after nobody needs them.
+ * Owns the hidden capture page and its screen streams. Several features (augment scanner, minimap
+ * timers) can request frames at the same time.
  */
 export class CaptureService {
-  private win: BrowserWindow | null = null
+  // Streams run at the highest requested frame rate on all requested screens combined, and are
+  // closed a few seconds after nobody needs them anymore.
+  private captureWindow: BrowserWindow | null = null
   private ready: Promise<void> | null = null
-  private seq = 0
-  private readonly waiting = new Map<number, { resolve: (r: CaptureReply) => void; timer: NodeJS.Timeout }>()
+  private lastRequestId = 0
+  private readonly waiting = new Map<number, { resolve: (reply: CaptureReply) => void; timer: NodeJS.Timeout }>()
   private readonly demands = new Map<string, Demand>()
   private openKey = ''
   private closeTimer: NodeJS.Timeout | null = null
   private applying: Promise<void> = Promise.resolve()
-  /** set when streams can't be opened on this machine → callers fall back to getSources() */
+  /** set when streams can't be opened on this machine, callers then fall back to getSources() */
   failed: string | null = null
 
   constructor(
     private readonly preload: string,
     private readonly rendererDir: string,
-    private readonly log: (msg: string) => void = () => undefined
+    private readonly log: (message: string) => void = () => undefined
   ) {
-    ipcMain.on('capture:reply', (_e, id: number, reply: CaptureReply) => {
-      const w = this.waiting.get(id)
-      if (!w) return
-      clearTimeout(w.timer)
+    ipcMain.on('capture:reply', (_event, id: number, reply: CaptureReply) => {
+      const request = this.waiting.get(id)
+      if (!request) return
+      clearTimeout(request.timer)
       this.waiting.delete(id)
-      w.resolve(reply)
+      request.resolve(reply)
     })
   }
 
   private page(): Promise<void> {
-    if (this.win && !this.win.isDestroyed() && this.ready) return this.ready
+    if (this.captureWindow && !this.captureWindow.isDestroyed() && this.ready) return this.ready
     const win = new BrowserWindow({
       show: false,
       width: 64,
@@ -49,11 +50,11 @@ export class CaptureService {
       webPreferences: { preload: this.preload, contextIsolation: true, sandbox: false, backgroundThrottling: false }
     })
     win.on('closed', () => {
-      this.win = null
+      this.captureWindow = null
       this.ready = null
       this.openKey = ''
     })
-    this.win = win
+    this.captureWindow = win
     this.ready = (
       process.env.ELECTRON_RENDERER_URL
         ? win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/capture.html`)
@@ -62,22 +63,22 @@ export class CaptureService {
     return this.ready
   }
 
-  private async send(cmd: CaptureCommand, timeoutMs = 5000): Promise<CaptureReply> {
+  private async send(command: CaptureCommand, timeoutMs = 5000): Promise<CaptureReply> {
     await this.page()
-    const id = ++this.seq
+    const id = ++this.lastRequestId
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.waiting.delete(id)
         resolve({ ok: false, error: 'capture timed out' })
       }, timeoutMs)
       this.waiting.set(id, { resolve, timer })
-      this.win!.webContents.send('capture:cmd', id, cmd)
+      this.captureWindow!.webContents.send('capture:cmd', id, command)
     })
   }
 
-  /** Declare (or with null: withdraw) what a feature needs. */
-  demand(owner: string, d: Demand | null): void {
-    if (d && d.displays.length) this.demands.set(owner, d)
+  /** Declares what a feature needs, or withdraws it when passed null. */
+  demand(owner: string, need: Demand | null): void {
+    if (need && need.displays.length) this.demands.set(owner, need)
     else this.demands.delete(owner)
     this.applying = this.applying.then(() => this.apply()).catch(() => undefined)
   }
@@ -87,10 +88,10 @@ export class CaptureService {
   }
 
   private async apply(): Promise<void> {
-    const displays = [...new Set([...this.demands.values()].flatMap((d) => d.displays))].sort()
-    const fps = Math.max(0, ...[...this.demands.values()].map((d) => d.fps))
+    const displays = [...new Set([...this.demands.values()].flatMap((need) => need.displays))].sort()
+    const fps = Math.max(0, ...[...this.demands.values()].map((need) => need.fps))
     if (!displays.length) {
-      // keep the capturer a moment – the next request usually follows shortly (death → respawn → shop)
+      // keep the streams open for a moment, the next request usually follows soon (death, respawn, shop)
       if (this.openKey && !this.closeTimer) {
         this.closeTimer = setTimeout(() => {
           this.closeTimer = null
@@ -111,31 +112,32 @@ export class CaptureService {
     const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
     const streams = displays
       .map((id) => {
-        const d = all.find((x) => x.id === id)
-        if (!d) return null
-        const src =
-          sources.find((s) => s.display_id === String(id)) ??
-          (sources.length === all.length ? sources[all.indexOf(d)] : undefined) ??
+        const display = all.find((candidate) => candidate.id === id)
+        if (!display) return null
+        // display_id can be empty on Windows, so fall back to enumeration order or the only source
+        const source =
+          sources.find((candidate) => candidate.display_id === String(id)) ??
+          (sources.length === all.length ? sources[all.indexOf(display)] : undefined) ??
           (sources.length === 1 ? sources[0] : undefined)
-        if (!src) return null
+        if (!source) return null
         return {
           displayId: id,
-          sourceId: src.id,
-          width: Math.round(d.size.width * d.scaleFactor),
-          height: Math.round(d.size.height * d.scaleFactor),
+          sourceId: source.id,
+          width: Math.round(display.size.width * display.scaleFactor),
+          height: Math.round(display.size.height * display.scaleFactor),
           fps
         }
       })
-      .filter((s): s is NonNullable<typeof s> => !!s)
-    const t0 = Date.now()
-    const r = await this.send({ type: 'open', streams }, 8000)
-    if (r.ok) {
+      .filter((stream): stream is NonNullable<typeof stream> => !!stream)
+    const startedAt = Date.now()
+    const reply = await this.send({ type: 'open', streams }, 8000)
+    if (reply.ok) {
       this.openKey = key
       this.failed = null
-      this.log(`capture streams open: displays ${displays.join(', ')} @ ${fps} fps (${Date.now() - t0} ms)`)
+      this.log(`capture streams open: displays ${displays.join(', ')} @ ${fps} fps (${Date.now() - startedAt} ms)`)
     } else {
       this.openKey = ''
-      this.failed = r.error ?? 'unknown error'
+      this.failed = reply.error ?? 'unknown error'
       this.log(`capture streams failed: ${this.failed}`)
     }
   }
@@ -145,21 +147,21 @@ export class CaptureService {
     await this.applying
   }
 
-  /** Cropped / scaled RGBA pictures of one screen from its running stream. */
+  /** Cropped and scaled RGBA frames of one screen, taken from its running stream. */
   async grab(display: Display | number, regions: CaptureRegion[]): Promise<CaptureFrame[] | null> {
     await this.settled()
     const id = typeof display === 'number' ? display : display.id
     if (!this.active) return null
-    const r = await this.send({ type: 'grab', displayId: id, regions })
-    if (!r.ok || !r.frames) {
-      this.log(`grab failed on display ${id}: ${r.error ?? '?'}`)
+    const reply = await this.send({ type: 'grab', displayId: id, regions })
+    if (!reply.ok || !reply.frames) {
+      this.log(`grab failed on display ${id}: ${reply.error ?? '?'}`)
       return null
     }
-    return r.frames
+    return reply.frames
   }
 
   destroy(): void {
-    this.win?.destroy()
-    this.win = null
+    this.captureWindow?.destroy()
+    this.captureWindow = null
   }
 }

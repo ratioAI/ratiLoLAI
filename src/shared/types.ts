@@ -4,7 +4,7 @@ import type { GameSummary } from './summary'
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
 export type Role = (typeof ROLES)[number]
 
-/** 'ARAM' is used as pseudo role for the Howling Abyss, where there are no lanes. */
+/** 'ARAM' is a pseudo role for the Howling Abyss, which has no lanes. */
 export type StatRole = Role | 'ARAM'
 
 export const ROLE_LABELS: Record<StatRole, string> = {
@@ -87,7 +87,7 @@ export interface StaticItem {
   plaintext: string
   gold: number
   tags: string[]
-  /** completed "legendary"/mythic tier item (no further upgrades, >= 2 components deep). */
+  /** completed legendary/mythic item (no further upgrades, at least 2 components deep) */
   completed: boolean
   boots: boolean
   starter: boolean
@@ -143,7 +143,7 @@ export interface ChampionRoleStats extends WG {
   /** key: ordered item ids of the first three completed items "3031,3094,3036" */
   core: Record<string, WG>
   boots: Record<string, WG>
-  /** Completed items by purchase slot (0 = first completed item ... 5). */
+  /** completed items by purchase slot (0 is the first completed item, up to 5) */
   slots: Record<string, WG>[]
   /** key: "QEW" (max order) */
   skillMax: Record<string, WG>
@@ -276,7 +276,7 @@ export interface Settings {
     cardFrames: boolean
     /** animated frames: 30 fps, 15 fps or static */
     animation: 'smooth' | 'low' | 'off'
-    /** show the overlays in screen shares / recordings (Discord, OBS) – off keeps them private */
+    /** show the overlays in screen shares and recordings (Discord, OBS). Off keeps them private. */
     showInCapture: boolean
     /** loading screen panel with the players' win rates in Mayhem / ARAM (Space toggles) */
     loadingScreen: boolean
@@ -291,7 +291,7 @@ export interface Settings {
     /** timers on the minimap in ARAM / ARAM: Mayhem */
     enabled: boolean
     inhibitors: boolean
-    /** health relic timers – watches the four relic pads on the minimap once per second */
+    /** health relic timers. Watches the four relic pads on the minimap once per second. */
     relics: boolean
     /** minimap size relative to the default (in-game minimap scale) */
     scale: number
@@ -302,7 +302,7 @@ export interface Settings {
     autoImportSpells: boolean
     flashOn: 'D' | 'F'
     autoAccept: boolean
-    /** how long to wait before accepting: instant, random 2–6 s or random 4–8 s */
+    /** how long to wait before accepting: instant, random 2 to 6 s or random 4 to 8 s */
     acceptDelay: AcceptDelay
   }
 }
@@ -345,7 +345,7 @@ export type AcceptDelay = 'instant' | 'human' | 'slow'
 /** Timers shown on the minimap (all times are game time in seconds). */
 export interface MinimapState {
   gameTime: number
-  /** Date.now() when gameTime was measured – the overlay counts down locally in between */
+  /** Date.now() when gameTime was measured. The overlay counts down locally in between. */
   measuredAt: number
   rect: { x: number; y: number; w: number; h: number }
   /** minimap inside the overlay window (DIP), filled in by the main process */
@@ -633,7 +633,7 @@ export interface AugmentOffer {
   cards: { augmentId: number | null; text: string; score: number; rect: { x: number; y: number; width: number; height: number } }[]
 }
 
-/** Live status of the overlay / screen recognition (Settings → Diagnostics). */
+/** Live status of the overlay and screen recognition (Settings > Diagnostics). */
 export interface OverlayDiagnostics {
   gameMode: string | null
   queueId: number | null
@@ -686,7 +686,7 @@ export interface RcEvents {
   /** offer with card rects relative to the frames window (sent to that window only) */
   framesOffer: AugmentOffer | null
   augmentsOwned: number[]
-  /** a new game started – the Games page jumps to the next galaxy */
+  /** a new game started, the Games page jumps to the next galaxy */
   journey: { seed: number }
   /** a post-game summary is ready */
   gameSummary: GameSummary

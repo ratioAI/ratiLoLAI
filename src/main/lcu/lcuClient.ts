@@ -55,7 +55,7 @@ export class LcuClient extends EventEmitter {
         (res) => {
           let raw = ''
           res.setEncoding('utf8')
-          res.on('data', (c) => (raw += c))
+          res.on('data', (chunk) => (raw += chunk))
           res.on('end', () => {
             const status = res.statusCode ?? 0
             let json: unknown = undefined
@@ -66,8 +66,8 @@ export class LcuClient extends EventEmitter {
             }
             if (status >= 200 && status < 300) resolve(json as T)
             else {
-              const msg = (json as { message?: string } | undefined)?.message ?? `LCU ${status} ${method} ${path}`
-              reject(new LcuHttpError(status, msg))
+              const errorMessage = (json as { message?: string } | undefined)?.message ?? `LCU ${status} ${method} ${path}`
+              reject(new LcuHttpError(status, errorMessage))
             }
           })
         }
@@ -93,16 +93,16 @@ export class LcuClient extends EventEmitter {
       this.ws = ws
       ws.once('open', () => {
         // WAMP 1.0 subscribe: [5, topic]
-        for (const e of events) ws.send(JSON.stringify([5, e]))
+        for (const eventName of events) ws.send(JSON.stringify([5, eventName]))
         resolve()
       })
       // keep a permanent listener: an unhandled 'error' event would crash the main process
       ws.on('error', (err) => reject(err))
       ws.on('message', (raw) => {
         try {
-          const msg = JSON.parse(String(raw))
+          const frame = JSON.parse(String(raw))
           // WAMP event: [8, topic, payload]
-          if (Array.isArray(msg) && msg[0] === 8 && msg[2]) this.emit('event', msg[2] as LcuEvent)
+          if (Array.isArray(frame) && frame[0] === 8 && frame[2]) this.emit('event', frame[2] as LcuEvent)
         } catch {
           /* ignore malformed frames */
         }

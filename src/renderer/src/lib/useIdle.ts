@@ -1,15 +1,14 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
 
 /**
- * true while an animation nobody can see should rest: the window is hidden, or a game is running
- * and ratioAI is not the focused window (it sits behind the game). Kept in a ref so render loops can
- * read it every frame without re-creating their WebGL context.
+ * True when nobody can see our animations: the window is hidden, or a game is running and ratioAI
+ * sits unfocused behind it. It's a ref so render loops can check it every frame without restarting.
  */
 export function useIdleRef(inGame: boolean): MutableRefObject<boolean> {
-  const ref = useRef(false)
+  const idleRef = useRef(false)
   useEffect(() => {
     const update = (): void => {
-      ref.current = document.hidden || (inGame && !document.hasFocus())
+      idleRef.current = document.hidden || (inGame && !document.hasFocus())
     }
     update()
     window.addEventListener('focus', update)
@@ -21,5 +20,5 @@ export function useIdleRef(inGame: boolean): MutableRefObject<boolean> {
       document.removeEventListener('visibilitychange', update)
     }
   }, [inGame])
-  return ref
+  return idleRef
 }

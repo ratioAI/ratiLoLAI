@@ -13,10 +13,10 @@ import {
 } from '@shared/mayhem'
 
 const CDRAGON = 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global'
-const AM = 'https://arammayhem.com/data/v1/latest'
+const ARAM_MAYHEM = 'https://arammayhem.com/data/v1/latest'
 const MAX_AGE_MS = 12 * 3600 * 1000
 
-async function json<T>(url: string): Promise<T> {
+async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { headers: { 'User-Agent': 'ratioAI (github.com/ratioAI/ratiLoLAI)' } })
   if (!res.ok) throw new Error(`${res.status} ${url}`)
   return (await res.json()) as T
@@ -45,6 +45,7 @@ export class MayhemService {
 
   get(): Promise<MayhemData> {
     if (this.data && Date.now() - this.data.fetchedAt < MAX_AGE_MS) return Promise.resolve(this.data)
+    // share one request between concurrent callers
     this.loading ??= this.load().finally(() => (this.loading = null))
     return this.loading
   }
@@ -52,35 +53,35 @@ export class MayhemService {
   private async load(): Promise<MayhemData> {
     const locale = this.language.toLowerCase()
     try {
-      const [en, local, augments, combos, lists] = await Promise.all([
-        json<CherryAugment[]>(`${CDRAGON}/default/v1/cherry-augments.json`),
+      // only the English list is required, everything else degrades gracefully
+      const [english, localized, augments, combos, augmentLists] = await Promise.all([
+        fetchJson<CherryAugment[]>(`${CDRAGON}/default/v1/cherry-augments.json`),
         locale === 'en_us'
           ? Promise.resolve(null)
-          : json<CherryAugment[]>(`${CDRAGON}/${locale}/v1/cherry-augments.json`).catch(() => null),
-        json<AmFile<AmAugmentRow>>(`${AM}/augments.json`).catch(() => null),
-        json<AmFile<AmComboRow>>(`${AM}/combos.json`).catch(() => null),
-        json<AugmentList[]>(`${CDRAGON}/default/v1/augment-lists.json`).catch(() => null)
+          : fetchJson<CherryAugment[]>(`${CDRAGON}/${locale}/v1/cherry-augments.json`).catch(() => null),
+        fetchJson<AmFile<AmAugmentRow>>(`${ARAM_MAYHEM}/augments.json`).catch(() => null),
+        fetchJson<AmFile<AmComboRow>>(`${ARAM_MAYHEM}/combos.json`).catch(() => null),
+        fetchJson<AugmentList[]>(`${CDRAGON}/default/v1/augment-lists.json`).catch(() => null)
       ])
-      const data = buildMayhemData(en, local ?? en, augments, combos, Date.now(), mayhemPool(lists))
+      const data = buildMayhemData(english, localized ?? english, augments, combos, Date.now(), mayhemPool(augmentLists))
       this.data = data
       await mkdir(dirname(this.cacheFile), { recursive: true })
       await writeFile(this.cacheFile, JSON.stringify({ language: this.language, data }))
       return data
-    } catch (e) {
+    } catch (err) {
+      // offline: fall back to the last saved copy, however old it is
       try {
         const cached = JSON.parse(await readFile(this.cacheFile, 'utf8')) as { data: MayhemData }
         this.data = cached.data
         return cached.data
       } catch {
-        throw new Error(`Mayhem data unavailable: ${(e as Error).message}`)
+        throw new Error(`Mayhem data unavailable: ${(err as Error).message}`)
       }
     }
   }
 }
 
-// ---------------------------------------------------------------------------
-// Personal Mayhem statistics from the local League client's match history
-// ---------------------------------------------------------------------------
+// Personal Mayhem stats, read from the local League client's match history
 
 interface LcuHistoryGame {
   gameId: number
@@ -95,57 +96,69 @@ export interface LcuHistory {
   games?: { games?: LcuHistoryGame[] }
 }
 
-export function isMayhemGame(g: { queueId: number; gameMode: string }): boolean {
-  return (QUEUE_IDS.mayhem as readonly number[]).includes(g.queueId) || g.gameMode === 'KIWI'
+// KIWI is the internal game mode name of ARAM: Mayhem
+export function isMayhemGame(game: { queueId: number; gameMode: string }): boolean {
+  return (QUEUE_IDS.mayhem as readonly number[]).includes(game.queueId) || game.gameMode === 'KIWI'
 }
 
 /** Aggregates the player's own Mayhem games (augments are the playerAugmentN fields). */
 export function personalMayhemStats(history: LcuHistory, puuid: string | null): MayhemPersonal {
   const result: MayhemPersonal = { games: 0, wins: 0, augments: [], champions: [], recent: [] }
-  const augs = new Map<number, { games: number; wins: number }>()
-  const champs = new Map<number, { games: number; wins: number }>()
+  const augmentStats = new Map<number, { games: number; wins: number }>()
+  const championStats = new Map<number, { games: number; wins: number }>()
 
-  for (const g of history.games?.games ?? []) {
-    if (!isMayhemGame(g)) continue
-    const pid = puuid ? g.participantIdentities?.find((i) => i.player?.puuid === puuid)?.participantId : undefined
-    const me = g.participants.find((p) => p.participantId === pid) ?? (g.participants.length === 1 ? g.participants[0] : undefined)
+  for (const game of history.games?.games ?? []) {
+    if (!isMayhemGame(game)) continue
+    const participantId = puuid
+      ? game.participantIdentities?.find((identity) => identity.player?.puuid === puuid)?.participantId
+      : undefined
+    // the client's own history sometimes only contains the local player, so take the single entry then
+    const me =
+      game.participants.find((participant) => participant.participantId === participantId) ??
+      (game.participants.length === 1 ? game.participants[0] : undefined)
     if (!me) continue
     const win = me.stats.win === true
+    // playerAugment1..N, sorted numerically so playerAugment10 comes after playerAugment9
     const augments = Object.entries(me.stats)
-      .filter(([k, v]) => /^playerAugment\d+$/.test(k) && typeof v === 'number' && v > 0)
+      .filter(([key, value]) => /^playerAugment\d+$/.test(key) && typeof value === 'number' && value > 0)
       .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-      .map(([, v]) => v as number)
+      .map(([, value]) => value as number)
 
     result.games++
     if (win) result.wins++
     for (const id of augments) {
-      const e = augs.get(id) ?? { games: 0, wins: 0 }
-      e.games++
-      if (win) e.wins++
-      augs.set(id, e)
+      const augmentRecord = augmentStats.get(id) ?? { games: 0, wins: 0 }
+      augmentRecord.games++
+      if (win) augmentRecord.wins++
+      augmentStats.set(id, augmentRecord)
     }
-    const c = champs.get(me.championId) ?? { games: 0, wins: 0 }
-    c.games++
-    if (win) c.wins++
-    champs.set(me.championId, c)
-    result.recent.push({ gameId: g.gameId, championId: me.championId, win, augments, createdAt: g.gameCreation })
+    const championRecord = championStats.get(me.championId) ?? { games: 0, wins: 0 }
+    championRecord.games++
+    if (win) championRecord.wins++
+    championStats.set(me.championId, championRecord)
+    result.recent.push({ gameId: game.gameId, championId: me.championId, win, augments, createdAt: game.gameCreation })
   }
 
-  result.augments = [...augs.entries()].map(([id, v]) => ({ id, ...v })).sort((a, b) => b.games - a.games)
-  result.champions = [...champs.entries()].map(([championId, v]) => ({ championId, ...v })).sort((a, b) => b.games - a.games)
+  result.augments = [...augmentStats.entries()].map(([id, record]) => ({ id, ...record })).sort((a, b) => b.games - a.games)
+  result.champions = [...championStats.entries()]
+    .map(([championId, record]) => ({ championId, ...record }))
+    .sort((a, b) => b.games - a.games)
   result.recent.sort((a, b) => b.createdAt - a.createdAt)
   return result
 }
 
-/** Wins / games of one player in a mode (from that player's client match history). */
+/** Games and wins of one player in a mode, taken from that player's client match history. */
 export function modeRecord(history: LcuHistory, puuid: string, mode: 'mayhem' | 'aram'): { games: number; wins: number } {
   let games = 0
   let wins = 0
-  for (const g of history.games?.games ?? []) {
-    const match = mode === 'mayhem' ? isMayhemGame(g) : (QUEUE_IDS.aram as readonly number[]).includes(g.queueId) || g.gameMode === 'ARAM'
+  for (const game of history.games?.games ?? []) {
+    const match =
+      mode === 'mayhem' ? isMayhemGame(game) : (QUEUE_IDS.aram as readonly number[]).includes(game.queueId) || game.gameMode === 'ARAM'
     if (!match) continue
-    const pid = g.participantIdentities?.find((i) => i.player?.puuid === puuid)?.participantId
-    const me = g.participants.find((p) => p.participantId === pid) ?? (g.participants.length === 1 ? g.participants[0] : undefined)
+    const participantId = game.participantIdentities?.find((identity) => identity.player?.puuid === puuid)?.participantId
+    const me =
+      game.participants.find((participant) => participant.participantId === participantId) ??
+      (game.participants.length === 1 ? game.participants[0] : undefined)
     if (!me) continue
     games++
     if (me.stats.win === true) wins++

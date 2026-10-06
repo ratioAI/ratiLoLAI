@@ -15,12 +15,12 @@ interface AppState {
   data: StaticData | null
   dataError: string | null
   settings: Settings | null
-  setSettings: (s: Settings) => void
+  setSettings: (settings: Settings) => void
   mode: GameMode
-  setMode: (m: GameMode) => void
+  setMode: (mode: GameMode) => void
   patches: { patch: string; matches: number; updatedAt: number }[]
   patch: string | null
-  setPatch: (p: string) => void
+  setPatch: (patch: string) => void
   refreshPatches: () => Promise<void>
   statsVersion: number
   client: ClientStatus
@@ -30,11 +30,9 @@ interface AppState {
   lastImport: (ImportResult & { championId: number; at: number }) | null
 }
 
-const Ctx = createContext<AppState | null>(null)
-/**
- * Static game data on its own: hundreds of icons read it, and they must not re-render every second
- * when the live game state (part of the big context) changes.
- */
+const AppCtx = createContext<AppState | null>(null)
+// Static data gets its own context. Hundreds of icons read it and shouldn't re-render every
+// second just because the live game state in the main context changed.
 const DataCtx = createContext<StaticData | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -48,10 +46,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return 'ranked'
     }
   })
-  const setMode = useCallback((m: GameMode) => {
-    setModeState(m)
+  const setMode = useCallback((nextMode: GameMode) => {
+    setModeState(nextMode)
     try {
-      localStorage.setItem('rc.mode', m)
+      localStorage.setItem('rc.mode', nextMode)
     } catch {
       /* ignore */
     }
@@ -68,9 +66,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshPatches = useCallback(async () => {
     const list = await api.getPatches(mode)
     setPatches(list)
-    setPatch((cur) => {
-      if (cur && list.some((p) => p.patch === cur)) return cur
-      return list.find((p) => p.matches > 0)?.patch ?? list[0]?.patch ?? cur
+    // keep the selected patch if it still exists, otherwise pick the newest one that has matches
+    setPatch((current) => {
+      if (current && list.some((entry) => entry.patch === current)) return current
+      return list.find((entry) => entry.matches > 0)?.patch ?? list[0]?.patch ?? current
     })
   }, [mode])
 
@@ -82,25 +81,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     api.getSettings().then(setSettings)
     api
       .getStatic()
-      .then((d) => {
-        setData(d)
-        setPatch((cur) => cur ?? d.patch)
+      .then((staticData) => {
+        setData(staticData)
+        setPatch((current) => current ?? staticData.patch)
       })
-      .catch((e: Error) => setDataError(e.message))
+      .catch((err: Error) => setDataError(err.message))
     api.clientStatus().then(setClient)
     api.champSelect().then(setChampSelect)
     api.liveGame().then(setLive)
     api.crawlerStatus().then(setCrawler)
 
-    const offs = [
+    const unsubscribers = [
       api.on('client', setClient),
       api.on('champSelect', setChampSelect),
       api.on('live', setLive),
       api.on('crawler', setCrawler),
-      api.on('imported', (r) => setLastImport({ ...r, at: Date.now() })),
-      api.on('statsUpdated', () => setStatsVersion((v) => v + 1))
+      api.on('imported', (result) => setLastImport({ ...result, at: Date.now() })),
+      api.on('statsUpdated', () => setStatsVersion((version) => version + 1))
     ]
-    return () => offs.forEach((off) => off())
+    return () => unsubscribers.forEach((off) => off())
   }, [])
 
   useEffect(() => {
@@ -137,23 +136,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
   return (
     <DataCtx.Provider value={data}>
-      <Ctx.Provider value={value}>{children}</Ctx.Provider>
+      <AppCtx.Provider value={value}>{children}</AppCtx.Provider>
     </DataCtx.Provider>
   )
 }
 
 export function useApp(): AppState {
-  const ctx = useContext(Ctx)
+  const ctx = useContext(AppCtx)
   if (!ctx) throw new Error('useApp outside AppProvider')
   return ctx
 }
 
-/** Only the static game data (champions, items, …) – for components that need nothing else. */
+/** Just the static game data (champions, items, ...), for components that need nothing else. */
 export function useGameData(): StaticData | null {
   return useContext(DataCtx)
 }
 
-/** Small async helper: re-runs the loader whenever deps change. */
+/** Runs an async loader and re-runs it whenever `deps` change. */
 export function useAsync<T>(loader: () => Promise<T>, deps: unknown[]): { value: T | null; error: string | null; loading: boolean } {
   const [state, setState] = useState<{ value: T | null; error: string | null; loading: boolean }>({
     value: null,
@@ -162,10 +161,10 @@ export function useAsync<T>(loader: () => Promise<T>, deps: unknown[]): { value:
   })
   useEffect(() => {
     let alive = true
-    setState((s) => ({ ...s, loading: true }))
+    setState((prev) => ({ ...prev, loading: true }))
     loader().then(
       (value) => alive && setState({ value, error: null, loading: false }),
-      (e: Error) => alive && setState({ value: null, error: e.message, loading: false })
+      (err: Error) => alive && setState({ value: null, error: err.message, loading: false })
     )
     return () => {
       alive = false

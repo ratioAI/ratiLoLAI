@@ -18,9 +18,9 @@ export function parseLockfile(content: string): LcuCredentials | null {
 }
 
 /** Parses `--app-port=` and `--remoting-auth-token=` from LeagueClientUx's command line. */
-export function parseCommandLine(cmd: string): LcuCredentials | null {
-  const port = /--app-port=["']?(\d+)/.exec(cmd)?.[1]
-  const token = /--remoting-auth-token=["']?([\w-]+)/.exec(cmd)?.[1]
+export function parseCommandLine(commandLine: string): LcuCredentials | null {
+  const port = /--app-port=["']?(\d+)/.exec(commandLine)?.[1]
+  const token = /--remoting-auth-token=["']?([\w-]+)/.exec(commandLine)?.[1]
   if (!port || !token) return null
   return { port: Number(port), password: token, protocol: 'https' }
 }
@@ -30,25 +30,28 @@ export const DEFAULT_LEAGUE_PATHS =
     ? ['/Applications/League of Legends.app/Contents/LoL']
     : ['C:\\Riot Games\\League of Legends', 'D:\\Riot Games\\League of Legends', 'C:\\Program Files\\Riot Games\\League of Legends']
 
-function run(cmd: string, args: string[]): Promise<string> {
+/** Runs a command and resolves with its stdout, or '' on any error or timeout. */
+function run(command: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 }, (err, stdout) => resolve(err ? '' : String(stdout)))
+    execFile(command, args, { windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 }, (err, stdout) =>
+      resolve(err ? '' : String(stdout))
+    )
   })
 }
 
 async function fromProcessList(): Promise<LcuCredentials | null> {
-  let out = ''
+  let output = ''
   if (process.platform === 'win32') {
-    out = await run('powershell.exe', [
+    output = await run('powershell.exe', [
       '-NoProfile',
       '-Command',
       'Get-CimInstance Win32_Process -Filter "Name=\'LeagueClientUx.exe\'" | Select-Object -ExpandProperty CommandLine'
     ])
   } else if (process.platform === 'darwin') {
-    out = await run('ps', ['-A', '-o', 'args'])
-    out = out.split('\n').find((l) => l.includes('LeagueClientUx')) ?? ''
+    output = await run('ps', ['-A', '-o', 'args'])
+    output = output.split('\n').find((line) => line.includes('LeagueClientUx')) ?? ''
   }
-  return out ? parseCommandLine(out) : null
+  return output ? parseCommandLine(output) : null
 }
 
 async function fromLockfile(paths: string[]): Promise<LcuCredentials | null> {
@@ -57,7 +60,7 @@ async function fromLockfile(paths: string[]): Promise<LcuCredentials | null> {
       const creds = parseLockfile(await readFile(join(dir, 'lockfile'), 'utf8'))
       if (creds) return creds
     } catch {
-      /* not here */
+      // no lockfile in this folder, try the next one
     }
   }
   return null
@@ -65,8 +68,9 @@ async function fromLockfile(paths: string[]): Promise<LcuCredentials | null> {
 
 /** Finds the credentials of a running League client, or null if it is not running. */
 export async function findCredentials(customPath?: string): Promise<LcuCredentials | null> {
-  const fromProc = await fromProcessList()
-  if (fromProc) return fromProc
+  // the process command line works for any install path, so try it before guessing lockfile locations
+  const fromProcess = await fromProcessList()
+  if (fromProcess) return fromProcess
   const paths = customPath ? [customPath, ...DEFAULT_LEAGUE_PATHS] : DEFAULT_LEAGUE_PATHS
   return fromLockfile(paths)
 }

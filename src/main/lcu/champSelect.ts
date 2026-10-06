@@ -82,26 +82,31 @@ export function parseChampSelect(
 ): ChampSelectState | null {
   if (!session || !Array.isArray(session.myTeam)) return null
   const actions = (session.actions ?? []).flat()
-  const toPlayer = (c: RawCell, team: 'ally' | 'enemy'): ChampSelectPlayer => ({
-    cellId: c.cellId,
-    championId: c.championId || c.championPickIntent || 0,
-    role: positionToRole(c.assignedPosition),
-    isLocal: team === 'ally' && c.cellId === session.localPlayerCellId,
+  // championPickIntent is the hovered champion before lock-in
+  const toPlayer = (cell: RawCell, team: 'ally' | 'enemy'): ChampSelectPlayer => ({
+    cellId: cell.cellId,
+    championId: cell.championId || cell.championPickIntent || 0,
+    role: positionToRole(cell.assignedPosition),
+    isLocal: team === 'ally' && cell.cellId === session.localPlayerCellId,
     team,
-    spell1Id: c.spell1Id ?? 0,
-    spell2Id: c.spell2Id ?? 0
+    spell1Id: cell.spell1Id ?? 0,
+    spell2Id: cell.spell2Id ?? 0
   })
-  const allies = session.myTeam.map((c) => toPlayer(c, 'ally'))
-  const enemies = (session.theirTeam ?? []).map((c) => toPlayer(c, 'enemy'))
-  const me = allies.find((p) => p.isLocal)
-  const locked = actions.some((a) => a.type === 'pick' && a.actorCellId === session.localPlayerCellId && a.completed && a.championId > 0)
-  const bans = actions.filter((a) => a.type === 'ban' && a.completed && a.championId > 0).map((a) => a.championId)
+  const allies = session.myTeam.map((cell) => toPlayer(cell, 'ally'))
+  const enemies = (session.theirTeam ?? []).map((cell) => toPlayer(cell, 'enemy'))
+  const localPlayer = allies.find((player) => player.isLocal)
+  const locked = actions.some(
+    (action) => action.type === 'pick' && action.actorCellId === session.localPlayerCellId && action.completed && action.championId > 0
+  )
+  const bans = actions
+    .filter((action) => action.type === 'ban' && action.completed && action.championId > 0)
+    .map((action) => action.championId)
   return {
     active: true,
     queueId,
     mode: selectModeOfQueue(queueId, gameMode),
-    myChampionId: me?.championId ?? 0,
-    myRole: me?.role ?? null,
+    myChampionId: localPlayer?.championId ?? 0,
+    myRole: localPlayer?.role ?? null,
     locked,
     allies,
     enemies,
@@ -109,14 +114,13 @@ export function parseChampSelect(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Payload builders for importing a build into the client
-// ---------------------------------------------------------------------------
+// Payloads for importing a build into the client
 
 export const RUNE_PAGE_PREFIX = 'ratioAI: '
-/** pages created by versions before the rename */
+/** Prefixes used by versions before the rename, so we still recognise (and replace) those pages. */
 export const LEGACY_RUNE_PAGE_PREFIXES = ['RC: ']
-export const isOurRunePage = (name: string): boolean => [RUNE_PAGE_PREFIX, ...LEGACY_RUNE_PAGE_PREFIXES].some((p) => name.startsWith(p))
+export const isOurRunePage = (name: string): boolean =>
+  [RUNE_PAGE_PREFIX, ...LEGACY_RUNE_PAGE_PREFIXES].some((prefix) => name.startsWith(prefix))
 export const ITEM_SET_UID_PREFIX = 'rift-companion-'
 const FLASH = 4
 
@@ -132,49 +136,54 @@ export function buildRunePagePayload(build: ChampionBuild, championName: string)
   }
 }
 
-/** Returns [spell1Id (D), spell2Id (F)] honouring the preferred Flash key. */
+/** Returns [spell1Id (D), spell2Id (F)], putting Flash on the preferred key. */
 export function orderSpells(spells: number[], flashOn: 'D' | 'F'): [number, number] | null {
   if (spells.length !== 2) return null
-  const [a, b] = spells
-  if (a !== FLASH && b !== FLASH) return [a, b]
-  const other = a === FLASH ? b : a
+  const [first, second] = spells
+  if (first !== FLASH && second !== FLASH) return [first, second]
+  const other = first === FLASH ? second : first
   return flashOn === 'D' ? [FLASH, other] : [other, FLASH]
 }
 
-const pct = (n: number): string => `${(n * 100).toFixed(1)}%`
+const pct = (ratio: number): string => `${(ratio * 100).toFixed(1)}%`
 
 export function buildItemSet(build: ChampionBuild, data: StaticData) {
-  const champ = data.champions[build.championId]
+  const champion = data.champions[build.championId]
   const blocks: { type: string; items: { id: string; count: number }[] }[] = []
-  const block = (type: string, ids: number[]) => {
+  // duplicate ids become one entry with a count (e.g. 2x Doran's Ring)
+  const addBlock = (type: string, ids: number[]) => {
     const counted = new Map<number, number>()
     for (const id of ids) counted.set(id, (counted.get(id) ?? 0) + 1)
     const items = [...counted.entries()].map(([id, count]) => ({ id: String(id), count }))
     if (items.length) blocks.push({ type, items })
   }
 
-  build.starters.slice(0, 2).forEach((s, i) => block(`${i ? 'Alternative start' : 'Starting items'} (${pct(s.winRate)} WR)`, s.value))
-  if (build.core[0]) block(`Core build (${pct(build.core[0].winRate)} WR, ${build.core[0].g} games)`, build.core[0].value)
-  block(
+  build.starters
+    .slice(0, 2)
+    .forEach((starter, i) => addBlock(`${i ? 'Alternative start' : 'Starting items'} (${pct(starter.winRate)} WR)`, starter.value))
+  if (build.core[0]) addBlock(`Core build (${pct(build.core[0].winRate)} WR, ${build.core[0].g} games)`, build.core[0].value)
+  addBlock(
     'Boots',
-    build.boots.slice(0, 2).map((b) => b.value)
+    build.boots.slice(0, 2).map((option) => option.value)
   )
+  // skip anything already in the core build and keep the first occurrence of each item
   const seen = new Set(build.core[0]?.value ?? [])
   const late = build.late
     .flat()
-    .map((o) => o.value)
+    .map((option) => option.value)
     .filter((id) => !seen.has(id) && (seen.add(id), true))
-  block('Situational', late.slice(0, 8))
-  if (build.core.length > 1) block('Alternative core builds', [...new Set(build.core.slice(1, 4).flatMap((c) => c.value))])
-  block('Consumables & trinkets', build.mode === 'aram' ? [2003] : [2003, 2055, 3340, 3364])
+  addBlock('Situational', late.slice(0, 8))
+  if (build.core.length > 1) addBlock('Alternative core builds', [...new Set(build.core.slice(1, 4).flatMap((core) => core.value))])
+  addBlock('Consumables & trinkets', build.mode === 'aram' ? [2003] : [2003, 2055, 3340, 3364])
 
   return {
-    title: `ratioAI ${champ?.name ?? build.championId} ${ROLE_LABELS[build.role]} ${build.patch}`,
+    title: `ratioAI ${champion?.name ?? build.championId} ${ROLE_LABELS[build.role]} ${build.patch}`,
     uid: `${ITEM_SET_UID_PREFIX}${build.mode === 'aram' ? 'aram-' : ''}${build.championId}`,
     type: 'custom',
     map: build.mode === 'aram' ? 'HA' : 'SR',
     mode: 'any',
     associatedChampions: [build.championId],
+    // map 11 is Summoner's Rift, 12 is Howling Abyss
     associatedMaps: build.mode === 'aram' ? [12] : [11],
     blocks,
     sortrank: 0,

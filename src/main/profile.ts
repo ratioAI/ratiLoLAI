@@ -2,31 +2,42 @@ import type { MatchSummary, Platform, ProfileData, RankedEntry, ScoutResult } fr
 import { regionalOf, RiotApiError, type RiotClient } from './riot/client'
 import type { LeagueEntryDTO, MatchDTO } from './riot/types'
 
+/** Splits "Name#TAG" into game name and tag line. */
 export function parseRiotId(input: string): { gameName: string; tagLine: string } {
   const trimmed = input.trim()
-  const idx = trimmed.lastIndexOf('#')
-  if (idx <= 0 || idx === trimmed.length - 1) {
+  const hashIndex = trimmed.lastIndexOf('#')
+  if (hashIndex <= 0 || hashIndex === trimmed.length - 1) {
     throw new RiotApiError(400, 'Please enter a Riot ID like Name#TAG.')
   }
-  return { gameName: trimmed.slice(0, idx).trim(), tagLine: trimmed.slice(idx + 1).trim() }
+  return { gameName: trimmed.slice(0, hashIndex).trim(), tagLine: trimmed.slice(hashIndex + 1).trim() }
 }
 
-function toRanked(e: LeagueEntryDTO): RankedEntry {
-  return { queueType: e.queueType, tier: e.tier, rank: e.rank, leaguePoints: e.leaguePoints, wins: e.wins, losses: e.losses }
+function toRanked(entry: LeagueEntryDTO): RankedEntry {
+  return {
+    queueType: entry.queueType,
+    tier: entry.tier,
+    rank: entry.rank,
+    leaguePoints: entry.leaguePoints,
+    wins: entry.wins,
+    losses: entry.losses
+  }
 }
 
 export function summarizeMatch(match: MatchDTO, puuid: string): MatchSummary | null {
-  const me = match.info.participants.find((p) => p.puuid === puuid)
+  const me = match.info.participants.find((participant) => participant.puuid === puuid)
   if (!me) return null
-  const teamKills = match.info.participants.filter((p) => p.teamId === me.teamId).reduce((n, p) => n + p.kills, 0)
-  const primary = me.perks.styles.find((s) => s.description === 'primaryStyle')
-  const sub = me.perks.styles.find((s) => s.description === 'subStyle')
+  const teamKills = match.info.participants
+    .filter((participant) => participant.teamId === me.teamId)
+    .reduce((sum, participant) => sum + participant.kills, 0)
+  const primary = me.perks.styles.find((style) => style.description === 'primaryStyle')
+  const secondary = me.perks.styles.find((style) => style.description === 'subStyle')
   return {
     matchId: match.metadata.matchId,
     queueId: match.info.queueId,
     gameCreation: match.info.gameCreation,
     gameDuration: match.info.gameDuration,
     win: me.win,
+    // games under 5 minutes are treated as remakes even without the early surrender flag
     remake: !!me.gameEndedInEarlySurrender || match.info.gameDuration < 300,
     championId: me.championId,
     role: me.teamPosition,
@@ -40,13 +51,16 @@ export function summarizeMatch(match: MatchDTO, puuid: string): MatchSummary | n
     items: [me.item0, me.item1, me.item2, me.item3, me.item4, me.item5, me.item6],
     spells: [me.summoner1Id, me.summoner2Id],
     keystone: primary?.selections[0]?.perk ?? 0,
-    subStyle: sub?.style ?? 0,
+    subStyle: secondary?.style ?? 0,
     killParticipation: teamKills ? (me.kills + me.assists) / teamKills : 0,
-    teams: match.info.participants.map((p) => ({
-      championId: p.championId,
-      riotId: p.riotIdGameName ? `${p.riotIdGameName}#${p.riotIdTagline ?? ''}` : (p.summonerName ?? ''),
-      teamId: p.teamId,
-      puuid: p.puuid
+    // older matches only have summonerName, no Riot ID
+    teams: match.info.participants.map((participant) => ({
+      championId: participant.championId,
+      riotId: participant.riotIdGameName
+        ? `${participant.riotIdGameName}#${participant.riotIdTagline ?? ''}`
+        : (participant.summonerName ?? ''),
+      teamId: participant.teamId,
+      puuid: participant.puuid
     }))
   }
 }
@@ -60,7 +74,7 @@ export class ProfileService {
     const account = await this.client.accountByRiotId(regional, gameName, tagLine)
     if (!account) throw new RiotApiError(404, `Player ${gameName}#${tagLine} not found.`)
 
-    const [summoner, entries, mastery, ids] = await Promise.all([
+    const [summoner, entries, mastery, matchIds] = await Promise.all([
       this.client.summonerByPuuid(platform, account.puuid),
       this.client.leagueEntries(platform, account.puuid),
       this.client.topMastery(platform, account.puuid, 6),
@@ -68,21 +82,21 @@ export class ProfileService {
     ])
     if (!summoner) throw new RiotApiError(404, `No LoL account on ${platform.toUpperCase()} for ${gameName}#${tagLine}.`)
 
-    const matches = (await Promise.all(ids.map((id) => this.client.match(regional, id))))
-      .filter((m): m is MatchDTO => !!m)
-      .map((m) => summarizeMatch(m, account.puuid))
-      .filter((m): m is MatchSummary => !!m)
+    const matches = (await Promise.all(matchIds.map((id) => this.client.match(regional, id))))
+      .filter((match): match is MatchDTO => !!match)
+      .map((match) => summarizeMatch(match, account.puuid))
+      .filter((summary): summary is MatchSummary => !!summary)
 
-    const champMap = new Map<number, { games: number; wins: number; k: number; d: number; a: number }>()
-    for (const m of matches) {
-      if (m.remake) continue
-      const c = champMap.get(m.championId) ?? { games: 0, wins: 0, k: 0, d: 0, a: 0 }
-      c.games++
-      if (m.win) c.wins++
-      c.k += m.kills
-      c.d += m.deaths
-      c.a += m.assists
-      champMap.set(m.championId, c)
+    const championStats = new Map<number, { games: number; wins: number; kills: number; deaths: number; assists: number }>()
+    for (const match of matches) {
+      if (match.remake) continue
+      const stats = championStats.get(match.championId) ?? { games: 0, wins: 0, kills: 0, deaths: 0, assists: 0 }
+      stats.games++
+      if (match.win) stats.wins++
+      stats.kills += match.kills
+      stats.deaths += match.deaths
+      stats.assists += match.assists
+      championStats.set(match.championId, stats)
     }
 
     return {
@@ -93,15 +107,20 @@ export class ProfileService {
       summonerLevel: summoner.summonerLevel,
       profileIconId: summoner.profileIconId,
       ranked: entries.map(toRanked),
-      mastery: mastery.map((m) => ({ championId: m.championId, level: m.championLevel, points: m.championPoints })),
+      mastery: mastery.map((entry) => ({ championId: entry.championId, level: entry.championLevel, points: entry.championPoints })),
       matches,
-      championSummary: [...champMap.entries()]
-        .map(([championId, c]) => ({ championId, games: c.games, wins: c.wins, kda: (c.k + c.a) / Math.max(1, c.d) }))
+      championSummary: [...championStats.entries()]
+        .map(([championId, stats]) => ({
+          championId,
+          games: stats.games,
+          wins: stats.wins,
+          kda: (stats.kills + stats.assists) / Math.max(1, stats.deaths)
+        }))
         .sort((a, b) => b.games - a.games)
     }
   }
 
-  /** Loading-screen scouting: ranks of all 10 players of a running game. */
+  /** Loading screen scouting: solo queue ranks of all players in a running game. */
   async scout(riotId: string, platform: Platform): Promise<ScoutResult | null> {
     const { gameName, tagLine } = parseRiotId(riotId)
     const account = await this.client.accountByRiotId(regionalOf(platform), gameName, tagLine)
@@ -113,15 +132,16 @@ export class ProfileService {
     const game = await this.client.activeGame(platform, puuid)
     if (!game) return null
     const players = await Promise.all(
-      game.participants.map(async (p) => {
-        const entries = p.puuid ? await this.client.leagueEntries(platform, p.puuid).catch(() => []) : []
-        const solo = entries.find((e) => e.queueType === 'RANKED_SOLO_5x5') ?? null
+      game.participants.map(async (participant) => {
+        // puuid can be missing in the spectator data
+        const entries = participant.puuid ? await this.client.leagueEntries(platform, participant.puuid).catch(() => []) : []
+        const solo = entries.find((entry) => entry.queueType === 'RANKED_SOLO_5x5') ?? null
         return {
-          puuid: p.puuid,
-          riotId: p.riotId ?? 'Unknown',
-          championId: p.championId,
-          teamId: p.teamId,
-          spells: [p.spell1Id, p.spell2Id],
+          puuid: participant.puuid,
+          riotId: participant.riotId ?? 'Unknown',
+          championId: participant.championId,
+          teamId: participant.teamId,
+          spells: [participant.spell1Id, participant.spell2Id],
           ranked: solo ? toRanked(solo) : null,
           recent: null
         }

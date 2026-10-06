@@ -12,24 +12,26 @@ export class DiagLog {
 
   constructor(private readonly file: string) {}
 
-  log(msg: string): void {
-    const line = `${new Date().toISOString().slice(11, 23)} ${msg}`
+  log(message: string): void {
+    // in-memory copy only needs the time of day
+    const line = `${new Date().toISOString().slice(11, 23)} ${message}`
     this.lines.push(line)
     if (this.lines.length > 200) this.lines.splice(0, this.lines.length - 200)
     const file = this.file
+    // writes are chained so lines stay in order and rotation can't race an append
     this.queue = this.queue
       .then(async () => {
         await mkdir(dirname(file), { recursive: true })
         const size = await stat(file)
-          .then((s) => s.size)
+          .then((stats) => stats.size)
           .catch(() => 0)
         if (size > 1_000_000) await rename(file, file + '.old').catch(() => undefined)
-        await appendFile(file, `${new Date().toISOString()} ${msg}\n`)
+        await appendFile(file, `${new Date().toISOString()} ${message}\n`)
       })
       .catch(() => undefined)
   }
 
-  recent(n = 40): string[] {
-    return this.lines.slice(-n)
+  recent(count = 40): string[] {
+    return this.lines.slice(-count)
   }
 }

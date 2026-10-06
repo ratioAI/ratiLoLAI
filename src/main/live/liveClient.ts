@@ -1,6 +1,7 @@
 import https from 'node:https'
 import type { LiveGameState, LivePlayer } from '@shared/types'
 
+// the game serves this API with a self-signed certificate on localhost
 const agent = new https.Agent({ rejectUnauthorized: false })
 
 /** Riot's official in-game Live Client Data API (only available while a game is running). */
@@ -9,7 +10,7 @@ export function fetchAllGameData(): Promise<unknown | null> {
     const req = https.get({ host: '127.0.0.1', port: 2999, path: '/liveclientdata/allgamedata', agent, timeout: 2000 }, (res) => {
       let raw = ''
       res.setEncoding('utf8')
-      res.on('data', (c) => (raw += c))
+      res.on('data', (chunk) => (raw += chunk))
       res.on('end', () => {
         if (res.statusCode !== 200) return resolve(null)
         try {
@@ -54,20 +55,20 @@ interface RawLive {
   gameData?: { gameTime: number; gameMode: string; mapNumber?: number; mapName?: string }
 }
 
-function describe(e: { EventName: string; KillerName?: string; VictimName?: string; DragonType?: string }): string {
-  switch (e.EventName) {
+function describe(event: { EventName: string; KillerName?: string; VictimName?: string; DragonType?: string }): string {
+  switch (event.EventName) {
     case 'ChampionKill':
-      return `${e.KillerName ?? '?'} killed ${e.VictimName ?? '?'}`
+      return `${event.KillerName ?? '?'} killed ${event.VictimName ?? '?'}`
     case 'DragonKill':
-      return `${e.KillerName ?? '?'} slew the ${e.DragonType ?? ''} dragon`
+      return `${event.KillerName ?? '?'} slew the ${event.DragonType ?? ''} dragon`
     case 'BaronKill':
-      return `${e.KillerName ?? '?'} slew Baron Nashor`
+      return `${event.KillerName ?? '?'} slew Baron Nashor`
     case 'HeraldKill':
-      return `${e.KillerName ?? '?'} slew the Rift Herald`
+      return `${event.KillerName ?? '?'} slew the Rift Herald`
     case 'TurretKilled':
-      return `Turret destroyed (${e.KillerName ?? '?'})`
+      return `Turret destroyed (${event.KillerName ?? '?'})`
     case 'InhibKilled':
-      return `Inhibitor destroyed (${e.KillerName ?? '?'})`
+      return `Inhibitor destroyed (${event.KillerName ?? '?'})`
     case 'FirstBlood':
       return 'First Blood!'
     case 'GameStart':
@@ -75,52 +76,57 @@ function describe(e: { EventName: string; KillerName?: string; VictimName?: stri
     case 'MinionsSpawning':
       return 'Minions spawned'
     default:
-      return e.EventName
+      return event.EventName
   }
 }
 
 export function parseLiveData(raw: unknown): LiveGameState | null {
-  const d = raw as RawLive | null
-  if (!d?.allPlayers || !d.gameData) return null
-  const players: LivePlayer[] = d.allPlayers.map((p) => ({
-    riotId: p.riotId ?? p.summonerName ?? '',
-    championName: p.championName,
-    team: p.team,
-    level: p.level,
-    kills: p.scores.kills,
-    deaths: p.scores.deaths,
-    assists: p.scores.assists,
-    creepScore: p.scores.creepScore,
-    items: [...p.items].sort((a, b) => a.slot - b.slot).map((i) => i.itemID),
-    spells: [p.summonerSpells.summonerSpellOne?.displayName ?? '', p.summonerSpells.summonerSpellTwo?.displayName ?? ''],
-    position: p.position,
-    isDead: p.isDead,
-    respawnTimer: p.respawnTimer
+  const data = raw as RawLive | null
+  if (!data?.allPlayers || !data.gameData) return null
+  const players: LivePlayer[] = data.allPlayers.map((player) => ({
+    riotId: player.riotId ?? player.summonerName ?? '',
+    championName: player.championName,
+    team: player.team,
+    level: player.level,
+    kills: player.scores.kills,
+    deaths: player.scores.deaths,
+    assists: player.scores.assists,
+    creepScore: player.scores.creepScore,
+    items: [...player.items].sort((a, b) => a.slot - b.slot).map((item) => item.itemID),
+    spells: [player.summonerSpells.summonerSpellOne?.displayName ?? '', player.summonerSpells.summonerSpellTwo?.displayName ?? ''],
+    position: player.position,
+    isDead: player.isDead,
+    respawnTimer: player.respawnTimer
   }))
-  const events = (d.events?.Events ?? [])
-    .filter((e) => e.EventName !== 'MinionsSpawning')
+  // latest 12 events, newest first
+  const events = (data.events?.Events ?? [])
+    .filter((event) => event.EventName !== 'MinionsSpawning')
     .slice(-12)
     .reverse()
-    .map((e) => ({ name: e.EventName, time: e.EventTime, text: describe(e) }))
+    .map((event) => ({ name: event.EventName, time: event.EventTime, text: describe(event) }))
   type InhibEvent = NonNullable<LiveGameState['inhibitorEvents']>[number]
-  const inhibitorEvents = (d.events?.Events ?? []).flatMap((e): InhibEvent[] =>
-    e.EventName === 'InhibKilled' && e.InhibKilled
-      ? [{ type: 'killed', inhibitor: e.InhibKilled, time: e.EventTime }]
-      : e.EventName === 'InhibRespawned' && e.InhibRespawned
-        ? [{ type: 'respawned', inhibitor: e.InhibRespawned, time: e.EventTime }]
+  const inhibitorEvents = (data.events?.Events ?? []).flatMap((event): InhibEvent[] =>
+    event.EventName === 'InhibKilled' && event.InhibKilled
+      ? [{ type: 'killed', inhibitor: event.InhibKilled, time: event.EventTime }]
+      : event.EventName === 'InhibRespawned' && event.InhibRespawned
+        ? [{ type: 'respawned', inhibitor: event.InhibRespawned, time: event.EventTime }]
         : []
   )
   return {
     active: true,
-    gameTime: d.gameData.gameTime,
-    gameMode: d.gameData.gameMode,
-    mapNumber: d.gameData.mapNumber ?? null,
-    activePlayer: d.activePlayer?.riotId ?? d.activePlayer?.summonerName ?? null,
+    gameTime: data.gameData.gameTime,
+    gameMode: data.gameData.gameMode,
+    mapNumber: data.gameData.mapNumber ?? null,
+    activePlayer: data.activePlayer?.riotId ?? data.activePlayer?.summonerName ?? null,
     activeChampion:
-      players.find((p) => p.riotId && p.riotId === (d.activePlayer?.riotId ?? d.activePlayer?.summonerName))?.championName ?? null,
+      players.find((player) => player.riotId && player.riotId === (data.activePlayer?.riotId ?? data.activePlayer?.summonerName))
+        ?.championName ?? null,
+    // rawChampionName looks like "game_character_displayname_Ahri", the suffix is the Data Dragon key
     activeChampionKey: (() => {
-      const me = d.allPlayers.find((p) => (p.riotId ?? p.summonerName) === (d.activePlayer?.riotId ?? d.activePlayer?.summonerName))
-      return me?.rawChampionName?.replace(/^game_character_displayname_/, '') ?? null
+      const activePlayer = data.allPlayers.find(
+        (player) => (player.riotId ?? player.summonerName) === (data.activePlayer?.riotId ?? data.activePlayer?.summonerName)
+      )
+      return activePlayer?.rawChampionName?.replace(/^game_character_displayname_/, '') ?? null
     })(),
     players,
     events,

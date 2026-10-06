@@ -1,6 +1,6 @@
 /** Messages between the main process and the hidden capture page. */
 
-/** Region of a screen as fractions (0–1) of the frame, optionally scaled to outW × outH pixels. */
+/** Region of a screen as fractions (0-1) of the frame, optionally scaled to outW x outH pixels. */
 export interface CaptureRegion {
   x: number
   y: number
@@ -27,13 +27,13 @@ export interface CaptureReply {
   error?: string
   frameWidth?: number
   frameHeight?: number
-  /** ms since the frame was captured – a large value means the stream stalled */
+  /** ms since the frame was captured, a large value means the stream stalled */
   frameAge?: number
   frames?: CaptureFrame[]
 }
 
 export interface CaptureBridge {
-  onCommand(cb: (id: number, cmd: CaptureCommand) => void): void
+  onCommand(listener: (id: number, command: CaptureCommand) => void): void
   reply(id: number, reply: CaptureReply): void
 }
 

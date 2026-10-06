@@ -19,7 +19,7 @@ const NAV = [
   { to: '/data', label: 'Data', icon: Database }
 ]
 
-/** ratioAI mark: an iridescent mushroom cap with glowing spores over a hexagon (static). */
+/** ratioAI logo: a mushroom cap with glowing spores inside a hexagon. */
 export function Logo({ size = 30 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
@@ -45,7 +45,7 @@ export function Logo({ size = 30 }: { size?: number }) {
   )
 }
 
-/** "ratioAI" word mark */
+/** "ratioAI" text logo */
 export function Wordmark({ className = '' }: { className?: string }) {
   return (
     <span className={`font-display font-extrabold tracking-tight ${className}`}>
@@ -59,9 +59,13 @@ export function Layout({ children }: { children: ReactNode }) {
   const [update, setUpdate] = useState<UpdateState | null>(null)
   const navigate = useNavigate()
   useEffect(() => {
-    api.appInfo().then((i) => setUpdate(i.update))
-    const offs = [api.on('update', setUpdate), api.on('gameSummary', (g: GameSummary) => navigate(`/games/${g.gameId}`))]
-    return () => offs.forEach((o) => o())
+    api.appInfo().then((info) => setUpdate(info.update))
+    const unsubscribers = [
+      api.on('update', setUpdate),
+      // a finished game opens its summary page right away
+      api.on('gameSummary', (summary: GameSummary) => navigate(`/games/${summary.gameId}`))
+    ]
+    return () => unsubscribers.forEach((off) => off())
   }, [navigate])
   return (
     <div className="flex h-full">
@@ -116,13 +120,13 @@ export function Layout({ children }: { children: ReactNode }) {
             </span>
           )}
           <div className="no-drag flex rounded-lg border border-line bg-panel p-0.5">
-            {(['ranked', 'aram'] as GameMode[]).map((m) => (
+            {(['ranked', 'aram'] as GameMode[]).map((option) => (
               <button
-                key={m}
-                onClick={() => setMode(m)}
-                className={`rounded-md px-2.5 py-0.5 font-semibold ${mode === m ? 'bg-panel-2 text-accent' : 'text-muted hover:text-text'}`}
+                key={option}
+                onClick={() => setMode(option)}
+                className={`rounded-md px-2.5 py-0.5 font-semibold ${mode === option ? 'bg-panel-2 text-accent' : 'text-muted hover:text-text'}`}
               >
-                {m === 'ranked' ? 'Ranked' : 'ARAM'}
+                {option === 'ranked' ? 'Ranked' : 'ARAM'}
               </button>
             ))}
           </div>
@@ -131,12 +135,13 @@ export function Layout({ children }: { children: ReactNode }) {
             <select
               className="rounded-md border border-line bg-panel px-2 py-1 text-text outline-none"
               value={patch ?? ''}
-              onChange={(e) => setPatch(e.target.value)}
+              onChange={(event) => setPatch(event.target.value)}
             >
-              {patch && !patches.some((p) => p.patch === patch) && <option value={patch}>{patch}</option>}
-              {patches.map((p) => (
-                <option key={p.patch} value={p.patch}>
-                  {p.patch} ({num(p.matches)})
+              {/* keep the current patch selectable even if the list doesn't have it (yet) */}
+              {patch && !patches.some((entry) => entry.patch === patch) && <option value={patch}>{patch}</option>}
+              {patches.map((entry) => (
+                <option key={entry.patch} value={entry.patch}>
+                  {entry.patch} ({num(entry.matches)})
                 </option>
               ))}
             </select>

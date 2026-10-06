@@ -43,31 +43,33 @@ export function emptyRoleStats(championId: number, role: StatRole): ChampionRole
 }
 
 function bump(map: Record<string, WG>, key: string, win: boolean): void {
-  const e = map[key] ?? (map[key] = { g: 0, w: 0 })
-  e.g++
-  if (win) e.w++
+  const entry = map[key] ?? (map[key] = { g: 0, w: 0 })
+  entry.g++
+  if (win) entry.w++
 }
 
 export function isRole(value: string): value is Role {
   return (ROLES as readonly string[]).includes(value)
 }
 
-export function runeKey(p: ParticipantDTO): string | null {
-  const primary = p.perks.styles.find((s) => s.description === 'primaryStyle')
-  const sub = p.perks.styles.find((s) => s.description === 'subStyle')
+/** "primaryStyle|perks|subStyle|perks|shards", or null if the rune page is incomplete. */
+export function runeKey(participant: ParticipantDTO): string | null {
+  const primary = participant.perks.styles.find((style) => style.description === 'primaryStyle')
+  const sub = participant.perks.styles.find((style) => style.description === 'subStyle')
   if (!primary || !sub || primary.selections.length < 4 || sub.selections.length < 2) return null
-  const { offense, flex, defense } = p.perks.statPerks
+  const { offense, flex, defense } = participant.perks.statPerks
   return [
     primary.style,
-    primary.selections.map((s) => s.perk).join(','),
+    primary.selections.map((selection) => selection.perk).join(','),
     sub.style,
-    sub.selections.map((s) => s.perk).join(','),
+    sub.selections.map((selection) => selection.perk).join(','),
     [offense, flex, defense].join(',')
   ].join('|')
 }
 
-export function spellKey(p: ParticipantDTO): string {
-  return [p.summoner1Id, p.summoner2Id].sort((a, b) => a - b).join(',')
+/** Sorted so Flash on D and Flash on F count as the same spell pair. */
+export function spellKey(participant: ParticipantDTO): string {
+  return [participant.summoner1Id, participant.summoner2Id].sort((a, b) => a - b).join(',')
 }
 
 export interface PurchaseTimeline {
@@ -80,22 +82,20 @@ export interface PurchaseTimeline {
   skills: string
 }
 
-/**
- * Replays the timeline events of one participant and returns the purchase order,
- * honouring ITEM_UNDO so that refunded items don't pollute the statistics.
- */
+/** Replays one participant's timeline events. ITEM_UNDO removes the refunded purchase so it doesn't end up in the stats. */
 export function replayParticipant(events: TimelineEvent[], participantId: number, classify: ItemClassifier): PurchaseTimeline {
   const purchases: { itemId: number; t: number }[] = []
   let skills = ''
 
-  for (const ev of events) {
-    if (ev.participantId !== participantId) continue
-    switch (ev.type) {
+  for (const event of events) {
+    if (event.participantId !== participantId) continue
+    switch (event.type) {
       case 'ITEM_PURCHASED':
-        purchases.push({ itemId: ev.itemId as number, t: ev.timestamp })
+        purchases.push({ itemId: event.itemId as number, t: event.timestamp })
         break
       case 'ITEM_UNDO': {
-        const before = ev.beforeId as number
+        // beforeId is the item that was undone, drop its most recent purchase
+        const before = event.beforeId as number
         if (before) {
           for (let i = purchases.length - 1; i >= 0; i--) {
             if (purchases[i].itemId === before) {
@@ -107,23 +107,24 @@ export function replayParticipant(events: TimelineEvent[], participantId: number
         break
       }
       case 'SKILL_LEVEL_UP':
-        if (ev.levelUpType === 'NORMAL') skills += SKILL_KEYS[ev.skillSlot as number] ?? ''
+        // ignore EVOLVE level-ups (Kha'Zix, Viktor, ...), they aren't skill points
+        if (event.levelUpType === 'NORMAL') skills += SKILL_KEYS[event.skillSlot as number] ?? ''
         break
     }
   }
 
   const starters = purchases
-    .filter((p) => p.t <= STARTER_WINDOW_MS && !classify(p.itemId)?.trinket)
-    .map((p) => p.itemId)
+    .filter((purchase) => purchase.t <= STARTER_WINDOW_MS && !classify(purchase.itemId)?.trinket)
+    .map((purchase) => purchase.itemId)
     .sort((a, b) => a - b)
 
   const completed: number[] = []
   let boots: number | null = null
   for (const { itemId } of purchases) {
-    const c = classify(itemId)
-    if (!c) continue
-    if (c.boots && boots === null) boots = itemId
-    if (c.completed && !c.boots && !completed.includes(itemId)) completed.push(itemId)
+    const itemClass = classify(itemId)
+    if (!itemClass) continue
+    if (itemClass.boots && boots === null) boots = itemId
+    if (itemClass.completed && !itemClass.boots && !completed.includes(itemId)) completed.push(itemId)
   }
   return { starters, completed, boots, skills }
 }
@@ -133,27 +134,32 @@ export function skillMaxOrder(skills: string): string | null {
   const count: Record<string, number> = { Q: 0, W: 0, E: 0 }
   const maxedAt: Record<string, number> = {}
   const firstAt: Record<string, number> = {}
-  ;[...skills].forEach((s, i) => {
-    if (!(s in count)) return
-    count[s]++
-    if (firstAt[s] === undefined) firstAt[s] = i
-    if (count[s] === 5 && maxedAt[s] === undefined) maxedAt[s] = i
+  ;[...skills].forEach((skill, i) => {
+    if (!(skill in count)) return
+    count[skill]++
+    if (firstAt[skill] === undefined) firstAt[skill] = i
+    if (count[skill] === 5 && maxedAt[skill] === undefined) maxedAt[skill] = i
   })
+  // too short a game to tell a max order
   if (skills.length < 9) return null
-  return (['Q', 'W', 'E'] as const)
-    .slice()
-    .sort((a, b) => {
-      const ma = maxedAt[a] ?? Infinity
-      const mb = maxedAt[b] ?? Infinity
-      if (ma !== mb) return ma - mb
-      if (count[a] !== count[b]) return count[b] - count[a]
-      return (firstAt[a] ?? Infinity) - (firstAt[b] ?? Infinity)
-    })
-    .join('')
+  return (
+    (['Q', 'W', 'E'] as const)
+      .slice()
+      // maxed first wins, then more points, then whichever was learned first
+      .sort((a, b) => {
+        const maxedA = maxedAt[a] ?? Infinity
+        const maxedB = maxedAt[b] ?? Infinity
+        if (maxedA !== maxedB) return maxedA - maxedB
+        if (count[a] !== count[b]) return count[b] - count[a]
+        return (firstAt[a] ?? Infinity) - (firstAt[b] ?? Infinity)
+      })
+      .join('')
+  )
 }
 
+/** Games under 5 minutes or ended by an early surrender vote. gameDuration is in seconds. */
 export function isRemake(match: MatchDTO): boolean {
-  return match.info.gameDuration < 300 || match.info.participants.some((p) => p.gameEndedInEarlySurrender)
+  return match.info.gameDuration < 300 || match.info.participants.some((participant) => participant.gameEndedInEarlySurrender)
 }
 
 /**
@@ -163,13 +169,13 @@ export function isRemake(match: MatchDTO): boolean {
 export function aggregateMatch(stats: PatchStats, match: MatchDTO, timeline: TimelineDTO | null, classify: ItemClassifier): boolean {
   if (patchOf(match.info.gameVersion) !== stats.patch) return false
   if (isRemake(match)) return false
-  const parts = match.info.participants
+  const participants = match.info.participants
   const aram = stats.mode === 'aram'
-  if (parts.length !== 10) return false
-  // on Summoner's Rift every player needs a lane; ARAM has none
-  if (!aram && parts.some((p) => !isRole(p.teamPosition))) return false
+  if (participants.length !== 10) return false
+  // on Summoner's Rift every player needs a lane, ARAM has none
+  if (!aram && participants.some((participant) => !isRole(participant.teamPosition))) return false
 
-  const events = timeline ? timeline.info.frames.flatMap((f) => f.events) : []
+  const events = timeline ? timeline.info.frames.flatMap((frame) => frame.events) : []
 
   stats.matches++
   stats.updatedAt = Date.now()
@@ -180,37 +186,38 @@ export function aggregateMatch(stats: PatchStats, match: MatchDTO, timeline: Tim
     }
   }
 
-  for (const p of parts) {
-    const role: StatRole = aram ? 'ARAM' : (p.teamPosition as Role)
-    const key = `${p.championId}:${role}`
-    const s = stats.champions[key] ?? (stats.champions[key] = emptyRoleStats(p.championId, role))
-    const win = p.win
+  for (const participant of participants) {
+    const role: StatRole = aram ? 'ARAM' : (participant.teamPosition as Role)
+    const key = `${participant.championId}:${role}`
+    const roleStats = stats.champions[key] ?? (stats.champions[key] = emptyRoleStats(participant.championId, role))
+    const win = participant.win
 
-    s.g++
-    if (win) s.w++
-    s.duration += match.info.gameDuration
+    roleStats.g++
+    if (win) roleStats.w++
+    roleStats.duration += match.info.gameDuration
 
-    const rk = runeKey(p)
-    if (rk) bump(s.runes, rk, win)
-    bump(s.spells, spellKey(p), win)
+    const runes = runeKey(participant)
+    if (runes) bump(roleStats.runes, runes, win)
+    bump(roleStats.spells, spellKey(participant), win)
 
     if (aram) {
-      // no lanes: every enemy counts as a "matchup"
-      for (const o of parts) if (o.teamId !== p.teamId) bump(s.matchups, String(o.championId), win)
+      // no lanes, so every enemy counts as a matchup
+      for (const other of participants) if (other.teamId !== participant.teamId) bump(roleStats.matchups, String(other.championId), win)
     } else {
-      const opponent = parts.find((o) => o.teamId !== p.teamId && o.teamPosition === p.teamPosition)
-      if (opponent) bump(s.matchups, String(opponent.championId), win)
+      const opponent = participants.find((other) => other.teamId !== participant.teamId && other.teamPosition === participant.teamPosition)
+      if (opponent) bump(roleStats.matchups, String(opponent.championId), win)
     }
 
     if (timeline) {
-      const r = replayParticipant(events, p.participantId, classify)
-      if (r.starters.length) bump(s.starters, r.starters.join(','), win)
-      if (r.boots) bump(s.boots, String(r.boots), win)
-      if (r.completed.length >= 3) bump(s.core, r.completed.slice(0, 3).join(','), win)
-      r.completed.slice(0, 6).forEach((id, i) => bump(s.slots[i], String(id), win))
-      if (r.skills.length >= 15) bump(s.skillPath, r.skills.slice(0, 15), win)
-      const max = skillMaxOrder(r.skills)
-      if (max) bump(s.skillMax, max, win)
+      const purchases = replayParticipant(events, participant.participantId, classify)
+      if (purchases.starters.length) bump(roleStats.starters, purchases.starters.join(','), win)
+      if (purchases.boots) bump(roleStats.boots, String(purchases.boots), win)
+      if (purchases.completed.length >= 3) bump(roleStats.core, purchases.completed.slice(0, 3).join(','), win)
+      purchases.completed.slice(0, 6).forEach((id, i) => bump(roleStats.slots[i], String(id), win))
+      // full skill order up to level 15
+      if (purchases.skills.length >= 15) bump(roleStats.skillPath, purchases.skills.slice(0, 15), win)
+      const maxOrder = skillMaxOrder(purchases.skills)
+      if (maxOrder) bump(roleStats.skillMax, maxOrder, win)
     }
   }
   return true

@@ -4,9 +4,8 @@ import { useIdleRef } from '@/lib/useIdle'
 
 const VERT = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`
 
-// Slowly flowing, domain-warped fractal noise – an oil-on-water / mushroom-trip look. Kept dark
-// and very slow (one colour drift takes minutes), so text stays readable and nothing flickers.
-// Nothing but this background ever moves.
+// Slowly flowing domain-warped fractal noise, sort of an oil-on-water look. It's kept dark and very
+// slow (one colour cycle takes minutes) so text on top stays readable and nothing flickers.
 const FRAG = `
 precision mediump float;
 uniform vec2 u_res;
@@ -23,8 +22,7 @@ float fbm(vec2 p){
   for (int i = 0; i < 4; i++) { v += a * noise(p); p = m * p; a *= 0.5; }
   return v;
 }
-// four trip colours (magenta, violet, deep cyan, acid mint) blended along the noise value –
-// no reds, oranges or muddy yellows
+// cycles through magenta, violet, cyan and mint. Reds, oranges and yellows looked muddy, so they're left out.
 vec3 palette(float t){
   vec3 c0 = vec3(0.95, 0.30, 0.85);
   vec3 c1 = vec3(0.45, 0.32, 1.00);
@@ -39,7 +37,7 @@ void main(){
   vec2 uv = gl_FragCoord.xy / u_res;
   vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / min(u_res.x, u_res.y);
   float t = u_time;
-  p *= 1.6 + 0.06 * sin(t * 0.21);                       // slow breathing
+  p *= 1.6 + 0.06 * sin(t * 0.21);                       // slow zoom in and out
   vec2 q = vec2(fbm(p + vec2(0.0, t * 0.030)), fbm(p + vec2(5.2, 1.3) - t * 0.024));
   vec2 r = vec2(fbm(p + 3.5 * q + vec2(1.7, 9.2) + t * 0.018), fbm(p + 3.5 * q + vec2(8.3, 2.8) - t * 0.021));
   float f = fbm(p + 3.8 * r);
@@ -50,45 +48,46 @@ void main(){
   gl_FragColor = vec4(col * (0.55 + 0.45 * vig), 1.0);
 }`
 
-/** Frame rate per mode; `static` draws one frame. While a game runs, animation is capped low. */
+/** Frame rate per mode. `static` draws a single frame, `calm` is used while a game is running. */
 const FPS = { animated: 24, calm: 10, static: 0 } as const
 
 /**
- * Full-window animated background (main window only). Rendered at a quarter of the resolution
- * and upscaled – the noise is soft anyway – so it costs next to nothing; pauses when the window is
- * hidden and honours "reduce motion".
+ * Animated full-window background for the main window. Pauses while hidden and respects
+ * "reduce motion".
  */
 export function TripBackground({ mode, inGame }: { mode: Settings['ui']['background']; inGame: boolean }) {
-  const ref = useRef<HTMLCanvasElement>(null)
-  const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-  const effective: keyof typeof FPS = reduced ? 'static' : inGame && mode === 'animated' ? 'calm' : mode
-  const idle = useIdleRef(inGame)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  const effectiveMode: keyof typeof FPS = reducedMotion ? 'static' : inGame && mode === 'animated' ? 'calm' : mode
+  const idleRef = useIdleRef(inGame)
 
   useEffect(() => {
-    const canvas = ref.current
+    const canvas = canvasRef.current
     if (!canvas) return
     const gl = canvas.getContext('webgl', { antialias: false, alpha: false, powerPreference: 'low-power' })
     if (!gl) return
-    const sh = (type: number, src: string): WebGLShader => {
-      const s = gl.createShader(type)!
-      gl.shaderSource(s, src)
-      gl.compileShader(s)
-      return s
+    const compile = (type: number, source: string): WebGLShader => {
+      const shader = gl.createShader(type)!
+      gl.shaderSource(shader, source)
+      gl.compileShader(shader)
+      return shader
     }
-    const prog = gl.createProgram()!
-    gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT))
-    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG))
-    gl.linkProgram(prog)
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return
-    gl.useProgram(prog)
+    const program = gl.createProgram()!
+    gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT))
+    gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG))
+    gl.linkProgram(program)
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return
+    gl.useProgram(program)
+    // two triangles covering the whole viewport
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer())
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW)
-    const loc = gl.getAttribLocation(prog, 'p')
-    gl.enableVertexAttribArray(loc)
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
-    const uRes = gl.getUniformLocation(prog, 'u_res')
-    const uTime = gl.getUniformLocation(prog, 'u_time')
+    const posAttrib = gl.getAttribLocation(program, 'p')
+    gl.enableVertexAttribArray(posAttrib)
+    gl.vertexAttribPointer(posAttrib, 2, gl.FLOAT, false, 0, 0)
+    const uRes = gl.getUniformLocation(program, 'u_res')
+    const uTime = gl.getUniformLocation(program, 'u_time')
 
+    // quarter resolution, upscaled by CSS. The noise is soft anyway, so this costs almost nothing.
     const SCALE = 0.25
     const resize = () => {
       canvas.width = Math.max(64, Math.round(canvas.clientWidth * SCALE))
@@ -96,42 +95,43 @@ export function TripBackground({ mode, inGame }: { mode: Settings['ui']['backgro
       gl.viewport(0, 0, canvas.width, canvas.height)
     }
     // start somewhere different each launch, so the colours aren't always the same
-    const offset = Math.random() * 500
-    const draw = (sec: number) => {
+    const timeOffset = Math.random() * 500
+    const draw = (seconds: number) => {
       gl.uniform2f(uRes, canvas.width, canvas.height)
-      gl.uniform1f(uTime, offset + sec)
+      gl.uniform1f(uTime, timeOffset + seconds)
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
     resize()
-    const fps = FPS[effective]
-    let raf = 0
-    let last = 0
-    const t0 = performance.now()
+    const fps = FPS[effectiveMode]
+    let rafId = 0
+    let lastDraw = 0
+    const startTime = performance.now()
     const loop = (now: number) => {
-      raf = requestAnimationFrame(loop)
-      if (now - last < 1000 / fps - 2) return
-      if (idle.current && last) return // behind the game or hidden: keep the last frame
-      last = now
-      draw((now - t0) / 1000)
+      rafId = requestAnimationFrame(loop)
+      // 2 ms slack so rAF jitter doesn't make us skip every other frame
+      if (now - lastDraw < 1000 / fps - 2) return
+      if (idleRef.current && lastDraw) return // hidden or behind the game: keep the last frame
+      lastDraw = now
+      draw((now - startTime) / 1000)
     }
     const onResize = () => {
       resize()
       if (!fps) draw(0)
     }
     window.addEventListener('resize', onResize)
-    if (fps) raf = requestAnimationFrame(loop)
+    if (fps) rafId = requestAnimationFrame(loop)
     else draw(0)
     return () => {
-      cancelAnimationFrame(raf)
+      cancelAnimationFrame(rafId)
       window.removeEventListener('resize', onResize)
       gl.getExtension('WEBGL_lose_context')?.loseContext()
     }
-  }, [effective])
+  }, [effectiveMode])
 
   return (
     <>
-      {/* a fresh canvas per mode: a context that was released can never draw again */}
-      <canvas key={effective} ref={ref} aria-hidden className="trip-bg pointer-events-none fixed inset-0 -z-10 h-full w-full" />
+      {/* new canvas per mode, a context we released with loseContext() can't be reused */}
+      <canvas key={effectiveMode} ref={canvasRef} aria-hidden className="trip-bg pointer-events-none fixed inset-0 -z-10 h-full w-full" />
       <div aria-hidden className="trip-grain pointer-events-none fixed inset-0 -z-10" />
     </>
   )

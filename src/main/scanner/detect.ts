@@ -1,9 +1,9 @@
 /**
- * Pure helpers for recognising the ARAM: Mayhem augment selection on a screenshot.
+ * Pure helpers for spotting the ARAM: Mayhem augment selection on a screenshot.
  *
- * The three cards are centred horizontally and scale with the screen height (measured on
- * 1920×1080: card centres 598 / 966 / 1334 px, width 320 px, top 192 px, bottom 720 px,
- * title baseline around y = 444 px). All geometry is expressed as a fraction of the height.
+ * The three cards are centred horizontally and scale with the screen height. Measured at
+ * 1920x1080: card centres at 598 / 966 / 1334 px, width 320 px, top 192 px, bottom 720 px,
+ * title baseline around y = 444 px. All geometry is stored as a fraction of the height.
  */
 
 import { cardCentres, LAYOUT, titleRects, type Rect } from '@shared/cardLayout'
@@ -18,119 +18,121 @@ export interface Bitmap {
   order: 'rgba' | 'bgra'
 }
 
-function brightness(b: Bitmap, x: number, y: number): number {
-  const i = (Math.round(y) * b.width + Math.round(x)) * 4
-  return Math.max(b.data[i], b.data[i + 1], b.data[i + 2])
+function brightness(bitmap: Bitmap, x: number, y: number): number {
+  const i = (Math.round(y) * bitmap.width + Math.round(x)) * 4
+  return Math.max(bitmap.data[i], bitmap.data[i + 1], bitmap.data[i + 2])
 }
 
 /**
- * Cheap pre-check before OCR: each card has a light frame on both sides with the dark card body
- * right inside it. Works for silver, gold and prismatic cards (gold frames are much darker than
- * prismatic ones, so an absolute brightness threshold is not enough – the frame→body contrast is
- * what identifies a card). Returns true when at least two of the three cards are found.
+ * Cheap check before running OCR. Returns true when at least two of the three cards show a light
+ * side frame with the dark card body right next to it.
  */
-export function cardsVisible(b: Bitmap): boolean {
-  return cardMetrics(b).filter((m) => m.edges >= 0.7 && m.dark >= 0.6).length >= 2
+export function cardsVisible(bitmap: Bitmap): boolean {
+  // Frame-to-body contrast instead of a fixed brightness threshold, because gold frames are much
+  // darker than prismatic ones. Works for silver, gold and prismatic cards.
+  return cardMetrics(bitmap).filter((metrics) => metrics.edges >= 0.7 && metrics.dark >= 0.6).length >= 2
 }
 
 /** Mean brightness over a horizontal run of pixels. */
-function runMean(b: Bitmap, x0: number, x1: number, y: number): number {
+function runMean(bitmap: Bitmap, x0: number, x1: number, y: number): number {
   let sum = 0
-  let n = 0
-  for (let x = Math.max(0, Math.round(x0)); x <= Math.min(b.width - 1, Math.round(x1)); x++) {
-    sum += brightness(b, x, y)
-    n++
+  let count = 0
+  for (let x = Math.max(0, Math.round(x0)); x <= Math.min(bitmap.width - 1, Math.round(x1)); x++) {
+    sum += brightness(bitmap, x, y)
+    count++
   }
-  return n ? sum / n : 0
+  return count ? sum / count : 0
 }
 
-function runMax(b: Bitmap, x0: number, x1: number, y: number): number {
-  let m = 0
-  for (let x = Math.max(0, Math.round(x0)); x <= Math.min(b.width - 1, Math.round(x1)); x++) m = Math.max(m, brightness(b, x, y))
-  return m
+function runMax(bitmap: Bitmap, x0: number, x1: number, y: number): number {
+  let max = 0
+  for (let x = Math.max(0, Math.round(x0)); x <= Math.min(bitmap.width - 1, Math.round(x1)); x++)
+    max = Math.max(max, brightness(bitmap, x, y))
+  return max
 }
 
 /**
- * Per card: `edges` = share of rows where both side frames are light (≥ 105) and at least 55
- * brighter than the body just inside them; `dark` = share of dark samples in the card body.
+ * Per card: `edges` is the share of rows where both side frames are light (>= 105) and at least 55
+ * brighter than the body just inside them, `dark` is the share of dark samples in the card body.
  */
-export function cardMetrics(b: Bitmap): { edges: number; dark: number }[] {
-  const H = b.height
-  const u = H / 1080 // layout unit: 1 px at 1080p
-  const out: { edges: number; dark: number }[] = []
-  for (const cx of cardCentres(b.width, H)) {
+export function cardMetrics(bitmap: Bitmap): { edges: number; dark: number }[] {
+  const H = bitmap.height
+  const unit = H / 1080 // 1 px at 1080p
+  const metrics: { edges: number; dark: number }[] = []
+  for (const centreX of cardCentres(bitmap.width, H)) {
     let rows = 0
     let hits = 0
     for (let y = Math.round(0.25 * H); y < 0.62 * H; y += Math.max(1, Math.round(H / 180))) {
       rows++
-      let ok = true
+      let framed = true
       for (const side of [-1, 1]) {
-        const band = side < 0 ? [cx - 162 * u, cx - 140 * u] : [cx + 140 * u, cx + 162 * u]
-        const inner = side < 0 ? [cx - 126 * u, cx - 112 * u] : [cx + 112 * u, cx + 126 * u]
-        const frame = runMax(b, band[0], band[1], y)
-        const body = runMean(b, inner[0], inner[1], y)
-        if (frame < 105 || frame - body < 55) ok = false
+        const band = side < 0 ? [centreX - 162 * unit, centreX - 140 * unit] : [centreX + 140 * unit, centreX + 162 * unit]
+        const inner = side < 0 ? [centreX - 126 * unit, centreX - 112 * unit] : [centreX + 112 * unit, centreX + 126 * unit]
+        const frame = runMax(bitmap, band[0], band[1], y)
+        const body = runMean(bitmap, inner[0], inner[1], y)
+        if (frame < 105 || frame - body < 55) framed = false
       }
-      if (ok) hits++
+      if (framed) hits++
     }
-    // the card body must be dark
+    // the card body has to be dark
     let dark = 0
     let samples = 0
-    const ey = LAYOUT.emptyY * H
+    const bodyY = LAYOUT.emptyY * H
     for (let dx = -0.08 * H; dx <= 0.08 * H; dx += 0.02 * H) {
       samples++
-      if (brightness(b, cx + dx, ey) < 90) dark++
+      if (brightness(bitmap, centreX + dx, bodyY) < 90) dark++
     }
-    out.push({ edges: rows ? hits / rows : 0, dark: samples ? dark / samples : 0 })
+    metrics.push({ edges: rows ? hits / rows : 0, dark: samples ? dark / samples : 0 })
   }
-  return out
+  return metrics
 }
 
-/** Mean brightness 0–255 (sparse sample) – ~0 means the capture is black. */
-export function meanBrightness(b: Bitmap): number {
+/** Mean brightness 0-255 over a sparse sample. Close to 0 means the capture came back black. */
+export function meanBrightness(bitmap: Bitmap): number {
   let sum = 0
-  let n = 0
-  for (let y = 0; y < b.height; y += 8) {
-    for (let x = 0; x < b.width; x += 8) {
-      sum += brightness(b, x, y)
-      n++
+  let count = 0
+  for (let y = 0; y < bitmap.height; y += 8) {
+    for (let x = 0; x < bitmap.width; x += 8) {
+      sum += brightness(bitmap, x, y)
+      count++
     }
   }
-  return n ? sum / n : 0
+  return count ? sum / count : 0
 }
 
 /**
- * Crops a region, scales it up and inverts it to dark text on a light background
- * (Tesseract reads that best). Returns an RGBA buffer.
+ * Crops a region, scales it up and inverts it to dark text on a light background, which is what
+ * Tesseract reads best. Returns an RGBA buffer.
  */
-export function prepareTitle(b: Bitmap, r: Rect, scale = 2): { width: number; height: number; data: Buffer } {
-  const width = r.width * scale
-  const height = r.height * scale
-  const out = Buffer.alloc(width * height * 4)
+export function prepareTitle(bitmap: Bitmap, rect: Rect, scale = 2): { width: number; height: number; data: Buffer } {
+  const width = rect.width * scale
+  const height = rect.height * scale
+  const pixels = Buffer.alloc(width * height * 4)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const sx = Math.min(b.width - 1, r.x + Math.floor(x / scale))
-      const sy = Math.min(b.height - 1, r.y + Math.floor(y / scale))
-      const v = 255 - brightness(b, sx, sy)
-      const o = (y * width + x) * 4
-      out[o] = out[o + 1] = out[o + 2] = v
-      out[o + 3] = 255
+      const srcX = Math.min(bitmap.width - 1, rect.x + Math.floor(x / scale))
+      const srcY = Math.min(bitmap.height - 1, rect.y + Math.floor(y / scale))
+      const value = 255 - brightness(bitmap, srcX, srcY)
+      const offset = (y * width + x) * 4
+      pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = value
+      pixels[offset + 3] = 255
     }
   }
-  return { width, height, data: out }
+  return { width, height, data: pixels }
 }
 
 // ---------------------------------------------------------------------------
 // Fuzzy matching of OCR text to augment names
 // ---------------------------------------------------------------------------
 
-export const normName = (s: string): string =>
-  s
+export const normName = (name: string): string =>
+  name
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]/g, '')
 
+/** Normalised Levenshtein similarity, 1 = identical. */
 export function similarity(a: string, b: string): number {
   if (!a.length && !b.length) return 1
   const prev = Array.from({ length: b.length + 1 }, (_, i) => i)
@@ -138,9 +140,9 @@ export function similarity(a: string, b: string): number {
     let diag = prev[0]
     prev[0] = i
     for (let j = 1; j <= b.length; j++) {
-      const tmp = prev[j]
+      const above = prev[j]
       prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1))
-      diag = tmp
+      diag = above
     }
   }
   return 1 - prev[b.length] / Math.max(a.length, b.length)
@@ -151,59 +153,59 @@ export interface NameCandidate {
   names: string[]
 }
 
-/** Best matching augment for an OCR line (strips frame artefacts like "|" first). */
-export function matchAugment(text: string, candidates: NameCandidate[], min = 0.72): { id: number; score: number } | null {
-  const t = normName(text.replace(/^[^A-Za-zÀ-ÿ]+/, ''))
-  if (t.length < 3) return null
+/** Best matching augment for an OCR line. Leading frame artefacts like "|" are stripped first. */
+export function matchAugment(text: string, candidates: NameCandidate[], minScore = 0.72): { id: number; score: number } | null {
+  const needle = normName(text.replace(/^[^A-Za-zÀ-ÿ]+/, ''))
+  if (needle.length < 3) return null
   let best: { id: number; score: number } | null = null
-  for (const c of candidates) {
-    for (const n of c.names) {
-      const s = similarity(t, normName(n))
-      if (!best || s > best.score) best = { id: c.id, score: s }
+  for (const candidate of candidates) {
+    for (const name of candidate.names) {
+      const score = similarity(needle, normName(name))
+      if (!best || score > best.score) best = { id: candidate.id, score }
     }
   }
-  return best && best.score >= min ? best : null
+  return best && best.score >= minScore ? best : null
 }
 
 /**
- * Coarse fingerprint of each card (icon + title area, mean brightness per cell). Used on the small
- * preview capture to notice a reroll without running OCR every time. One entry per card.
+ * Coarse fingerprint of each card (icon and title area, mean brightness per cell), one entry per
+ * card. Runs on the small preview capture so we notice a reroll without OCR on every frame.
  */
-export function titleSignature(b: Bitmap): number[][] {
-  const H = b.height
-  const cells = (x0: number, y0: number, w: number, h: number, cols: number, rows: number, out: number[]): void => {
-    for (let cy = 0; cy < rows; cy++) {
-      for (let cx = 0; cx < cols; cx++) {
+export function titleSignature(bitmap: Bitmap): number[][] {
+  const H = bitmap.height
+  const sampleGrid = (x0: number, y0: number, w: number, h: number, cols: number, rows: number, out: number[]): void => {
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
         let sum = 0
-        let n = 0
-        const xs = x0 + (cx * w) / cols
-        const ys = y0 + (cy * h) / rows
-        for (let y = ys; y < ys + h / rows; y += 1) {
-          for (let x = xs; x < xs + w / cols; x += 1) {
-            if (x < 0 || y < 0 || x >= b.width || y >= b.height) continue
-            sum += brightness(b, x, y)
-            n++
+        let count = 0
+        const cellX = x0 + (col * w) / cols
+        const cellY = y0 + (row * h) / rows
+        for (let y = cellY; y < cellY + h / rows; y += 1) {
+          for (let x = cellX; x < cellX + w / cols; x += 1) {
+            if (x < 0 || y < 0 || x >= bitmap.width || y >= bitmap.height) continue
+            sum += brightness(bitmap, x, y)
+            count++
           }
         }
-        out.push(n ? sum / n : 0)
+        out.push(count ? sum / count : 0)
       }
     }
   }
-  return titleRects(b.width, H).map((r, i) => {
-    const out: number[] = []
-    cells(r.x, r.y, r.width, r.height, 12, 2, out)
-    // the augment icon above the title (changes completely on a reroll)
-    const cx = cardCentres(b.width, H)[i]
-    cells(cx - 0.075 * H, 0.215 * H, 0.15 * H, 0.14 * H, 5, 5, out)
-    return out
+  return titleRects(bitmap.width, H).map((rect, i) => {
+    const signature: number[] = []
+    sampleGrid(rect.x, rect.y, rect.width, rect.height, 12, 2, signature)
+    // augment icon above the title, it changes completely on a reroll
+    const centreX = cardCentres(bitmap.width, H)[i]
+    sampleGrid(centreX - 0.075 * H, 0.215 * H, 0.15 * H, 0.14 * H, 5, 5, signature)
+    return signature
   })
 }
 
-/** True when any card's fingerprint differs noticeably (a reroll changes one card). */
-export function signatureChanged(a: number[][] | null, b: number[][], tolerance = 10): boolean {
-  if (!a || a.length !== b.length) return true
-  return a.some((card, i) => {
-    const other = b[i]
+/** True when any card's fingerprint differs noticeably (a reroll only changes one card). */
+export function signatureChanged(previous: number[][] | null, current: number[][], tolerance = 10): boolean {
+  if (!previous || previous.length !== current.length) return true
+  return previous.some((card, i) => {
+    const other = current[i]
     if (!other || other.length !== card.length) return true
     let diff = 0
     for (let k = 0; k < card.length; k++) diff += Math.abs(card[k] - other[k])
@@ -224,29 +226,26 @@ export interface PlayerTick {
   dead: boolean
   /** in-game clock in seconds */
   gameTime: number
-  /** changes whenever the inventory changes – in ARAM you can only shop while dead or in the fountain */
+  /** changes whenever the inventory changes. In ARAM you can only shop while dead or in the fountain */
   itemsKey: string
 }
 
-/** Length of the "probably in the fountain" windows, in ms. */
+/** How long we assume the player is probably in the fountain, in ms (gameStart is in game seconds). */
 export const WINDOWS = { respawn: 12_000, shopping: 15_000, manual: 20_000, gameStart: 100 }
 
 /**
  * Decides when the screen is worth looking at. The augment choice only opens while dead or in the
- * fountain, so outside of those moments **no picture is taken at all**:
- *  - while dead,
- *  - in the first 100 s of the game (spawn, level-1 augment),
- *  - 20 s after respawning (standing in the fountain),
- *  - 15 s after an inventory change (shopping is only possible in the fountain),
- *  - 20 s after pressing the overlay hotkey,
- *  - while the cards are on screen.
- *
- * Inside those windows it always looks – it does not try to count picks, because the selection
- * can be closed and reopened (leaving the fountain, the toggle button) and a miscounted pick used
- * to switch recognition off for the rest of the game. `pending` (an augment level reached whose
- * cards haven't been seen yet) only makes it look more often and shows the "augment ready" pill.
+ * fountain, so outside of those moments we don't take a screenshot at all.
  */
 export class AugmentSchedule {
+  // We look while dead, during the first 100 s (spawn and level-1 augment), for a while after
+  // respawning, after an inventory change (shopping only works in the fountain), after the overlay
+  // hotkey, and while the cards are on screen.
+  //
+  // Inside those windows we always look and don't try to count picks. The selection can be closed
+  // and reopened (leaving the fountain, the toggle button), and a miscounted pick used to switch
+  // recognition off for the rest of the game. `pending` (augment level reached, cards not seen yet)
+  // only makes us look more often and shows the "augment ready" pill.
   private level = 0
   private dead = false
   private gameTime = 0
@@ -257,13 +256,13 @@ export class AugmentSchedule {
   /** number of augment levels whose cards have been on screen */
   private handled = 0
 
-  update(t: PlayerTick, now = Date.now()): void {
-    if (this.dead && !t.dead) this.openWindow(WINDOWS.respawn, now)
-    if (this.itemsKey !== null && t.itemsKey !== this.itemsKey) this.openWindow(WINDOWS.shopping, now)
-    this.itemsKey = t.itemsKey
-    this.level = t.level
-    this.dead = t.dead
-    this.gameTime = t.gameTime
+  update(tick: PlayerTick, now = Date.now()): void {
+    if (this.dead && !tick.dead) this.openWindow(WINDOWS.respawn, now)
+    if (this.itemsKey !== null && tick.itemsKey !== this.itemsKey) this.openWindow(WINDOWS.shopping, now)
+    this.itemsKey = tick.itemsKey
+    this.level = tick.level
+    this.dead = tick.dead
+    this.gameTime = tick.gameTime
   }
 
   openWindow(ms: number, now = Date.now()): void {
@@ -271,7 +270,7 @@ export class AugmentSchedule {
   }
 
   get earned(): number {
-    return AUGMENT_LEVELS.filter((l) => this.level >= l).length
+    return AUGMENT_LEVELS.filter((augmentLevel) => this.level >= augmentLevel).length
   }
 
   /** An augment level was reached whose cards haven't been seen yet. */
@@ -287,7 +286,7 @@ export class AugmentSchedule {
   /** Scan interval in ms, or null when the choice can't be open right now. */
   interval(now = Date.now()): number | null {
     if (!this.canOpen(now)) return null
-    if (this.seen) return 350 // cards open: notice a reroll / close quickly (cheap preview only)
+    if (this.seen) return 350 // cards are open, catch a reroll or close quickly (cheap preview only)
     return this.pending ? 1000 : 2000
   }
 
@@ -295,7 +294,7 @@ export class AugmentSchedule {
     return this.seen
   }
 
-  /** Feed the scan result. Returns 'gone' when visible cards disappeared (picked or closed). */
+  /** Feed in the scan result. Returns 'gone' once visible cards have disappeared (picked or closed). */
   observe(cardsOnScreen: boolean): 'gone' | null {
     if (cardsOnScreen) {
       this.seen = true
@@ -303,7 +302,7 @@ export class AugmentSchedule {
       this.handled = this.earned
       return null
     }
-    // two misses in a row, so a single bad frame (animation, hover effect) doesn't count
+    // need two misses in a row so a single bad frame (animation, hover effect) doesn't count
     if (this.seen && ++this.misses >= 2) {
       this.seen = false
       this.misses = 0

@@ -13,9 +13,12 @@ export function Data() {
   const [crawlMode, setCrawlMode] = useState<GameMode>(mode)
   const running = !!crawler?.running
   const elapsed = crawler?.startedAt ? (Date.now() - crawler.startedAt) / 1000 : 0
+  // Wait 30 s before showing a rate, the first numbers are too noisy
   const perMin = elapsed > 30 && crawler ? (crawler.matchesThisRun / elapsed) * 60 : 0
   const progress = crawler && settings ? Math.min(1, crawler.matchesThisRun / settings.crawler.maxMatchesPerRun) : 0
-  const platforms = settings ? [settings.platform, ...settings.crawler.extraPlatforms.filter((p) => p !== settings.platform)] : []
+  const platforms = settings
+    ? [settings.platform, ...settings.crawler.extraPlatforms.filter((platform) => platform !== settings.platform)]
+    : []
 
   return (
     <div className="page-enter mx-auto max-w-5xl p-8">
@@ -30,13 +33,13 @@ export function Data() {
         ) : (
           <>
             <div className="flex rounded-xl border border-line bg-bg-2 p-1">
-              {(['ranked', 'aram'] as GameMode[]).map((m) => (
+              {(['ranked', 'aram'] as GameMode[]).map((gameMode) => (
                 <button
-                  key={m}
-                  onClick={() => setCrawlMode(m)}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${crawlMode === m ? 'bg-panel-2 text-accent' : 'text-muted'}`}
+                  key={gameMode}
+                  onClick={() => setCrawlMode(gameMode)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${crawlMode === gameMode ? 'bg-panel-2 text-accent' : 'text-muted'}`}
                 >
-                  {GAME_MODES[m].label}
+                  {GAME_MODES[gameMode].label}
                 </button>
               ))}
             </div>
@@ -78,11 +81,12 @@ export function Data() {
           <Metric label="Matches / minute" value={perMin ? perMin.toFixed(1) : '–'} />
           <Metric label="API requests" value={num(crawler?.requests ?? 0)} />
           <Metric label="Old-patch games skipped" value={num(crawler?.skippedOldPatch ?? 0)} />
-          <Metric label="Regions" value={platforms.map((p) => PLATFORMS[p].label).join(', ') || '–'} />
+          <Metric label="Regions" value={platforms.map((platform) => PLATFORMS[platform].label).join(', ') || '–'} />
           <Metric
             label="Seed"
             value={
-              settings?.crawler.seedTiers.map((t) => ({ CHALLENGER: 'Chall', GRANDMASTER: 'GM', MASTER: 'Master' })[t]).join(' · ') || '–'
+              settings?.crawler.seedTiers.map((tier) => ({ CHALLENGER: 'Chall', GRANDMASTER: 'GM', MASTER: 'Master' })[tier]).join(' · ') ||
+              '–'
             }
           />
         </div>
@@ -93,18 +97,18 @@ export function Data() {
           <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Stored patches ({GAME_MODES[mode].label})</h2>
           {patches.length ? (
             <div className="space-y-2">
-              {patches.map((p) => (
-                <div key={p.patch} className="flex items-center gap-3 rounded-xl bg-bg-2 px-3 py-2 text-sm">
-                  <span className="font-bold">{p.patch}</span>
+              {patches.map((patchStats) => (
+                <div key={patchStats.patch} className="flex items-center gap-3 rounded-xl bg-bg-2 px-3 py-2 text-sm">
+                  <span className="font-bold">{patchStats.patch}</span>
                   <span className="flex-1 text-muted">
-                    {num(p.matches)} matches · {timeAgo(p.updatedAt)}
+                    {num(patchStats.matches)} matches · {timeAgo(patchStats.updatedAt)}
                   </span>
                   <button
                     className="text-muted hover:text-loss"
                     title="Delete this patch's data"
                     onClick={async () => {
-                      if (confirm(`Delete all statistics for patch ${p.patch}?`)) {
-                        await api.resetStats(p.patch, mode)
+                      if (confirm(`Delete all statistics for patch ${patchStats.patch}?`)) {
+                        await api.resetStats(patchStats.patch, mode)
                         await refreshPatches()
                       }
                     }}

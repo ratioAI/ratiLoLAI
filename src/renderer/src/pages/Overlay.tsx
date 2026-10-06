@@ -13,10 +13,9 @@ import { RARITY_COLORS, RARITY_LABELS, useMayhemData, useOwnedAugments } from '@
 
 const SHOWN_TIERS: Tier[] = ['S+', 'S', 'A', 'B']
 
-/** In-game overlay (separate transparent window) for ARAM: Mayhem augment picks. */
 /**
- * In-game augment tier panel. `part="panel"` is the small window at the right screen edge;
- * the default renders panel + frames in one page (web demo, screenshots).
+ * In-game augment tier panel for ARAM: Mayhem. `part="panel"` is the small transparent window at the
+ * right screen edge; the default renders panel and card frames in one page (web demo, screenshots).
  */
 export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
   const { data: statics, live, settings } = useApp()
@@ -24,54 +23,57 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
   const owned = useOwnedAugments()
   const [expanded, setExpanded] = useState(() => window.location.hash.includes('champ='))
   // '#/overlay?champ=99' previews the overlay for a champion (used by the web demo)
-  const [previewChamp, setPreviewChamp] = useState(() => Number(new URLSearchParams(window.location.hash.split('?')[1]).get('champ')) || 0)
+  const [previewChampionId, setPreviewChampionId] = useState(
+    () => Number(new URLSearchParams(window.location.hash.split('?')[1]).get('champ')) || 0
+  )
   const [rarity, setRarity] = useState<AugmentRarity | null>(null)
   const [showAll, setShowAll] = useState(false)
-  const [focus, setFocus] = useState<AugmentTier | null>(null)
-  // '#/overlay?champ=412&offer=1011,2107,1349' simulates an augment choice (web demo / screenshots)
+  const [focused, setFocused] = useState<AugmentTier | null>(null)
+  // '#/overlay?champ=412&offer=1011,2107,1349' fakes an augment choice (web demo, screenshots)
   const [offer] = useState<AugmentOffer | null>(() => {
-    const ids = new URLSearchParams(window.location.hash.split('?')[1]).get('offer')
-    if (!ids) return null
+    const offerIds = new URLSearchParams(window.location.hash.split('?')[1]).get('offer')
+    if (!offerIds) return null
     const rects = cardRects(window.innerWidth, window.innerHeight)
-    return { displayId: 0, cards: ids.split(',').map((id, i) => ({ augmentId: Number(id), text: '', score: 1, rect: rects[i] })) }
+    return { displayId: 0, cards: offerIds.split(',').map((id, i) => ({ augmentId: Number(id), text: '', score: 1, rect: rects[i] })) }
   })
   const hovered = useRef(false)
   const autoExpandRef = useRef(true)
 
   useEffect(() => {
     document.documentElement.classList.add('overlay-mode')
-    const offs = [
-      api.on('overlayToggle', () => setExpanded((e) => !e)),
-      // the panel opens together with the cards and closes once an augment is picked
+    const unsubscribers = [
+      api.on('overlayToggle', () => setExpanded((isExpanded) => !isExpanded)),
+      // The panel opens together with the cards and closes once an augment is picked
       api.on('augmentCards', ({ visible }) => setExpanded(visible && autoExpandRef.current)),
       api.on('overlayPreview', ({ championId }) => {
-        setPreviewChamp(championId)
+        setPreviewChampionId(championId)
         setExpanded(true)
       })
     ]
-    return () => offs.forEach((o) => o())
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe())
   }, [])
 
   const championId = useMemo(() => {
-    if (previewChamp) return previewChamp
+    if (previewChampionId) return previewChampionId
     return liveChampionKey(statics, live)
-  }, [previewChamp, live, statics])
+  }, [previewChampionId, live, statics])
 
   autoExpandRef.current = settings?.overlay.autoExpand ?? true
-  const level = live?.players.find((p) => p.riotId === live.activePlayer)?.level ?? 0
+  const level = live?.players.find((player) => player.riotId === live.activePlayer)?.level ?? 0
 
   const tiers = useMemo(
     () => (data && statics && championId ? augmentTiersWithOwned(data, statics, championId, owned) : []),
     [data, statics, championId, owned]
   )
-  const visible = tiers.filter((t) => !rarity || t.augment.rarity === rarity)
+  const visibleTiers = tiers.filter((entry) => !rarity || entry.augment.rarity === rarity)
   const groups = (showAll ? (['S+', 'S', 'A', 'B', 'C', 'D'] as Tier[]) : SHOWN_TIERS)
-    .map((tier) => ({ tier, items: visible.filter((t) => t.tier === tier) }))
-    .filter((g) => g.items.length)
+    .map((tier) => ({ tier, items: visibleTiers.filter((entry) => entry.tier === tier) }))
+    .filter((group) => group.items.length)
 
-  const setHover = (h: boolean) => {
-    hovered.current = h
-    api.setOverlayInteractive(h)
+  // The overlay window is click-through except while the mouse is over the panel
+  const setHover = (isHovered: boolean) => {
+    hovered.current = isHovered
+    api.setOverlayInteractive(isHovered)
   }
 
   if (!statics) return null
@@ -87,7 +89,7 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
       </div>
     )
   const hotkey = settings?.overlay.hotkey ?? 'Alt+Shift+A'
-  const tierById = new Map(tiers.map((t) => [t.augment.id, t]))
+  const tierById = new Map(tiers.map((entry) => [entry.augment.id, entry]))
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none">
@@ -122,14 +124,14 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
             </div>
 
             <div className="mb-3 flex gap-1">
-              {(['prismatic', 'gold', 'silver'] as AugmentRarity[]).map((r) => (
+              {(['prismatic', 'gold', 'silver'] as AugmentRarity[]).map((option) => (
                 <button
-                  key={r}
-                  onClick={() => setRarity((cur) => (cur === r ? null : r))}
-                  className={`flex-1 rounded-md border px-1 py-0.5 text-[10px] font-bold ${rarity && rarity !== r ? 'opacity-40' : ''}`}
-                  style={{ color: RARITY_COLORS[r], borderColor: `color-mix(in srgb, ${RARITY_COLORS[r]} 40%, transparent)` }}
+                  key={option}
+                  onClick={() => setRarity((current) => (current === option ? null : option))}
+                  className={`flex-1 rounded-md border px-1 py-0.5 text-[10px] font-bold ${rarity && rarity !== option ? 'opacity-40' : ''}`}
+                  style={{ color: RARITY_COLORS[option], borderColor: `color-mix(in srgb, ${RARITY_COLORS[option]} 40%, transparent)` }}
                 >
-                  {RARITY_LABELS[r]}
+                  {RARITY_LABELS[option]}
                 </button>
               ))}
             </div>
@@ -138,23 +140,23 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
               <p className={`text-xs ${error ? 'text-loss' : 'text-muted'}`}>{error ?? 'Loading augment data …'}</p>
             ) : (
               <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1">
-                {groups.map((g) => (
-                  <div key={g.tier}>
+                {groups.map((group) => (
+                  <div key={group.tier}>
                     <div className="grid grid-cols-5 gap-x-2 gap-y-6 pt-3 pb-2">
-                      {g.items.map((t) => (
+                      {group.items.map((entry) => (
                         <AugmentFrame
-                          key={t.augment.id}
-                          augment={t.augment}
-                          tier={t.tier}
+                          key={entry.augment.id}
+                          augment={entry.augment}
+                          tier={entry.tier}
                           size={42}
-                          onHover={(h) => setFocus(h ? t : null)}
+                          onHover={(hovering) => setFocused(hovering ? entry : null)}
                         />
                       ))}
                     </div>
                   </div>
                 ))}
                 <button
-                  onClick={() => setShowAll((s) => !s)}
+                  onClick={() => setShowAll((current) => !current)}
                   className="flex w-full items-center justify-center gap-1 text-[10px] text-muted hover:text-text"
                 >
                   <ChevronDown size={12} className={showAll ? 'rotate-180' : ''} /> {showAll ? 'Hide C & D tier' : 'Show C & D tier'}
@@ -162,24 +164,24 @@ export function Overlay({ part = 'demo' }: { part?: 'demo' | 'panel' }) {
               </div>
             )}
             <div className="mt-2 min-h-[58px] rounded-lg bg-black/35 p-2 text-xs">
-              {focus ? (
+              {focused ? (
                 <>
                   <div className="flex items-center gap-2">
-                    <b className="truncate text-[#f0e6d2]">{focus.augment.name}</b>
-                    <span className="text-[10px] font-bold" style={{ color: RARITY_COLORS[focus.augment.rarity] }}>
-                      {RARITY_LABELS[focus.augment.rarity]}
+                    <b className="truncate text-[#f0e6d2]">{focused.augment.name}</b>
+                    <span className="text-[10px] font-bold" style={{ color: RARITY_COLORS[focused.augment.rarity] }}>
+                      {RARITY_LABELS[focused.augment.rarity]}
                     </span>
                     <span className="ml-auto text-[10px] text-muted">
-                      {focus.combo
-                        ? COMBO_TYPE_LABELS[focus.combo]
-                        : focus.augment.pickRate != null
-                          ? `picked ${focus.augment.pickRate.toFixed(1)}%`
+                      {focused.combo
+                        ? COMBO_TYPE_LABELS[focused.combo]
+                        : focused.augment.pickRate != null
+                          ? `picked ${focused.augment.pickRate.toFixed(1)}%`
                           : ''}
                     </span>
                   </div>
                   <div className="mt-0.5 text-[11px] text-text/85">
-                    {focus.note ?? 'No note yet.'}
-                    {!focus.fits && <span className="text-loss"> · weak fit for this champion</span>}
+                    {focused.note ?? 'No note yet.'}
+                    {!focused.fits && <span className="text-loss"> · weak fit for this champion</span>}
                   </div>
                 </>
               ) : (

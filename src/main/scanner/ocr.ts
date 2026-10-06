@@ -1,21 +1,21 @@
 import { dirname, join } from 'node:path'
 import { createWorker, PSM, type Worker } from 'tesseract.js'
 
-/** Files that must not live inside app.asar (worker threads and WASM can't be read from it). */
-const unpacked = (p: string): string => p.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
+// Worker threads and WASM can't be loaded from inside app.asar, so these files ship unpacked.
+const unpacked = (path: string): string => path.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
 
 function tesseractPaths(): { langPath: string; workerPath: string; corePath: string } {
-  const lang = dirname(require.resolve('@tesseract.js-data/eng/package.json'))
-  const tess = dirname(require.resolve('tesseract.js/package.json'))
-  const core = dirname(require.resolve('tesseract.js-core/package.json'))
+  const langDir = dirname(require.resolve('@tesseract.js-data/eng/package.json'))
+  const tesseractDir = dirname(require.resolve('tesseract.js/package.json'))
+  const coreDir = dirname(require.resolve('tesseract.js-core/package.json'))
   return {
-    langPath: unpacked(join(lang, '4.0.0_best_int')),
-    workerPath: unpacked(join(tess, 'src', 'worker-script', 'node', 'index.js')),
-    corePath: unpacked(core)
+    langPath: unpacked(join(langDir, '4.0.0_best_int')),
+    workerPath: unpacked(join(tesseractDir, 'src', 'worker-script', 'node', 'index.js')),
+    corePath: unpacked(coreDir)
   }
 }
 
-/** Single-line OCR with a bundled English model – works offline, ~50–150 ms per augment title. */
+/** Single-line OCR with a bundled English model. Works offline, about 50-150 ms per augment title. */
 export class TitleOcr {
   private worker: Promise<Worker> | null = null
 
@@ -23,25 +23,27 @@ export class TitleOcr {
 
   private get(): Promise<Worker> {
     this.worker ??= (async () => {
-      const debug = process.env.RC_OCR_DEBUG ? { logger: (m: unknown) => console.log('[ocr]', JSON.stringify(m)) } : {}
-      let failed: (e: unknown) => void = () => undefined
+      const debug = process.env.RC_OCR_DEBUG ? { logger: (message: unknown) => console.log('[ocr]', JSON.stringify(message)) } : {}
+      // Give up after 20 s if the engine hasn't started. Worker errors reject the race as well.
+      let failed: (err: unknown) => void = () => undefined
       const failure = new Promise<never>((_, reject) => (failed = reject))
       const timeout = setTimeout(() => failed(new Error('OCR engine did not start')), 20_000)
-      const w = await Promise.race([
+      const worker = await Promise.race([
         createWorker('eng', 1, {
           ...tesseractPaths(),
           gzip: true,
           cachePath: this.cacheDir,
-          errorHandler: (e: unknown) => failed(e),
+          errorHandler: (err: unknown) => failed(err),
           ...debug
         }),
         failure
       ]).finally(() => clearTimeout(timeout))
-      await w.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_LINE })
-      return w
-    })().catch((e) => {
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_LINE })
+      return worker
+    })().catch((err) => {
+      // forget the failed start so the next call tries again
       this.worker = null
-      throw e
+      throw err
     })
     return this.worker
   }
@@ -49,21 +51,21 @@ export class TitleOcr {
   /** Starts the engine now; resolves with the start-up time (0 when it was already running). */
   async warmup(): Promise<number> {
     if (this.worker) return (await this.worker, 0)
-    const t0 = Date.now()
+    const startedAt = Date.now()
     await this.get()
-    return Date.now() - t0
+    return Date.now() - startedAt
   }
 
   /** `image` is an encoded PNG. */
   async read(image: Buffer): Promise<string> {
-    const w = await this.get()
-    const { data } = await w.recognize(image)
+    const worker = await this.get()
+    const { data } = await worker.recognize(image)
     return data.text.trim()
   }
 
   async dispose(): Promise<void> {
-    const w = this.worker
+    const pending = this.worker
     this.worker = null
-    if (w) await (await w).terminate().catch(() => undefined)
+    if (pending) await (await pending).terminate().catch(() => undefined)
   }
 }

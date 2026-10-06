@@ -11,6 +11,7 @@ import { Spinner } from '@/components/Layout'
 import { NoDataHint } from './NoDataHint'
 import { MayhemChampionPanel } from '@/components/mayhem'
 
+// Stat shard rune ids, one row per shard slot (offense, flex, defense)
 const SHARD_ROWS = [
   [5008, 5005, 5007],
   [5008, 5010, 5001],
@@ -28,21 +29,21 @@ export function ChampionPage() {
     () => (patch ? api.getChampionBuild(patch, championId, role === 'ARAM' && !aram ? undefined : role, mode) : Promise.resolve(null)),
     [patch, championId, role, statsVersion, mode]
   )
-  const [runeIdx, setRuneIdx] = useState(0)
-  useEffect(() => setRuneIdx(0), [championId, role])
+  const [selectedRunePage, setSelectedRunePage] = useState(0)
+  useEffect(() => setSelectedRunePage(0), [championId, role])
 
-  const champ = data?.champions[championId]
+  const champion = data?.champions[championId]
   if (!data) return null
-  if (!champ) return <div className="p-8">Unbekannter Champion.</div>
+  if (!champion) return <div className="p-8">Unbekannter Champion.</div>
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-8">
-      {/* header */}
+      {/* Header with a faded splash art behind it */}
       <div className="panel relative mb-6 overflow-hidden p-6">
         <div
           className="pointer-events-none absolute inset-0 opacity-[0.13]"
           style={{
-            backgroundImage: `url(https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${champ.id}_0.jpg)`,
+            backgroundImage: `url(https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${champion.id}_0.jpg)`,
             backgroundSize: 'cover',
             backgroundPosition: 'center 20%'
           }}
@@ -51,22 +52,24 @@ export function ChampionPage() {
           <ChampIcon id={championId} size={84} className="rounded-2xl ring-2 ring-line" tooltip={false} />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-extrabold tracking-tight">{champ.name}</h1>
+              <h1 className="text-3xl font-extrabold tracking-tight">{champion.name}</h1>
               {build && <TierBadge tier={build.tier} size="lg" />}
             </div>
-            <p className="text-sm text-muted capitalize">{champ.title}</p>
+            <p className="text-sm text-muted capitalize">{champion.title}</p>
             {build && !aram && (
               <div className="mt-3 flex flex-wrap gap-1.5">
-                {build.availableRoles.map((r) => (
+                {build.availableRoles.map((roleOption) => (
                   <button
-                    key={r.role}
-                    onClick={() => navigate(`/champion/${championId}/${r.role}`, { replace: true })}
+                    key={roleOption.role}
+                    onClick={() => navigate(`/champion/${championId}/${roleOption.role}`, { replace: true })}
                     className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${
-                      r.role === build.role ? 'border-accent/50 bg-accent/10 text-accent' : 'border-line text-muted hover:text-text'
+                      roleOption.role === build.role
+                        ? 'border-accent/50 bg-accent/10 text-accent'
+                        : 'border-line text-muted hover:text-text'
                     }`}
                   >
-                    <RoleIcon role={r.role} size={13} /> {ROLE_LABELS[r.role]}
-                    <span className="font-normal opacity-60">{num(r.games)}</span>
+                    <RoleIcon role={roleOption.role} size={13} /> {ROLE_LABELS[roleOption.role]}
+                    <span className="font-normal opacity-60">{num(roleOption.games)}</span>
                   </button>
                 ))}
               </div>
@@ -94,26 +97,26 @@ export function ChampionPage() {
       ) : (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
           <Card title="Runes" className="lg:row-span-2">
-            {build.runes[runeIdx] ? <RunePageView page={build.runes[runeIdx].value} /> : <Muted>No rune data</Muted>}
+            {build.runes[selectedRunePage] ? <RunePageView page={build.runes[selectedRunePage].value} /> : <Muted>No rune data</Muted>}
             <div className="mt-5 space-y-1.5">
-              {build.runes.map((r, i) => (
+              {build.runes.map((runeOption, i) => (
                 <button
                   key={i}
-                  onClick={() => setRuneIdx(i)}
+                  onClick={() => setSelectedRunePage(i)}
                   className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left text-xs ${
-                    i === runeIdx ? 'border-accent/40 bg-accent/5' : 'border-transparent hover:bg-panel-2'
+                    i === selectedRunePage ? 'border-accent/40 bg-accent/5' : 'border-transparent hover:bg-panel-2'
                   }`}
                 >
-                  <RuneIcon id={r.value.primary[0]} size={28} />
-                  <RuneIcon id={r.value.subStyle} size={18} />
+                  <RuneIcon id={runeOption.value.primary[0]} size={28} />
+                  <RuneIcon id={runeOption.value.subStyle} size={18} />
                   <span className="flex-1 truncate text-muted">
-                    {r.value.primary
+                    {runeOption.value.primary
                       .slice(1)
-                      .concat(r.value.secondary)
+                      .concat(runeOption.value.secondary)
                       .map((id) => data.runes[id]?.name)
                       .join(' · ')}
                   </span>
-                  <OptionStats o={r} />
+                  <OptionStats o={runeOption} />
                 </button>
               ))}
             </div>
@@ -122,14 +125,14 @@ export function ChampionPage() {
           <Card title="Summoner spells & skills">
             <div className="flex flex-wrap gap-6">
               <div className="space-y-2">
-                {build.spells.slice(0, 2).map((s, i) => (
+                {build.spells.slice(0, 2).map((spellOption, i) => (
                   <div key={i} className={`flex items-center gap-3 ${i ? 'opacity-70' : ''}`}>
                     <div className="flex gap-1">
-                      {s.value.map((id) => (
+                      {spellOption.value.map((id) => (
                         <SpellIcon key={id} id={id} size={34} />
                       ))}
                     </div>
-                    <OptionStats o={s} />
+                    <OptionStats o={spellOption} />
                   </div>
                 ))}
               </div>
@@ -137,9 +140,9 @@ export function ChampionPage() {
                 <div>
                   <div className="mb-2 text-xs text-muted">Skill priority</div>
                   <div className="flex items-center gap-1.5">
-                    {[...build.skillMax[0].value].map((k, i) => (
+                    {[...build.skillMax[0].value].map((skill, i) => (
                       <span key={i} className="flex items-center gap-1.5">
-                        <SkillKey k={k} big />
+                        <SkillKey k={skill} big />
                         {i < 2 && <ChevronRight size={14} className="text-muted" />}
                       </span>
                     ))}
@@ -155,20 +158,20 @@ export function ChampionPage() {
 
           <Card title="Items">
             <Section label="Starting items">
-              {build.starters.slice(0, 2).map((s, i) => (
-                <Row key={i} o={s}>
-                  <ItemList ids={s.value} />
+              {build.starters.slice(0, 2).map((starter, i) => (
+                <Row key={i} o={starter}>
+                  <ItemList ids={starter.value} />
                 </Row>
               ))}
             </Section>
             <Section label="Core build">
-              {build.core.slice(0, 3).map((c, i) => (
-                <Row key={i} o={c}>
+              {build.core.slice(0, 3).map((coreOption, i) => (
+                <Row key={i} o={coreOption}>
                   <div className="flex items-center gap-1">
-                    {c.value.map((id, j) => (
+                    {coreOption.value.map((id, j) => (
                       <span key={j} className="flex items-center gap-1">
                         <ItemIcon id={id} size={i ? 32 : 40} />
-                        {j < c.value.length - 1 && <ChevronRight size={14} className="text-muted" />}
+                        {j < coreOption.value.length - 1 && <ChevronRight size={14} className="text-muted" />}
                       </span>
                     ))}
                   </div>
@@ -177,10 +180,10 @@ export function ChampionPage() {
             </Section>
             <Section label="Boots">
               <div className="flex flex-wrap gap-4">
-                {build.boots.slice(0, 3).map((b) => (
-                  <div key={b.value} className="flex items-center gap-2">
-                    <ItemIcon id={b.value} size={32} />
-                    <OptionStats o={b} vertical />
+                {build.boots.slice(0, 3).map((boots) => (
+                  <div key={boots.value} className="flex items-center gap-2">
+                    <ItemIcon id={boots.value} size={32} />
+                    <OptionStats o={boots} vertical />
                   </div>
                 ))}
               </div>
@@ -194,11 +197,11 @@ export function ChampionPage() {
                   <div className="mb-2 text-xs font-semibold text-muted">{['4th', '5th', '6th'][i]} item</div>
                   <div className="space-y-1.5">
                     {slot.length ? (
-                      slot.map((o) => (
-                        <div key={o.value} className="flex items-center gap-2.5">
-                          <ItemIcon id={o.value} size={30} />
-                          <span className="flex-1 truncate text-xs">{data.items[o.value]?.name}</span>
-                          <OptionStats o={o} />
+                      slot.map((itemOption) => (
+                        <div key={itemOption.value} className="flex items-center gap-2.5">
+                          <ItemIcon id={itemOption.value} size={30} />
+                          <span className="flex-1 truncate text-xs">{data.items[itemOption.value]?.name}</span>
+                          <OptionStats o={itemOption} />
                         </div>
                       ))
                     ) : (
@@ -231,29 +234,29 @@ export function ChampionPage() {
 function ImportBar({ build, connected }: { build: ChampionBuild; connected: boolean }) {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
-  const run = async (what?: ('runes' | 'items' | 'spells')[]) => {
+  const runImport = async (parts?: ('runes' | 'items' | 'spells')[]) => {
     setBusy(true)
     setResult(null)
     try {
-      setResult(await api.importBuild(build.championId, build.role, what, build.mode))
-    } catch (e) {
-      setResult({ errors: [(e as Error).message] })
+      setResult(await api.importBuild(build.championId, build.role, parts, build.mode))
+    } catch (err) {
+      setResult({ errors: [(err as Error).message] })
     } finally {
       setBusy(false)
     }
   }
   return (
     <div className="relative mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
-      <button className="btn btn-primary" disabled={!connected || busy} onClick={() => run()}>
+      <button className="btn btn-primary" disabled={!connected || busy} onClick={() => runImport()}>
         {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Import everything into the client
       </button>
-      <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => run(['runes'])}>
+      <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => runImport(['runes'])}>
         Runes
       </button>
-      <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => run(['items'])}>
+      <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => runImport(['items'])}>
         Item set
       </button>
-      <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => run(['spells'])}>
+      <button className="btn btn-ghost" disabled={!connected || busy} onClick={() => runImport(['spells'])}>
         Spells
       </button>
       <span className="text-xs text-muted">
@@ -268,26 +271,26 @@ function ImportBar({ build, connected }: { build: ChampionBuild; connected: bool
 function RunePageView({ page }: { page: RunePage }) {
   const { data } = useApp()
   if (!data) return null
-  const prim = data.runeTrees.find((t) => t.id === page.primaryStyle)
-  const sub = data.runeTrees.find((t) => t.id === page.subStyle)
+  const primaryTree = data.runeTrees.find((tree) => tree.id === page.primaryStyle)
+  const secondaryTree = data.runeTrees.find((tree) => tree.id === page.subStyle)
   return (
     <div className="grid grid-cols-[1fr_1fr_auto] gap-6">
       <div>
-        <TreeHeader id={page.primaryStyle} name={prim?.name} />
-        {prim?.slots.map((slot, i) => (
+        <TreeHeader id={page.primaryStyle} name={primaryTree?.name} />
+        {primaryTree?.slots.map((slot, i) => (
           <div key={i} className={`flex justify-center gap-3 ${i === 0 ? 'mb-4' : 'mb-3'}`}>
-            {slot.map((r) => (
-              <RuneIcon key={r.id} id={r.id} size={i === 0 ? 46 : 34} dim={!page.primary.includes(r.id)} />
+            {slot.map((rune) => (
+              <RuneIcon key={rune.id} id={rune.id} size={i === 0 ? 46 : 34} dim={!page.primary.includes(rune.id)} />
             ))}
           </div>
         ))}
       </div>
       <div>
-        <TreeHeader id={page.subStyle} name={sub?.name} />
-        {sub?.slots.slice(1).map((slot, i) => (
+        <TreeHeader id={page.subStyle} name={secondaryTree?.name} />
+        {secondaryTree?.slots.slice(1).map((slot, i) => (
           <div key={i} className="mb-3 flex justify-center gap-3">
-            {slot.map((r) => (
-              <RuneIcon key={r.id} id={r.id} size={30} dim={!page.secondary.includes(r.id)} />
+            {slot.map((rune) => (
+              <RuneIcon key={rune.id} id={rune.id} size={30} dim={!page.secondary.includes(rune.id)} />
             ))}
           </div>
         ))}
@@ -332,17 +335,17 @@ function SkillPath({ path }: { path: string }) {
     <div className="mt-5 overflow-x-auto">
       <table className="text-center text-[11px]">
         <tbody>
-          {['Q', 'W', 'E', 'R'].map((k) => (
-            <tr key={k}>
+          {['Q', 'W', 'E', 'R'].map((skill) => (
+            <tr key={skill}>
               <td className="pr-2">
-                <SkillKey k={k} />
+                <SkillKey k={skill} />
               </td>
-              {[...path].map((p, i) => (
+              {[...path].map((levelSkill, i) => (
                 <td key={i} className="p-[2px]">
-                  {p === k ? (
+                  {levelSkill === skill ? (
                     <span
                       className="inline-flex h-[22px] w-[22px] items-center justify-center rounded font-bold text-bg"
-                      style={{ background: SKILL_COLORS[k] }}
+                      style={{ background: SKILL_COLORS[skill] }}
                     >
                       {i + 1}
                     </span>
@@ -365,20 +368,20 @@ function MatchupList({ list }: { list: Matchup[] }) {
   if (!list.length) return <Muted>Not enough data for matchups</Muted>
   return (
     <div className="grid grid-cols-2 gap-2">
-      {list.map((m) => (
+      {list.map((matchup) => (
         <button
-          key={m.championId}
-          onClick={() => navigate(`/champion/${m.championId}`)}
+          key={matchup.championId}
+          onClick={() => navigate(`/champion/${matchup.championId}`)}
           className="flex items-center gap-2.5 rounded-xl bg-bg-2 p-2 text-left hover:bg-panel-2"
         >
-          <ChampIcon id={m.championId} size={34} tooltip={false} />
+          <ChampIcon id={matchup.championId} size={34} tooltip={false} />
           <div className="min-w-0">
-            <div className="truncate text-xs font-semibold">{data?.champions[m.championId]?.name}</div>
+            <div className="truncate text-xs font-semibold">{data?.champions[matchup.championId]?.name}</div>
             <div className="text-xs">
-              <span style={{ color: wrColor(m.winRate) }} className="font-bold">
-                {pct(m.winRate)}
+              <span style={{ color: wrColor(matchup.winRate) }} className="font-bold">
+                {pct(matchup.winRate)}
               </span>{' '}
-              <span className="text-muted">· {num(m.games)}</span>
+              <span className="text-muted">· {num(matchup.games)}</span>
             </div>
           </div>
         </button>

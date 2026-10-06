@@ -9,6 +9,7 @@ export const DEV_KEY_LIMITS: RateWindow[] = [
   { limit: 100, windowMs: 120_000 }
 ]
 
+/** Parses Riot's `X-App-Rate-Limit` header, e.g. "20:1,100:120" (count:seconds pairs). */
 export function parseRateLimitHeader(header: string | null | undefined): RateWindow[] | null {
   if (!header) return null
   const windows = header
@@ -22,13 +23,12 @@ export function parseRateLimitHeader(header: string | null | undefined): RateWin
 type Clock = { now(): number; sleep(ms: number): Promise<void> }
 const realClock: Clock = {
   now: () => Date.now(),
-  sleep: (ms) => new Promise((r) => setTimeout(r, ms))
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /**
- * Sliding-window rate limiter supporting multiple simultaneous windows
- * (e.g. "20 per second" AND "100 per two minutes"). Calls to `acquire`
- * are served strictly in FIFO order.
+ * Sliding-window rate limiter that respects several windows at once (e.g. 20/s and 100/2 min).
+ * `acquire` calls are served in FIFO order.
  */
 export class RateLimiter {
   private windows: RateWindow[]
@@ -39,7 +39,7 @@ export class RateLimiter {
   constructor(
     windows: RateWindow[] = DEV_KEY_LIMITS,
     private readonly clock: Clock = realClock,
-    /** keep a little headroom so clock skew with Riot's servers doesn't cause 429s */
+    /** headroom per window so clock skew with Riot's servers doesn't cause 429s */
     private readonly safety = 1
   ) {
     this.windows = windows
@@ -48,7 +48,7 @@ export class RateLimiter {
   setWindows(windows: RateWindow[]): void {
     const same =
       windows.length === this.windows.length &&
-      windows.every((w, i) => w.limit === this.windows[i].limit && w.windowMs === this.windows[i].windowMs)
+      windows.every((rateWindow, i) => rateWindow.limit === this.windows[i].limit && rateWindow.windowMs === this.windows[i].windowMs)
     if (!same) this.windows = windows
   }
 
@@ -64,12 +64,13 @@ export class RateLimiter {
   /** Milliseconds to wait before the next request may be sent (0 = now). */
   waitTime(now = this.clock.now()): number {
     let wait = Math.max(0, this.pausedUntil - now)
-    for (const w of this.windows) {
-      const limit = Math.max(1, w.limit - this.safety)
-      const inWindow = this.history.filter((t) => t > now - w.windowMs)
+    for (const rateWindow of this.windows) {
+      const limit = Math.max(1, rateWindow.limit - this.safety)
+      const inWindow = this.history.filter((t) => t > now - rateWindow.windowMs)
       if (inWindow.length >= limit) {
+        // we can send again once this request drops out of the window
         const oldestRelevant = inWindow[inWindow.length - limit]
-        wait = Math.max(wait, oldestRelevant + w.windowMs - now + 1)
+        wait = Math.max(wait, oldestRelevant + rateWindow.windowMs - now + 1)
       }
     }
     return wait
@@ -84,9 +85,11 @@ export class RateLimiter {
       }
       const now = this.clock.now()
       this.history.push(now)
-      const longest = Math.max(...this.windows.map((w) => w.windowMs))
+      // only timestamps inside the longest window matter
+      const longest = Math.max(...this.windows.map((rateWindow) => rateWindow.windowMs))
       this.history = this.history.filter((t) => t > now - longest)
     })
+    // keep the chain alive even if one caller's wait fails
     this.chain = next.catch(() => undefined)
     return next
   }

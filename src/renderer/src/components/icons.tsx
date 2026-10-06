@@ -4,6 +4,7 @@ import { useGameData } from '@/lib/store'
 import { img } from '@/lib/img'
 import { TIER_COLORS } from '@/lib/format'
 
+// CSS-only hover tooltip; renders the children unchanged when there's no content
 function Tooltip({ content, children }: { content?: ReactNode; children: ReactNode }) {
   if (!content) return <>{children}</>
   return (
@@ -14,6 +15,7 @@ function Tooltip({ content, children }: { content?: ReactNode; children: ReactNo
   )
 }
 
+/** Game asset image that falls back to the first two letters of `alt` if it fails to load. */
 export function GameImage({
   src,
   size,
@@ -30,7 +32,7 @@ export function GameImage({
   tooltip?: ReactNode
 }) {
   const [failed, setFailed] = useState(false)
-  const el =
+  const image =
     !src || failed ? (
       <span
         className={`${rounded} ${className} inline-flex shrink-0 items-center justify-center bg-panel-2 text-[10px] font-bold text-muted`}
@@ -51,7 +53,7 @@ export function GameImage({
         style={{ width: size, height: size }}
       />
     )
-  return <Tooltip content={tooltip}>{el}</Tooltip>
+  return <Tooltip content={tooltip}>{image}</Tooltip>
 }
 
 export const ChampIcon = memo(function ChampIcon({
@@ -67,14 +69,14 @@ export const ChampIcon = memo(function ChampIcon({
 }) {
   const data = useGameData()
   if (!data) return null
-  const c = data.champions[id]
+  const champ = data.champions[id]
   return (
     <GameImage
       src={img.champion(data, id)}
       size={size}
-      alt={c?.name ?? '?'}
+      alt={champ?.name ?? '?'}
       className={className}
-      tooltip={tooltip && c ? <b>{c.name}</b> : undefined}
+      tooltip={tooltip && champ ? <b>{champ.name}</b> : undefined}
     />
   )
 })
@@ -82,19 +84,20 @@ export const ChampIcon = memo(function ChampIcon({
 export const ItemIcon = memo(function ItemIcon({ id, size = 36, count }: { id: number; size?: number; count?: number }) {
   const data = useGameData()
   if (!data || !id) return <span className="inline-block shrink-0 rounded-md bg-bg-2" style={{ width: size, height: size }} />
-  const it = data.items[id]
+  const item = data.items[id]
   return (
     <span className="relative inline-flex">
       <GameImage
         src={img.item(data, id)}
         size={size}
-        alt={it?.name ?? String(id)}
+        alt={item?.name ?? String(id)}
         rounded="rounded-md"
         tooltip={
-          it ? (
+          item ? (
             <span className="block">
-              <b className="text-accent">{it.name}</b> <span className="text-gold">· {it.gold}g</span>
-              <span className="mt-1 block text-muted">{it.plaintext || stripHtml(it.description).slice(0, 220)}</span>
+              <b className="text-accent">{item.name}</b> <span className="text-gold">· {item.gold}g</span>
+              {/* plaintext is often empty, so fall back to the start of the full description */}
+              <span className="mt-1 block text-muted">{item.plaintext || stripHtml(item.description).slice(0, 220)}</span>
             </span>
           ) : undefined
         }
@@ -109,19 +112,20 @@ export const ItemIcon = memo(function ItemIcon({ id, size = 36, count }: { id: n
 export const RuneIcon = memo(function RuneIcon({ id, size = 32, dim = false }: { id: number; size?: number; dim?: boolean }) {
   const data = useGameData()
   if (!data) return null
-  const r = data.runes[id] ?? data.runeTrees.find((t) => t.id === id)
+  // the id can be a single rune or a whole tree; trees have no shortDesc
+  const rune = data.runes[id] ?? data.runeTrees.find((tree) => tree.id === id)
   return (
     <GameImage
       src={img.rune(data, id)}
       size={size}
-      alt={r?.name ?? '?'}
+      alt={rune?.name ?? '?'}
       rounded="rounded-full"
       className={dim ? 'opacity-25 grayscale' : ''}
       tooltip={
-        r ? (
+        rune ? (
           <span className="block">
-            <b>{r.name}</b>
-            {'shortDesc' in r && r.shortDesc ? <span className="mt-1 block text-muted">{r.shortDesc}</span> : null}
+            <b>{rune.name}</b>
+            {'shortDesc' in rune && rune.shortDesc ? <span className="mt-1 block text-muted">{rune.shortDesc}</span> : null}
           </span>
         ) : undefined
       }
@@ -132,18 +136,24 @@ export const RuneIcon = memo(function RuneIcon({ id, size = 32, dim = false }: {
 export const SpellIcon = memo(function SpellIcon({ id, size = 30 }: { id: number; size?: number }) {
   const data = useGameData()
   if (!data) return null
-  const s = data.spells[id]
+  const spell = data.spells[id]
   return (
-    <GameImage src={img.spell(data, id)} size={size} alt={s?.name ?? '?'} rounded="rounded-md" tooltip={s ? <b>{s.name}</b> : undefined} />
+    <GameImage
+      src={img.spell(data, id)}
+      size={size}
+      alt={spell?.name ?? '?'}
+      rounded="rounded-md"
+      tooltip={spell ? <b>{spell.name}</b> : undefined}
+    />
   )
 })
 
 export function TierBadge({ tier, size = 'md' }: { tier: Tier | null; size?: 'sm' | 'md' | 'lg' }) {
   if (!tier) return <span className="text-muted">–</span>
-  const cls = size === 'lg' ? 'h-11 min-w-11 text-lg' : size === 'sm' ? 'h-6 min-w-7 text-xs' : 'h-8 min-w-9 text-sm'
+  const sizeClass = size === 'lg' ? 'h-11 min-w-11 text-lg' : size === 'sm' ? 'h-6 min-w-7 text-xs' : 'h-8 min-w-9 text-sm'
   return (
     <span
-      className={`${cls} inline-flex items-center justify-center rounded-lg px-1.5 font-extrabold`}
+      className={`${sizeClass} inline-flex items-center justify-center rounded-lg px-1.5 font-extrabold`}
       style={{ color: TIER_COLORS[tier], background: `color-mix(in srgb, ${TIER_COLORS[tier]} 14%, transparent)` }}
     >
       {tier}
@@ -151,7 +161,7 @@ export function TierBadge({ tier, size = 'md' }: { tier: Tier | null; size?: 'sm
   )
 }
 
-/** Stylised lane icons (own artwork, no Riot assets). */
+/** Lane icons. Our own drawings, not Riot assets. */
 export function RoleIcon({ role, size = 18, className = '' }: { role: StatRole | 'ALL'; size?: number; className?: string }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', className, fill: 'currentColor' }
   switch (role) {
@@ -209,8 +219,9 @@ export function RoleIcon({ role, size = 18, className = '' }: { role: StatRole |
   }
 }
 
-function stripHtml(s: string): string {
-  return s
+// item descriptions from Data Dragon contain HTML-ish markup (<br>, <stats>, ...)
+function stripHtml(html: string): string {
+  return html
     .replace(/<br\s*\/?>/g, ' ')
     .replace(/<[^>]+>/g, '')
     .replace(/\s+/g, ' ')

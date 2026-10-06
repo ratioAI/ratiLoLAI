@@ -28,15 +28,15 @@ export interface AmComboRow {
   url: string
 }
 
-/** augment-lists.json – the "KIWI" list is the ARAM: Mayhem augment pool */
+/** augment-lists.json. The "KIWI" list is the ARAM: Mayhem augment pool. */
 export interface AugmentList {
   modeName: string
   augmentList: string[]
 }
 
 export function mayhemPool(lists: AugmentList[] | null | undefined): Set<string> {
-  const kiwi = lists?.find((l) => l.modeName === 'KIWI')
-  return new Set((kiwi?.augmentList ?? []).map((p) => p.split('/').pop()!.toLowerCase()))
+  const kiwi = lists?.find((list) => list.modeName === 'KIWI')
+  return new Set((kiwi?.augmentList ?? []).map((path) => path.split('/').pop()!.toLowerCase()))
 }
 
 export interface AmFile<T> {
@@ -56,49 +56,49 @@ export const COMBO_TYPE_LABELS: Record<ComboType, string> = {
   bug: 'Bug combo'
 }
 
-export const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+export const norm = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]/g, '')
 
 export function cdragonIcon(path: string): string {
   return CDRAGON_GAME_DATA + path.replace(/^\/lol-game-data\/assets\//i, '').toLowerCase()
 }
 
-function rarityOf(r: string): AugmentRarity {
-  const x = r.toLowerCase()
-  if (x.includes('prism')) return 'prismatic'
-  if (x.includes('gold')) return 'gold'
+function rarityOf(raw: string): AugmentRarity {
+  const lower = raw.toLowerCase()
+  if (lower.includes('prism')) return 'prismatic'
+  if (lower.includes('gold')) return 'gold'
   return 'silver'
 }
 
 /**
- * Arena and Mayhem share many augment names. The Mayhem variants carry an "ARAM_" name id
- * (or a Kiwi icon / id >= 1000) – those are the ids the game writes into Mayhem match data.
+ * Arena and Mayhem share a lot of augment names. The Mayhem versions have an "ARAM_" name id (or a
+ * Kiwi icon, or an id >= 1000), and those are the ids the game writes into Mayhem match data.
  */
-function mayhemPreference(a: CherryAugment, pool?: Set<string>): number {
-  if (pool?.has(a.augmentNameId.toLowerCase())) return 5
-  if (a.augmentNameId.startsWith('ARAM_')) return 3
-  if (/\/kiwi\//i.test(a.augmentSmallIconPath)) return 2
-  if (a.id >= 1000) return 1
+function mayhemPreference(augment: CherryAugment, pool?: Set<string>): number {
+  if (pool?.has(augment.augmentNameId.toLowerCase())) return 5
+  if (augment.augmentNameId.startsWith('ARAM_')) return 3
+  if (/\/kiwi\//i.test(augment.augmentSmallIconPath)) return 2
+  if (augment.id >= 1000) return 1
   return 0
 }
 
-/** Quest augments are called "Quest: X" on some lists and "X" on others. */
+/** Quest augments are called "Quest: X" in some lists and just "X" in others. */
 const nameKeys = (name: string): string[] => [...new Set([norm(name), norm(name.replace(/^quest:\s*/i, ''))])]
 
 export function indexCherry(list: CherryAugment[], pool?: Set<string>): Map<string, CherryAugment> {
   const byName = new Map<string, CherryAugment>()
-  for (const a of list) {
-    for (const k of nameKeys(a.nameTRA)) {
-      if (!k) continue
-      const cur = byName.get(k)
-      if (!cur || mayhemPreference(a, pool) > mayhemPreference(cur, pool)) byName.set(k, a)
+  for (const augment of list) {
+    for (const key of nameKeys(augment.nameTRA)) {
+      if (!key) continue
+      const current = byName.get(key)
+      if (!current || mayhemPreference(augment, pool) > mayhemPreference(current, pool)) byName.set(key, augment)
     }
   }
   return byName
 }
 
 /**
- * Joins the English client augment list (for matching), the localised list (for display)
- * and the arammayhem.com pick-rate data into one lookup table.
+ * Joins the English client augment list (for matching), the localised list (for display) and the
+ * arammayhem.com pick rates into one lookup table.
  */
 export function buildMayhemData(
   cherryEn: CherryAugment[],
@@ -109,48 +109,50 @@ export function buildMayhemData(
   pool?: Set<string>
 ): MayhemData {
   const byName = indexCherry(cherryEn, pool)
-  const localName = new Map(cherryLocal.map((a) => [a.id, a.nameTRA]))
+  const localName = new Map(cherryLocal.map((augment) => [augment.id, augment.nameTRA]))
   const result: Record<number, MayhemAugment> = {}
   const bySlug = new Map<string, number>()
 
-  const add = (c: CherryAugment, slug: string, row?: AmAugmentRow): number => {
-    const existing = result[c.id]
+  const add = (cherry: CherryAugment, slug: string, row?: AmAugmentRow): number => {
+    const existing = result[cherry.id]
     if (!existing || row) {
-      result[c.id] = {
-        id: c.id,
+      result[cherry.id] = {
+        id: cherry.id,
         slug,
-        name: localName.get(c.id) || c.nameTRA,
-        nameEn: c.nameTRA,
-        rarity: row ? rarityOf(row.rarity) : rarityOf(c.rarity),
-        icon: cdragonIcon(c.augmentSmallIconPath),
+        name: localName.get(cherry.id) || cherry.nameTRA,
+        nameEn: cherry.nameTRA,
+        rarity: row ? rarityOf(row.rarity) : rarityOf(cherry.rarity),
+        icon: cdragonIcon(cherry.augmentSmallIconPath),
         pickRate: row?.pickRate ?? existing?.pickRate ?? null,
         pickRateRank: row?.pickRateRank ?? existing?.pickRateRank ?? null,
         pickRateChange: row?.pickRateChange ?? existing?.pickRateChange ?? null,
         url: row?.url ?? existing?.url ?? null
       }
     }
-    bySlug.set(slug, c.id)
-    return c.id
+    bySlug.set(slug, cherry.id)
+    return cherry.id
   }
 
   for (const row of augments?.rows ?? []) {
-    const c =
+    const cherry =
       nameKeys(row.name.en ?? '')
-        .map((k) => byName.get(k))
+        .map((key) => byName.get(key))
         .find(Boolean) ?? byName.get(norm(row.augmentId))
-    if (c) add(c, row.augmentId, row)
+    if (cherry) add(cherry, row.augmentId, row)
   }
-  // every augment of the Mayhem pool, even without pick-rate data
+  // add the rest of the Mayhem pool too, even without pick rate data
   if (pool?.size) {
-    for (const c of cherryEn) if (pool.has(c.augmentNameId.toLowerCase()) && !result[c.id]) add(c, norm(c.nameTRA), undefined)
+    for (const cherry of cherryEn) {
+      if (pool.has(cherry.augmentNameId.toLowerCase()) && !result[cherry.id]) add(cherry, norm(cherry.nameTRA), undefined)
+    }
   }
 
   const resolveSlug = (slug: string): number | null => {
     if (bySlug.has(slug)) return bySlug.get(slug)!
-    const c = nameKeys(slug.replace(/_/g, ' '))
-      .map((k) => byName.get(k))
+    const cherry = nameKeys(slug.replace(/_/g, ' '))
+      .map((key) => byName.get(key))
       .find(Boolean)
-    return c ? add(c, slug) : null
+    return cherry ? add(cherry, slug) : null
   }
 
   const comboList: MayhemCombo[] = []
@@ -160,7 +162,7 @@ export function buildMayhemData(
     comboList.push({
       championAlias: row.championId,
       augments: ids,
-      types: row.types.filter((t): t is ComboType => t in COMBO_TYPE_LABELS),
+      types: row.types.filter((type): type is ComboType => type in COMBO_TYPE_LABELS),
       url: row.url
     })
   }
@@ -182,21 +184,21 @@ export function combosForChampion(data: MayhemData, statics: StaticData, champio
   const champ = statics.champions[championId]
   if (!champ) return []
   const keys = new Set([norm(champ.id), norm(champ.name)])
-  const rank = (c: MayhemCombo): number => (c.types.length ? Math.min(...c.types.map((t) => TYPE_ORDER.indexOf(t))) : 50)
+  const rank = (combo: MayhemCombo): number => (combo.types.length ? Math.min(...combo.types.map((type) => TYPE_ORDER.indexOf(type))) : 50)
   return data.combos
-    .filter((c) => keys.has(norm(c.championAlias)))
+    .filter((combo) => keys.has(norm(combo.championAlias)))
     .sort((a, b) => rank(a) - rank(b) || a.augments.length - b.augments.length)
 }
 
-/** Most picked augments per rarity (global, all champions). */
+/** Most picked augments per rarity, across all champions. */
 export function popularByRarity(data: MayhemData, limit = 8): Record<AugmentRarity, MayhemAugment[]> {
-  const all = Object.values(data.augments).filter((a) => a.pickRate != null)
-  const pick = (r: AugmentRarity) =>
+  const all = Object.values(data.augments).filter((augment) => augment.pickRate != null)
+  const topOf = (rarity: AugmentRarity) =>
     all
-      .filter((a) => a.rarity === r)
+      .filter((augment) => augment.rarity === rarity)
       .sort((a, b) => (b.pickRate ?? 0) - (a.pickRate ?? 0))
       .slice(0, limit)
-  return { prismatic: pick('prismatic'), gold: pick('gold'), silver: pick('silver') }
+  return { prismatic: topOf('prismatic'), gold: topOf('gold'), silver: topOf('silver') }
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +215,7 @@ export interface AugmentTier {
   source: 'combo' | 'rating'
   combo?: ComboType
   fits: boolean
-  /** set when this augment builds a combo with augments the player already owns */
+  /** set when this augment forms a combo with augments the player already has */
   synergy?: Synergy
 }
 
@@ -221,52 +223,54 @@ export interface Synergy {
   type: ComboType
   /** owned augments that are part of the combo */
   with: number[]
-  /** augments still missing after taking this one (empty = combo complete) */
+  /** augments still missing after taking this one (empty means the combo is complete) */
   missing: number[]
 }
 
 export function championProfile(tags: string[]): Set<AugmentFit> {
-  const p = new Set<AugmentFit>()
-  const has = (t: string) => tags.includes(t)
-  if (has('Mage')) p.add('ap')
-  if (has('Marksman')) ['crit', 'onhit', 'ad'].forEach((x) => p.add(x as AugmentFit))
-  if (has('Assassin') && !has('Mage')) p.add('ad')
-  if (has('Fighter')) ['ad', 'onhit', 'tank'].forEach((x) => p.add(x as AugmentFit))
-  if (has('Tank')) p.add('tank')
-  if (has('Support')) p.add('sup')
-  if (!p.size) p.add('ad')
-  return p
+  const profile = new Set<AugmentFit>()
+  const has = (tag: string) => tags.includes(tag)
+  if (has('Mage')) profile.add('ap')
+  if (has('Marksman')) ['crit', 'onhit', 'ad'].forEach((fit) => profile.add(fit as AugmentFit))
+  if (has('Assassin') && !has('Mage')) profile.add('ad')
+  if (has('Fighter')) ['ad', 'onhit', 'tank'].forEach((fit) => profile.add(fit as AugmentFit))
+  if (has('Tank')) profile.add('tank')
+  if (has('Support')) profile.add('sup')
+  if (!profile.size) profile.add('ad')
+  return profile
 }
 
-const shift = (t: Tier, by: number): Tier => TIERS[Math.min(TIERS.length - 1, Math.max(1, TIERS.indexOf(t) + by))]
+// never shifts into S+, that one is kept for curated top combos
+const shift = (tier: Tier, by: number): Tier => TIERS[Math.min(TIERS.length - 1, Math.max(1, TIERS.indexOf(tier) + by))]
 
 /**
- * Tier of every Mayhem augment for one champion. Riot asks not to publish Mayhem win rates, so the
- * rating combines (1) curated champion combos, (2) how often players pick the augment within its
- * rarity and (3) whether it fits the champion's archetype. S+ is reserved for curated top combos.
+ * Tier of every Mayhem augment for one champion. Riot asks not to publish Mayhem win rates, so this
+ * combines curated champion combos, pick rate within the rarity and whether the augment fits the
+ * champion's archetype. S+ is only given to curated top combos.
  */
 export function augmentTiersForChampion(data: MayhemData, statics: StaticData, championId: number): AugmentTier[] {
   const champ = statics.champions[championId]
   const profile = championProfile(champ?.tags ?? [])
-  const combos = combosForChampion(data, statics, championId).filter((c) => c.augments.length === 1 && c.types.length)
-  const comboOf = new Map(combos.map((c) => [c.augments[0], c.types[0]]))
+  const combos = combosForChampion(data, statics, championId).filter((combo) => combo.augments.length === 1 && combo.types.length)
+  const comboOf = new Map(combos.map((combo) => [combo.augments[0], combo.types[0]]))
 
   const ranked: Record<AugmentRarity, MayhemAugment[]> = { silver: [], gold: [], prismatic: [] }
-  for (const a of Object.values(data.augments)) if (a.pickRate != null) ranked[a.rarity].push(a)
+  for (const augment of Object.values(data.augments)) if (augment.pickRate != null) ranked[augment.rarity].push(augment)
   const percentile = new Map<number, number>()
   for (const list of Object.values(ranked)) {
-    list.sort((x, y) => (y.pickRate ?? 0) - (x.pickRate ?? 0))
-    list.forEach((a, i) => percentile.set(a.id, (i + 1) / list.length))
+    list.sort((a, b) => (b.pickRate ?? 0) - (a.pickRate ?? 0))
+    list.forEach((augment, i) => percentile.set(augment.id, (i + 1) / list.length))
   }
 
   return Object.values(data.augments)
     .map((augment) => {
       const [note, fitTags] = AUGMENT_NOTES[augment.id] ?? [null, ['any'] as AugmentFit[]]
-      const fits = fitTags.includes('any') || fitTags.some((f) => profile.has(f))
+      const fits = fitTags.includes('any') || fitTags.some((fit) => profile.has(fit))
       const combo = comboOf.get(augment.id)
       if (combo) return { augment, tier: COMBO_TIER[combo], note, source: 'combo' as const, combo, fits }
-      const p = percentile.get(augment.id)
-      let tier: Tier = p == null ? 'C' : p <= 0.1 ? 'S' : p <= 0.3 ? 'A' : p <= 0.6 ? 'B' : p <= 0.85 ? 'C' : 'D'
+      const pct = percentile.get(augment.id)
+      let tier: Tier = pct == null ? 'C' : pct <= 0.1 ? 'S' : pct <= 0.3 ? 'A' : pct <= 0.6 ? 'B' : pct <= 0.85 ? 'C' : 'D'
+      // wrong archetype drops two tiers, a specific fit lifts A and below by one
       if (!fits) tier = shift(tier, 2)
       else if (!fitTags.includes('any') && TIERS.indexOf(tier) >= 2) tier = shift(tier, -1)
       return { augment, tier, note, source: 'rating' as const, fits }
@@ -278,46 +282,47 @@ export function augmentTiersForChampion(data: MayhemData, statics: StaticData, c
 // Combos with augments the player already owns
 // ---------------------------------------------------------------------------
 
-/** Best multi-augment combo that `augmentId` builds together with the owned augments. */
+/** Best multi-augment combo that `augmentId` forms together with the owned augments. */
 export function synergyFor(combos: MayhemCombo[], owned: number[], augmentId: number): Synergy | null {
   if (owned.includes(augmentId)) return null
   let best: Synergy | null = null
-  const score = (x: Synergy): number => x.missing.length * 10 + TYPE_ORDER.indexOf(x.type) - x.with.length * 0.1
-  for (const c of combos) {
-    if (c.augments.length < 2 || !c.augments.includes(augmentId)) continue
-    const have = c.augments.filter((a) => owned.includes(a))
+  // lower is better: fewer missing pieces first, then combo type, then more owned pieces
+  const score = (synergy: Synergy): number => synergy.missing.length * 10 + TYPE_ORDER.indexOf(synergy.type) - synergy.with.length * 0.1
+  for (const combo of combos) {
+    if (combo.augments.length < 2 || !combo.augments.includes(augmentId)) continue
+    const have = combo.augments.filter((id) => owned.includes(id))
     if (!have.length) continue
-    const missing = c.augments.filter((a) => a !== augmentId && !owned.includes(a))
-    // proven multi-augment builds often carry no rating – they count as strong
-    const type = [...c.types].sort((a, b) => TYPE_ORDER.indexOf(a) - TYPE_ORDER.indexOf(b))[0] ?? 'strong'
-    const cand: Synergy = { type, with: have, missing }
-    // a trap only counts when nothing better exists
+    const missing = combo.augments.filter((id) => id !== augmentId && !owned.includes(id))
+    // multi-augment builds often have no rating, count them as strong
+    const type = [...combo.types].sort((a, b) => TYPE_ORDER.indexOf(a) - TYPE_ORDER.indexOf(b))[0] ?? 'strong'
+    const candidate: Synergy = { type, with: have, missing }
+    // a trap only wins if there is nothing else
     const better =
-      !best || (best.type === 'trap' && type !== 'trap') || ((best.type === 'trap') === (type === 'trap') && score(cand) < score(best))
-    if (better) best = cand
+      !best || (best.type === 'trap' && type !== 'trap') || ((best.type === 'trap') === (type === 'trap') && score(candidate) < score(best))
+    if (better) best = candidate
   }
   return best
 }
 
 /**
- * Augment tiers for a champion, adjusted for the augments already owned: completing a combo lifts
- * the augment to at least the combo's tier (top combo → S+), being one step away lifts it one
- * tier, and completing a known trap drops it to D.
+ * Augment tiers for a champion, adjusted for what the player already owns. Completing a combo
+ * lifts the augment to at least the combo's tier, being one piece away lifts it one tier, and
+ * completing a known trap drops it to D.
  */
 export function augmentTiersWithOwned(data: MayhemData, statics: StaticData, championId: number, owned: number[]): AugmentTier[] {
   const base = augmentTiersForChampion(data, statics, championId)
   if (!owned.length) return base
   const combos = combosForChampion(data, statics, championId)
   return base
-    .map((t) => {
-      const synergy = synergyFor(combos, owned, t.augment.id)
-      if (!synergy) return t
-      let tier = t.tier
+    .map((entry) => {
+      const synergy = synergyFor(combos, owned, entry.augment.id)
+      if (!synergy) return entry
+      let tier = entry.tier
       if (synergy.type === 'trap') tier = synergy.missing.length ? tier : 'D'
       else if (!synergy.missing.length)
         tier = TIERS.indexOf(COMBO_TIER[synergy.type]) < TIERS.indexOf(tier) ? COMBO_TIER[synergy.type] : tier
       else if (synergy.missing.length === 1) tier = TIERS[Math.max(0, TIERS.indexOf(tier) - 1)]
-      return { ...t, tier, synergy }
+      return { ...entry, tier, synergy }
     })
     .sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || (b.augment.pickRate ?? 0) - (a.augment.pickRate ?? 0))
 }

@@ -24,9 +24,10 @@ export const COMBO_COLORS: Record<ComboType, string> = {
   trap: 'var(--color-loss)'
 }
 
-let cache: Promise<MayhemData> | null = null
+// shared by every useMayhemData() caller so the data is fetched only once
+let mayhemCache: Promise<MayhemData> | null = null
 
-/** Augments picked in the running Mayhem game (recognised from the in-game augment choice). */
+/** Ids of the augments picked so far in the current Mayhem game, detected from the in-game augment screen. */
 export function useOwnedAugments(): number[] {
   const [owned, setOwned] = useState<number[]>([])
   useEffect(() => {
@@ -48,13 +49,14 @@ export function useMayhemData(): { data: MayhemData | null; error: string | null
   const [state, setState] = useState<{ data: MayhemData | null; error: string | null }>({ data: null, error: null })
   useEffect(() => {
     let alive = true
-    cache ??= api.getMayhemData().catch((e) => {
-      cache = null
-      throw e
+    // drop a failed request from the cache so the next mount tries again
+    mayhemCache ??= api.getMayhemData().catch((err) => {
+      mayhemCache = null
+      throw err
     })
-    cache.then(
+    mayhemCache.then(
       (data) => alive && setState({ data, error: null }),
-      (e: Error) => alive && setState({ data: null, error: e.message })
+      (err: Error) => alive && setState({ data: null, error: err.message })
     )
     return () => {
       alive = false
@@ -100,7 +102,7 @@ export function Attribution({ data }: { data: MayhemData }) {
   )
 }
 
-/** Augment recommendations for one champion – shown in champion select, in game and on the champion page. */
+/** Augment recommendations for one champion. Used in champ select, in game and on the champion page. */
 export function MayhemChampionPanel({
   championId,
   compact = false,
@@ -108,46 +110,48 @@ export function MayhemChampionPanel({
 }: {
   championId: number
   compact?: boolean
-  /** augments already picked this game: combos with them are shown first, tiers adjusted */
+  /** augments already picked this game. Combos using them move to the top and tiers are adjusted. */
   owned?: number[]
 }) {
-  const { data: statics } = useApp()
+  const { data: staticData } = useApp()
   const { data, error } = useMayhemData()
   const [rarityFilter, setRarityFilter] = useState<AugmentRarity | null>(null)
-  // compact (Live page): the long tier grid is a drop-down, closed by default
+  // in compact mode (Live page) the long tier grid starts collapsed
   const [tiersOpen, setTiersOpen] = useState(!compact)
   if (error) return <p className="text-sm text-loss">{error}</p>
-  if (!data || !statics) return <p className="text-sm text-muted">Loading augment data …</p>
+  if (!data || !staticData) return <p className="text-sm text-muted">Loading augment data …</p>
 
-  const combos = combosForChampion(data, statics, championId)
-  const tips = combos.filter((c) => c.types.length && c.augments.length === 1)
-  const has = (c: { augments: number[] }) => c.augments.filter((a) => owned.includes(a)).length
+  const combos = combosForChampion(data, staticData, championId)
+  // single-augment "combos" are really tips about one augment
+  const tips = combos.filter((combo) => combo.types.length && combo.augments.length === 1)
+  const ownedCount = (combo: { augments: number[] }) => combo.augments.filter((id) => owned.includes(id)).length
   const builds = combos
-    .filter((c) => c.augments.length > 1)
-    .map((c, i) => ({ c, i, have: has(c), missing: c.augments.length - has(c) }))
-    // with owned augments: combos you are already building first, the closest ones on top
-    .sort((a, b) => (owned.length ? Number(b.have > 0) - Number(a.have > 0) || a.missing - b.missing : 0) || a.i - b.i)
+    .filter((combo) => combo.augments.length > 1)
+    .map((combo, index) => ({ combo, index, have: ownedCount(combo), missing: combo.augments.length - ownedCount(combo) }))
+    // once we own augments, combos already in progress go first, closest to complete on top.
+    // Otherwise keep the original order.
+    .sort((a, b) => (owned.length ? Number(b.have > 0) - Number(a.have > 0) || a.missing - b.missing : 0) || a.index - b.index)
     .slice(0, compact ? 4 : 6)
-  const tiers = augmentTiersWithOwned(data, statics, championId, owned).filter((t) => !owned.includes(t.augment.id))
+  const tiers = augmentTiersWithOwned(data, staticData, championId, owned).filter((rating) => !owned.includes(rating.augment.id))
   const shownTiers: Tier[] = compact ? ['S+', 'S', 'A'] : ['S+', 'S', 'A', 'B']
 
   return (
     <div className="space-y-5">
       {tips.length > 0 && (
         <div>
-          <h3 className="mb-2 text-xs font-semibold text-muted">Augment tips for {statics.champions[championId]?.name}</h3>
+          <h3 className="mb-2 text-xs font-semibold text-muted">Augment tips for {staticData.champions[championId]?.name}</h3>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {tips.map((c, i) => {
-              const a = data.augments[c.augments[0]]
-              const t = c.types[0]
+            {tips.map((combo, i) => {
+              const augment = data.augments[combo.augments[0]]
+              const type = combo.types[0]
               return (
                 <div key={i} className="flex items-center gap-3 rounded-xl bg-bg-2 p-2">
-                  <AugmentIcon augment={a} size={38} />
+                  <AugmentIcon augment={augment} size={38} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold">{a?.name}</div>
-                    <div className="flex items-center gap-1 text-xs font-bold" style={{ color: COMBO_COLORS[t] }}>
-                      {t === 'trap' && <TriangleAlert size={12} />}
-                      {COMBO_TYPE_LABELS[t]}
+                    <div className="truncate text-sm font-semibold">{augment?.name}</div>
+                    <div className="flex items-center gap-1 text-xs font-bold" style={{ color: COMBO_COLORS[type] }}>
+                      {type === 'trap' && <TriangleAlert size={12} />}
+                      {COMBO_TYPE_LABELS[type]}
                     </div>
                   </div>
                 </div>
@@ -160,19 +164,19 @@ export function MayhemChampionPanel({
       {builds.length > 0 && (
         <div>
           <h3 className="mb-2 text-xs font-semibold text-muted">
-            {builds.some((b) => b.have > 0) ? 'Combos with your augments' : 'Proven augment combinations'}
+            {builds.some((build) => build.have > 0) ? 'Combos with your augments' : 'Proven augment combinations'}
           </h3>
           <div className="space-y-2">
-            {builds.map(({ c, have, missing }, i) => (
+            {builds.map(({ combo, have, missing }, i) => (
               <button
                 key={i}
-                onClick={() => api.openExternal(c.url)}
+                onClick={() => api.openExternal(combo.url)}
                 className={`flex w-full items-center gap-1.5 rounded-xl p-2 text-left hover:bg-panel-2 ${
                   have ? `combo-live ${missing <= 1 ? 'combo-hot' : ''}` : 'bg-bg-2'
                 }`}
                 title="Details on arammayhem.com"
               >
-                {c.augments.map((id) => {
+                {combo.augments.map((id) => {
                   const mine = owned.includes(id)
                   return (
                     <span key={id} className={`relative ${owned.length > 0 && !mine ? 'opacity-60' : ''}`}>
@@ -186,9 +190,9 @@ export function MayhemChampionPanel({
                   )
                 })}
                 <span className="ml-auto flex flex-col items-end gap-0.5">
-                  {c.types.map((t) => (
-                    <span key={t} className="text-xs font-bold" style={{ color: COMBO_COLORS[t] }}>
-                      {COMBO_TYPE_LABELS[t]}
+                  {combo.types.map((type) => (
+                    <span key={type} className="text-xs font-bold" style={{ color: COMBO_COLORS[type] }}>
+                      {COMBO_TYPE_LABELS[type]}
                     </span>
                   ))}
                   {have > 0 && (
@@ -212,39 +216,39 @@ export function MayhemChampionPanel({
       <div>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <button
-            onClick={() => setTiersOpen((o) => !o)}
+            onClick={() => setTiersOpen((open) => !open)}
             className="flex items-center gap-1.5 text-xs font-semibold text-muted hover:text-text"
             aria-expanded={tiersOpen}
           >
             <ChevronDown size={14} className={`transition-transform ${tiersOpen ? '' : '-rotate-90'}`} />
-            Augment tiers for {statics.champions[championId]?.name}
+            Augment tiers for {staticData.champions[championId]?.name}
           </button>
           <div className={`flex gap-1 ${tiersOpen ? '' : 'hidden'}`}>
-            {(['prismatic', 'gold', 'silver'] as AugmentRarity[]).map((r) => (
+            {(['prismatic', 'gold', 'silver'] as AugmentRarity[]).map((rarity) => (
               <button
-                key={r}
-                onClick={() => setRarityFilter((cur) => (cur === r ? null : r))}
-                className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${rarityFilter && rarityFilter !== r ? 'opacity-40' : ''}`}
-                style={{ color: RARITY_COLORS[r], borderColor: `color-mix(in srgb, ${RARITY_COLORS[r]} 40%, transparent)` }}
+                key={rarity}
+                onClick={() => setRarityFilter((current) => (current === rarity ? null : rarity))}
+                className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${rarityFilter && rarityFilter !== rarity ? 'opacity-40' : ''}`}
+                style={{ color: RARITY_COLORS[rarity], borderColor: `color-mix(in srgb, ${RARITY_COLORS[rarity]} 40%, transparent)` }}
               >
-                {RARITY_LABELS[r]}
+                {RARITY_LABELS[rarity]}
               </button>
             ))}
           </div>
         </div>
         <div className={`flex flex-wrap gap-x-3 gap-y-6 pt-3 pb-2 ${tiersOpen ? '' : 'hidden'}`}>
           {tiers
-            .filter((t) => shownTiers.includes(t.tier) && (!rarityFilter || t.augment.rarity === rarityFilter))
-            .map((t) => (
+            .filter((rating) => shownTiers.includes(rating.tier) && (!rarityFilter || rating.augment.rarity === rarityFilter))
+            .map((rating) => (
               <AugmentFrame
-                key={t.augment.id}
-                augment={t.augment}
-                tier={t.tier}
+                key={rating.augment.id}
+                augment={rating.augment}
+                tier={rating.tier}
                 size={compact ? 38 : 44}
                 note={
-                  t.synergy
-                    ? `${t.synergy.type === 'trap' ? 'Trap' : t.synergy.missing.length ? 'Builds a combo' : 'Completes a combo'} with ${t.synergy.with.map((id) => data.augments[id]?.name).join(' + ')}`
-                    : t.note
+                  rating.synergy
+                    ? `${rating.synergy.type === 'trap' ? 'Trap' : rating.synergy.missing.length ? 'Builds a combo' : 'Completes a combo'} with ${rating.synergy.with.map((id) => data.augments[id]?.name).join(' + ')}`
+                    : rating.note
                 }
               />
             ))}

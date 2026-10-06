@@ -3,14 +3,15 @@ import type { AugmentOffer, RcEvents } from '@shared/types'
 
 type Part = 'panel' | 'frames' | 'minimap' | 'loading'
 
-/**
- * One transparent, click-through, always-on-top window. On Windows every repaint of a transparent
- * window is copied to the desktop compositor as a whole, so each overlay part gets a window that is
- * only as large as its content – the animated card frames no longer repaint a full-screen surface.
- */
-/** false = overlays also appear in screen shares / recordings (Discord, OBS) */
+/** false means the overlays also show up in screen shares and recordings (Discord, OBS) */
 let hideFromCapture = true
 
+/**
+ * One transparent, click-through, always-on-top window. On Windows every repaint of a transparent
+ * window is copied to the desktop compositor as a whole, so each overlay part gets its own window
+ * that is only as large as its content. That way the animated card frames don't repaint a
+ * full-screen surface.
+ */
 class OverlayWindow {
   win: BrowserWindow | null = null
   private loaded: Promise<void> | null = null
@@ -28,9 +29,9 @@ class OverlayWindow {
 
   ensure(bounds?: Rectangle): BrowserWindow {
     if (this.win && !this.win.isDestroyed()) return this.win
-    const b = bounds ?? { x: 0, y: 0, width: 400, height: 300 }
+    const initialBounds = bounds ?? { x: 0, y: 0, width: 400, height: 300 }
     const win = new BrowserWindow({
-      ...b,
+      ...initialBounds,
       transparent: true,
       frame: false,
       resizable: false,
@@ -46,10 +47,11 @@ class OverlayWindow {
     win.setAlwaysOnTop(true, 'screen-saver')
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
     win.setIgnoreMouseEvents(true, { forward: true })
-    // by default our own overlay stays out of screen captures (Windows 10 2004+:
-    // WDA_EXCLUDEFROMCAPTURE), so the card recognition never sees its own frames. Users who want to
-    // show it in Discord / OBS can turn that off (Settings → overlay).
+    // By default the overlay is excluded from screen captures (WDA_EXCLUDEFROMCAPTURE, Windows 10 2004+),
+    // so the card recognition never sees our own frames. Users who want it in Discord or OBS can turn
+    // this off in the overlay settings.
     win.setContentProtection(hideFromCapture)
+    // give the page a moment after load to mount and subscribe to events
     this.loaded = new Promise((resolve) => win.webContents.once('did-finish-load', () => setTimeout(resolve, 300)))
     this.load(win, this.hash)
     win.on('closed', () => {
@@ -60,10 +62,12 @@ class OverlayWindow {
     return win
   }
 
-  setBounds(b: Rectangle): void {
-    const win = this.ensure(b)
-    const cur = win.getBounds()
-    if (cur.x !== b.x || cur.y !== b.y || cur.width !== b.width || cur.height !== b.height) win.setBounds(b)
+  setBounds(bounds: Rectangle): void {
+    const win = this.ensure(bounds)
+    const current = win.getBounds()
+    // only touch the window when the bounds actually changed
+    if (current.x !== bounds.x || current.y !== bounds.y || current.width !== bounds.width || current.height !== bounds.height)
+      win.setBounds(bounds)
   }
 
   show(): void {
@@ -86,7 +90,7 @@ class OverlayWindow {
     if (this.win && !this.win.isDestroyed()) this.win.webContents.send('rc:event', event, payload)
   }
 
-  /** Sends only if the window already exists and has loaded (a broadcast never creates a window). */
+  /** Sends only if the window already exists and has loaded, so a broadcast never creates a window. */
   sendIfOpen<K extends keyof RcEvents>(event: K, payload: RcEvents[K]): void {
     if (this.win && !this.win.isDestroyed() && !this.win.webContents.isLoading()) this.win.webContents.send('rc:event', event, payload)
   }
@@ -100,7 +104,7 @@ class OverlayWindow {
 /** Margin (DIP) around the minimap inside the minimap window, for labels that stick out. */
 export const MINIMAP_MARGIN = 36
 const PANEL_WIDTH = 350
-/** space around the cards for the crest above and the glow around them */
+/** Space around the cards for the crest above them and the glow. */
 const FRAME_PAD = { top: 100, side: 60, bottom: 52 }
 
 export class OverlayManager {
@@ -108,7 +112,7 @@ export class OverlayManager {
   readonly frames: OverlayWindow
   readonly minimap: OverlayWindow
   readonly loading: OverlayWindow
-  private tempKey: string | null = null
+  private heldKey: string | null = null
   private hotkey: string | null = null
   private previewTimer: NodeJS.Timeout | null = null
   private displayId: number | null = null
@@ -122,13 +126,14 @@ export class OverlayManager {
     this.frames = new OverlayWindow('frames', preload, load, '/overlay/frames')
     this.minimap = new OverlayWindow('minimap', preload, load, `/overlay/minimap?m=${MINIMAP_MARGIN}`)
     this.loading = new OverlayWindow('loading', preload, load, '/overlay/loading')
-    ipcMain.on('overlay:interactive', (e, interactive: boolean) => {
-      BrowserWindow.fromWebContents(e.sender)?.setIgnoreMouseEvents(!interactive, { forward: true })
+    // the renderer turns click-through off while the mouse is over something clickable
+    ipcMain.on('overlay:interactive', (event, interactive: boolean) => {
+      BrowserWindow.fromWebContents(event.sender)?.setIgnoreMouseEvents(!interactive, { forward: true })
     })
   }
 
   private display(id = this.displayId): Electron.Display {
-    return screen.getAllDisplays().find((d) => d.id === id) ?? screen.getPrimaryDisplay()
+    return screen.getAllDisplays().find((display) => display.id === id) ?? screen.getPrimaryDisplay()
   }
 
   /** Moves the overlay onto the monitor the game runs on. */
@@ -141,7 +146,7 @@ export class OverlayManager {
     return this.display().id
   }
 
-  /** Creates the (hidden) windows early so they appear instantly later. */
+  /** Creates the hidden windows early so they show up instantly later. */
   prepare(): void {
     this.panel.ensure(this.panelBounds())
     this.frames.ensure()
@@ -163,24 +168,26 @@ export class OverlayManager {
     this.panel.hide()
   }
 
-  /** Frames around the offered cards: the window covers just the three cards (+ crest and glow). */
+  /** Frames around the offered cards. The window only covers the cards plus crest and glow. */
   showFrames(offer: AugmentOffer): void {
-    const d = this.display(offer.displayId)
-    const rects = offer.cards.map((c) => c.rect)
-    const x0 = Math.max(0, Math.min(...rects.map((r) => r.x)) - FRAME_PAD.side)
-    const y0 = Math.max(0, Math.min(...rects.map((r) => r.y)) - FRAME_PAD.top)
-    const x1 = Math.min(d.bounds.width, Math.max(...rects.map((r) => r.x + r.width)) + FRAME_PAD.side)
-    const y1 = Math.min(d.bounds.height, Math.max(...rects.map((r) => r.y + r.height)) + FRAME_PAD.bottom)
+    const display = this.display(offer.displayId)
+    const rects = offer.cards.map((card) => card.rect)
+    // card rects are relative to the display, clamp the padded area to it
+    const x0 = Math.max(0, Math.min(...rects.map((rect) => rect.x)) - FRAME_PAD.side)
+    const y0 = Math.max(0, Math.min(...rects.map((rect) => rect.y)) - FRAME_PAD.top)
+    const x1 = Math.min(display.bounds.width, Math.max(...rects.map((rect) => rect.x + rect.width)) + FRAME_PAD.side)
+    const y1 = Math.min(display.bounds.height, Math.max(...rects.map((rect) => rect.y + rect.height)) + FRAME_PAD.bottom)
     const bounds = {
-      x: Math.round(d.bounds.x + x0),
-      y: Math.round(d.bounds.y + y0),
+      x: Math.round(display.bounds.x + x0),
+      y: Math.round(display.bounds.y + y0),
       width: Math.round(x1 - x0),
       height: Math.round(y1 - y0)
     }
     this.frames.setBounds(bounds)
+    // the frames page draws in window coordinates
     const local: AugmentOffer = {
       ...offer,
-      cards: offer.cards.map((c) => ({ ...c, rect: { ...c.rect, x: c.rect.x - x0, y: c.rect.y - y0 } }))
+      cards: offer.cards.map((card) => ({ ...card, rect: { ...card.rect, x: card.rect.x - x0, y: card.rect.y - y0 } }))
     }
     void this.frames.send('framesOffer', local).then(() => this.frames.show())
   }
@@ -191,30 +198,31 @@ export class OverlayManager {
     void this.frames.send('framesOffer', null)
   }
 
-  /** Minimap timers: `rect` in fractions of the display. Returns the minimap inside the window (DIP). */
+  /** Minimap timers. `rect` is in fractions of the display; returns the minimap's position inside the window (DIP). */
   showMinimap(displayId: number, rect: { x: number; y: number; w: number; h: number }): { x: number; y: number; w: number; h: number } {
-    const d = this.display(displayId)
-    const m = MINIMAP_MARGIN
-    const x = Math.round(d.bounds.x + rect.x * d.bounds.width - m)
-    const y = Math.round(d.bounds.y + rect.y * d.bounds.height - m)
-    const right = Math.min(d.bounds.x + d.bounds.width, Math.round(d.bounds.x + (rect.x + rect.w) * d.bounds.width + m))
-    const bottom = Math.min(d.bounds.y + d.bounds.height, Math.round(d.bounds.y + (rect.y + rect.h) * d.bounds.height + m))
+    const { bounds } = this.display(displayId)
+    const margin = MINIMAP_MARGIN
+    const x = Math.round(bounds.x + rect.x * bounds.width - margin)
+    const y = Math.round(bounds.y + rect.y * bounds.height - margin)
+    // the minimap sits in the corner, so the margin is cut off at the screen edge
+    const right = Math.min(bounds.x + bounds.width, Math.round(bounds.x + (rect.x + rect.w) * bounds.width + margin))
+    const bottom = Math.min(bounds.y + bounds.height, Math.round(bounds.y + (rect.y + rect.h) * bounds.height + margin))
     this.minimap.setBounds({ x, y, width: right - x, height: bottom - y })
     this.minimap.show()
     return {
-      x: d.bounds.x + rect.x * d.bounds.width - x,
-      y: d.bounds.y + rect.y * d.bounds.height - y,
-      w: rect.w * d.bounds.width,
-      h: rect.h * d.bounds.height
+      x: bounds.x + rect.x * bounds.width - x,
+      y: bounds.y + rect.y * bounds.height - y,
+      w: rect.w * bounds.width,
+      h: rect.h * bounds.height
     }
   }
 
-  /** Loading-screen panel, centred at the top of the game screen. */
+  /** Loading screen panel, centered at the top of the game screen. */
   showLoading(displayId: number | null): void {
-    const d = this.display(displayId)
-    const width = Math.min(1040, d.bounds.width - 40)
+    const { bounds } = this.display(displayId)
+    const width = Math.min(1040, bounds.width - 40)
     const height = 330
-    this.loading.setBounds({ x: Math.round(d.bounds.x + (d.bounds.width - width) / 2), y: d.bounds.y + 18, width, height })
+    this.loading.setBounds({ x: Math.round(bounds.x + (bounds.width - width) / 2), y: bounds.y + 18, width, height })
     this.loading.show()
   }
 
@@ -223,18 +231,18 @@ export class OverlayManager {
   }
 
   /**
-   * A key that only works while something needs it (e.g. Space on the loading screen). Global
-   * shortcuts take the key away from every other program, so it is released right afterwards.
+   * Registers a key only while something needs it (e.g. Space on the loading screen). A global
+   * shortcut takes the key away from every other program, so pass null to release it again.
    */
-  holdKey(accelerator: string | null, cb: () => void = () => undefined): void {
-    if (this.tempKey === accelerator) return
-    if (this.tempKey) globalShortcut.unregister(this.tempKey)
-    this.tempKey = null
+  holdKey(accelerator: string | null, callback: () => void = () => undefined): void {
+    if (this.heldKey === accelerator) return
+    if (this.heldKey) globalShortcut.unregister(this.heldKey)
+    this.heldKey = null
     if (!accelerator) return
     try {
-      if (globalShortcut.register(accelerator, cb)) this.tempKey = accelerator
+      if (globalShortcut.register(accelerator, callback)) this.heldKey = accelerator
     } catch {
-      /* taken by another program */
+      // already taken by another program
     }
   }
 
@@ -242,8 +250,8 @@ export class OverlayManager {
     this.minimap.hide()
   }
 
-  /** Shows panel + frames for a while without a running game (for checking the look). */
-  preview(offer: AugmentOffer | null, onReady: () => void, ms = 20_000): void {
+  /** Shows the panel and frames for a while without a running game, to check how they look. */
+  preview(offer: AugmentOffer | null, onReady: () => void, durationMs = 20_000): void {
     if (this.previewTimer) clearTimeout(this.previewTimer)
     this.previewTimer = null
     this.showPanel()
@@ -253,14 +261,14 @@ export class OverlayManager {
       this.previewTimer = null
       this.panel.hide()
       this.hideFrames()
-    }, ms)
+    }, durationMs)
   }
 
-  /** Show the overlays in screen shares / recordings (Discord, OBS) or keep them out. */
+  /** Shows the overlays in screen shares and recordings (Discord, OBS) or keeps them out. */
   setVisibleInCapture(visible: boolean): void {
     if (hideFromCapture === !visible) return
     hideFromCapture = !visible
-    for (const w of [this.panel, this.frames, this.minimap, this.loading]) w.applyCapture()
+    for (const overlay of [this.panel, this.frames, this.minimap, this.loading]) overlay.applyCapture()
   }
 
   setHotkey(accelerator: string): void {
@@ -270,13 +278,13 @@ export class OverlayManager {
     try {
       if (globalShortcut.register(accelerator, () => this.onToggle())) this.hotkey = accelerator
     } catch {
-      /* invalid accelerator */
+      // invalid accelerator
     }
   }
 
-  /** An app-wide event for all overlay windows that exist. */
+  /** Sends an app-wide event to every overlay window that exists. */
   broadcast<K extends keyof RcEvents>(event: K, payload: RcEvents[K]): void {
-    for (const w of [this.panel, this.frames, this.minimap, this.loading]) w.sendIfOpen(event, payload)
+    for (const overlay of [this.panel, this.frames, this.minimap, this.loading]) overlay.sendIfOpen(event, payload)
   }
 
   get anyVisible(): boolean {

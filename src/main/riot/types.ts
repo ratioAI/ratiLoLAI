@@ -104,7 +104,7 @@ export type TimelineEvent =
   | { type: 'ITEM_DESTROYED'; timestamp: number; participantId: number; itemId: number }
   | { type: 'ITEM_UNDO'; timestamp: number; participantId: number; beforeId: number; afterId: number }
   | { type: 'SKILL_LEVEL_UP'; timestamp: number; participantId: number; skillSlot: number; levelUpType: string }
-  | { type: string; timestamp: number; participantId?: number; [k: string]: unknown }
+  | { type: string; timestamp: number; participantId?: number; [key: string]: unknown }
 
 export interface TimelineDTO {
   metadata: { matchId: string }

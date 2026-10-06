@@ -5,7 +5,11 @@ import type { Settings } from '@shared/types'
 
 type Stored = Omit<Settings, 'hasApiKey'> & { apiKeyEnc?: string; apiKeyPlain?: string; schema?: number }
 
-/** bump to migrate stored settings (2: UI switched to English → game data defaults to en_US) */
+/**
+ * Bump this to migrate stored settings.
+ * 2: the UI switched to English, so game data defaults to en_US.
+ * 3: only the card frames are on by default, the tier list panel is opt-in.
+ */
 const SCHEMA = 3
 
 export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
@@ -49,7 +53,7 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
 }
 
 /**
- * Tiny JSON settings store. The Riot API key is encrypted with Electron's safeStorage
+ * Small JSON settings store. The Riot API key is encrypted with Electron's safeStorage
  * (DPAPI on Windows, Keychain on macOS) and never sent to the renderer.
  */
 export class SettingsStore {
@@ -60,7 +64,7 @@ export class SettingsStore {
     try {
       loaded = JSON.parse(readFileSync(file, 'utf8')) as Partial<Stored>
     } catch {
-      /* first start */
+      // no file yet on first start
     }
     this.data = {
       ...DEFAULT_SETTINGS,
@@ -72,7 +76,6 @@ export class SettingsStore {
       client: { ...DEFAULT_SETTINGS.client, ...loaded.client }
     }
     if ((loaded.schema ?? 1) < 2) this.data.language = 'en_US'
-    // 3: only the card frames by default – the tier list panel is opt-in
     if ((loaded.schema ?? 1) < 3) this.data.overlay.autoExpand = false
     this.data.schema = SCHEMA
   }

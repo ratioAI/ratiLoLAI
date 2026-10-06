@@ -1,6 +1,6 @@
 import type { StaticData, StaticItem, StaticRune, StaticRuneTree, StaticSpell } from './types'
 
-/** Stat shards are not part of runesReforged.json – they are hard-coded here. */
+/** Stat shards aren't in runesReforged.json, so they are hard-coded here. */
 export const STAT_SHARDS: StaticRune[] = [
   {
     id: 5008,
@@ -64,20 +64,21 @@ export interface RawItem {
   consumed?: boolean
 }
 
-export function classifyRawItem(id: number, it: RawItem): Omit<StaticItem, 'id' | 'name' | 'description' | 'plaintext'> {
-  const tags = it.tags ?? []
-  const boots = tags.includes('Boots') && (it.from ?? []).includes('1001')
+export function classifyRawItem(id: number, item: RawItem): Omit<StaticItem, 'id' | 'name' | 'description' | 'plaintext'> {
+  const tags = item.tags ?? []
+  // 1001 is the basic Boots, so anything built from it is a tier 2 boot
+  const boots = tags.includes('Boots') && (item.from ?? []).includes('1001')
   const completed =
     !boots &&
-    it.gold.purchasable &&
-    !it.requiredAlly &&
-    !it.requiredChampion &&
-    !(it.into && it.into.length) &&
+    item.gold.purchasable &&
+    !item.requiredAlly &&
+    !item.requiredChampion &&
+    !(item.into && item.into.length) &&
     !tags.includes('Consumable') &&
     !tags.includes('Trinket') &&
-    ((it.depth ?? 1) >= 3 || it.gold.total >= 2200)
-  const starter = it.gold.purchasable && it.gold.total <= 500 && !tags.includes('Trinket') && id !== 1001
-  return { gold: it.gold.total, tags, completed, boots, starter }
+    ((item.depth ?? 1) >= 3 || item.gold.total >= 2200)
+  const starter = item.gold.purchasable && item.gold.total <= 500 && !tags.includes('Trinket') && id !== 1001
+  return { gold: item.gold.total, tags, completed, boots, starter }
 }
 
 export interface RawChampion {
@@ -124,40 +125,41 @@ export function buildStaticData(
     spells: {}
   }
 
-  for (const c of Object.values(champs)) {
-    data.champions[Number(c.key)] = { id: c.id, key: Number(c.key), name: c.name, title: c.title, tags: c.tags }
+  for (const champ of Object.values(champs)) {
+    data.champions[Number(champ.key)] = { id: champ.id, key: Number(champ.key), name: champ.name, title: champ.title, tags: champ.tags }
   }
 
-  for (const [idStr, it] of Object.entries(items)) {
+  for (const [idStr, item] of Object.entries(items)) {
     const id = Number(idStr)
-    if (!it.maps?.['11']) continue
+    // map 11 is Summoner's Rift
+    if (!item.maps?.['11']) continue
     data.items[id] = {
       id,
-      name: it.name,
-      description: it.description,
-      plaintext: it.plaintext,
-      ...classifyRawItem(id, it)
+      name: item.name,
+      description: item.description,
+      plaintext: item.plaintext,
+      ...classifyRawItem(id, item)
     }
   }
 
   for (const tree of runes) {
-    const t: StaticRuneTree = {
+    const runeTree: StaticRuneTree = {
       id: tree.id,
       key: tree.key,
       name: tree.name,
       icon: tree.icon,
-      slots: tree.slots.map((s) =>
-        s.runes.map((r) => ({ id: r.id, key: r.key, name: r.name, icon: r.icon, shortDesc: stripTags(r.shortDesc) }))
+      slots: tree.slots.map((slot) =>
+        slot.runes.map((rune) => ({ id: rune.id, key: rune.key, name: rune.name, icon: rune.icon, shortDesc: stripTags(rune.shortDesc) }))
       )
     }
-    data.runeTrees.push(t)
-    for (const slot of t.slots) for (const r of slot) data.runes[r.id] = r
+    data.runeTrees.push(runeTree)
+    for (const slot of runeTree.slots) for (const rune of slot) data.runes[rune.id] = rune
   }
   for (const shard of STAT_SHARDS) data.runes[shard.id] = shard
 
-  for (const s of Object.values(spells)) {
-    if (!s.modes.some((m) => m === 'CLASSIC' || m === 'ARAM')) continue
-    const spell: StaticSpell = { id: Number(s.key), key: s.id, name: s.name, description: s.description }
+  for (const rawSpell of Object.values(spells)) {
+    if (!rawSpell.modes.some((mode) => mode === 'CLASSIC' || mode === 'ARAM')) continue
+    const spell: StaticSpell = { id: Number(rawSpell.key), key: rawSpell.id, name: rawSpell.name, description: rawSpell.description }
     data.spells[spell.id] = spell
   }
   return data
@@ -181,11 +183,11 @@ export async function loadStaticData(getJson: <T>(path: string) => Promise<T>, v
   return buildStaticData(version, language, champs.data, items.data, runes, spells.data)
 }
 
-const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+const norm = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]/g, '')
 
 /**
- * Numeric champion key of the local player in a live game. Prefers the language-independent
- * Data Dragon id (from rawChampionName), then the (localized) display name.
+ * Numeric champion key of the local player in a live game. Tries the Data Dragon id first (from
+ * rawChampionName, same in every language), then the localized display name.
  */
 export function liveChampionKey(
   statics: StaticData | null | undefined,
@@ -193,9 +195,12 @@ export function liveChampionKey(
 ): number {
   if (!statics || !live) return 0
   const champs = Object.values(statics.champions)
-  const byId = live.activeChampionKey && champs.find((c) => norm(c.id) === norm(live.activeChampionKey!))
+  const byId = live.activeChampionKey && champs.find((champ) => norm(champ.id) === norm(live.activeChampionKey!))
   if (byId) return byId.key
   const name = live.activeChampion
   if (!name) return 0
-  return champs.find((c) => c.name === name || c.id === name || norm(c.name) === norm(name) || norm(c.id) === norm(name))?.key ?? 0
+  return (
+    champs.find((champ) => champ.name === name || champ.id === name || norm(champ.name) === norm(name) || norm(champ.id) === norm(name))
+      ?.key ?? 0
+  )
 }

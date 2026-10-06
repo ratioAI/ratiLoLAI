@@ -1,14 +1,15 @@
 /**
- * Inhibitor respawn timers for the Howling Abyss (ARAM / ARAM: Mayhem), straight from the Live
- * Client Data API event feed – no screen capture involved.
+ * Minimap timers for the Howling Abyss (ARAM / ARAM: Mayhem).
  *
- * Health relics: the game only shows the countdown to the *first* spawn. Afterwards a relic that is
- * up is drawn as a small green cross on the minimap – ratioAI watches the four pads once per second
- * and starts a 92.5 s timer (2.5 s until the heal beam + 90 s) when a cross disappears.
+ * Inhibitor timers come straight from the Live Client Data API event feed, no screen capture needed.
+ *
+ * For health relics the game only shows the countdown to the first spawn. After that, a relic that's
+ * up is drawn as a small green cross on the minimap. We check the four pads once per second and start
+ * a 92.5 s timer (2.5 s until the heal beam, then 90 s) when a cross disappears.
  */
 import type { MinimapState } from '@shared/types'
 
-/** measured in ARAM: Mayhem (killed 930 s → respawned 1180 s, twice): 4:10, not Summoner's Rift's 5:00 */
+/** 4:10, not 5:00 like on Summoner's Rift. Measured twice in ARAM: Mayhem (killed at 930 s, back at 1180 s). */
 export const INHIBITOR_RESPAWN = 250
 
 /** Inhibitor events as parsed from the Live Client Data API. */
@@ -18,7 +19,7 @@ export interface InhibitorEvent {
   time: number
 }
 
-/** "Barracks_T1_L1" → ORDER (T1 = blue side structures), "Barracks_T2_…" → CHAOS. */
+/** "Barracks_T1_L1" is ORDER (T1 = blue side structures), "Barracks_T2_..." is CHAOS. */
 export function inhibitorTeam(name: string): 'ORDER' | 'CHAOS' | null {
   if (/_T1_|_T100|order/i.test(name)) return 'ORDER'
   if (/_T2_|_T200|chaos/i.test(name)) return 'CHAOS'
@@ -27,24 +28,25 @@ export function inhibitorTeam(name: string): 'ORDER' | 'CHAOS' | null {
 
 /** Inhibitors that are currently down, with the game time they come back. */
 export function inhibitorTimers(events: InhibitorEvent[], gameTime: number): MinimapState['inhibitors'] {
-  const last = new Map<string, InhibitorEvent>()
-  for (const e of [...events].sort((a, b) => a.time - b.time)) last.set(e.inhibitor, e)
-  const out: MinimapState['inhibitors'] = []
-  for (const e of last.values()) {
-    const team = inhibitorTeam(e.inhibitor)
-    if (!team || e.type !== 'killed') continue
-    const respawnAt = e.time + INHIBITOR_RESPAWN
-    if (respawnAt > gameTime) out.push({ team, respawnAt, pos: INHIBITOR_POS[team] })
+  // only the latest event per inhibitor matters
+  const latest = new Map<string, InhibitorEvent>()
+  for (const event of [...events].sort((a, b) => a.time - b.time)) latest.set(event.inhibitor, event)
+  const timers: MinimapState['inhibitors'] = []
+  for (const event of latest.values()) {
+    const team = inhibitorTeam(event.inhibitor)
+    if (!team || event.type !== 'killed') continue
+    const respawnAt = event.time + INHIBITOR_RESPAWN
+    if (respawnAt > gameTime) timers.push({ team, respawnAt, pos: INHIBITOR_POS[team] })
   }
-  return out
+  return timers
 }
 
 /** Inhibitor icons on the Howling Abyss minimap (fractions of the minimap, measured at 1080p). */
 export const INHIBITOR_POS = { ORDER: { x: 0.24, y: 0.748 }, CHAOS: { x: 0.754, y: 0.254 } } as const
 
 /**
- * Minimap position as fractions of the screen. Measured on a 1080p screenshot (bottom right,
- * 285 px); `scale` is the minimap size relative to that (Settings → Minimap size).
+ * Minimap position as fractions of the screen, measured on a 1080p screenshot (bottom right, 285 px).
+ * `scale` is the minimap size relative to that (Settings > Minimap size).
  */
 export function minimapRect(width: number, height: number, scale = 1): { x: number; y: number; w: number; h: number } {
   const side = 0.2639 * height * scale
@@ -57,12 +59,12 @@ export function minimapRect(width: number, height: number, scale = 1): { x: numb
 // Health relics
 // ---------------------------------------------------------------------------
 
-/** Game-time seconds (League wiki): outer 1:45, inner 2:30; back 90 s after the beam (2.5 s after pickup). */
+/** Game time in seconds (League wiki): outer 1:45, inner 2:30. Back 90 s after the beam, which comes 2.5 s after pickup. */
 export const RELIC_TIMES = { outer: 105, inner: 150, respawn: 92.5 }
 
 /**
- * Relic pads ordered from the blue (ORDER, bottom left) to the red base, as fractions of the
- * minimap – measured where the game draws their first-spawn countdown and their green cross.
+ * Relic pads from the blue base (ORDER, bottom left) to the red one, as fractions of the minimap.
+ * Measured where the game draws the first-spawn countdown and the green cross.
  */
 export const RELICS = [
   { id: 'order-inner', team: 'ORDER', kind: 'inner', pos: { x: 0.37, y: 0.692 } },
@@ -77,22 +79,22 @@ export const RELIC_PATCH = 0.065
 export type RelicSeen = 'present' | 'absent' | 'unclear'
 
 /**
- * Classifies a small RGBA patch around a relic pad: the relic is a pale green cross; champion
- * icons (e.g. your own green ring) are saturated green and make the sample unclear.
+ * Classifies a small RGBA patch around a relic pad. The relic is a pale green cross, while champion
+ * icons (your own green ring, for example) are saturated green and make the sample unclear.
  */
-export function relicSeen(p: { width: number; height: number; data: Uint8Array }): RelicSeen {
+export function relicSeen(patch: { width: number; height: number; data: Uint8Array }): RelicSeen {
   let pale = 0
   let strong = 0
-  for (let i = 0; i < p.data.length; i += 4) {
-    const r = p.data[i]
-    const g = p.data[i + 1]
-    const b = p.data[i + 2]
-    const d = g - Math.max(r, b)
+  for (let i = 0; i < patch.data.length; i += 4) {
+    const r = patch.data[i]
+    const g = patch.data[i + 1]
+    const b = patch.data[i + 2]
+    const greenness = g - Math.max(r, b)
     if (g < 85) continue
-    if (d >= 48) strong++
-    else if (d >= 12) pale++
+    if (greenness >= 48) strong++
+    else if (greenness >= 12) pale++
   }
-  const scale = (p.width * p.height) / 289 // thresholds tuned on a 17×17 patch (1080p)
+  const scale = (patch.width * patch.height) / 289 // thresholds were tuned on a 17x17 patch (1080p)
   if (strong > 8 * scale) return 'unclear'
   if (pale >= 5 * scale) return 'present'
   if (pale <= 1 * scale && strong <= 2 * scale) return 'absent'
@@ -102,7 +104,7 @@ export function relicSeen(p: { width: number; height: number; data: Uint8Array }
 interface RelicTrack {
   phase: 'spawn' | 'up'
   at: number | null
-  /** the cross has been seen since the last spawn – only then can a pickup be trusted */
+  /** the cross has been seen since the last spawn, only then can we trust a pickup */
   verified: boolean
   absentSince: number | null
   absentCount: number
@@ -111,26 +113,26 @@ interface RelicTrack {
 }
 
 /**
- * Per-pad state machine with hysteresis. The respawn time is learned during the game: when a
- * cross that was taken comes back for good, the time it took is recorded; once two such
- * observations agree, timers use the learned value (modes and maps can differ from the 90 s
- * of classic ARAM).
+ * Per-pad state machine with hysteresis. It also learns the actual respawn time during the game,
+ * since modes and maps can differ from the 90 s of classic ARAM.
  */
 export class RelicTracker {
+  // When a taken cross comes back for good we record how long it took. Once we have two of those
+  // samples the timers switch to the learned value.
   private tracks: RelicTrack[] = []
-  private last = 0
+  private lastGameTime = 0
   private respawnSamples: number[] = []
 
-  constructor(private readonly log: (msg: string) => void = () => undefined) {
+  constructor(private readonly log: (message: string) => void = () => undefined) {
     this.reset()
   }
 
   reset(): void {
-    this.last = 0
+    this.lastGameTime = 0
     this.respawnSamples = []
-    this.tracks = RELICS.map((r) => ({
+    this.tracks = RELICS.map((relic) => ({
       phase: 'spawn',
-      at: RELIC_TIMES[r.kind],
+      at: RELIC_TIMES[relic.kind],
       verified: false,
       absentSince: null,
       absentCount: 0,
@@ -139,66 +141,67 @@ export class RelicTracker {
     }))
   }
 
-  /** Respawn time in use: learned (median of observations) once two agree, else 92.5 s. */
+  /** Respawn time in use: the median of learned samples once there are two, otherwise 92.5 s. */
   get respawnTime(): number {
-    const s = [...this.respawnSamples].sort((a, b) => a - b)
-    if (s.length < 2) return RELIC_TIMES.respawn
-    return s[s.length >> 1]
+    const sorted = [...this.respawnSamples].sort((a, b) => a - b)
+    if (sorted.length < 2) return RELIC_TIMES.respawn
+    return sorted[sorted.length >> 1]
   }
 
   tick(gameTime: number): void {
-    if (gameTime + 5 < this.last) this.reset()
-    this.last = gameTime
-    for (const t of this.tracks) {
-      if (t.phase === 'spawn' && t.at !== null && gameTime >= t.at) {
-        t.phase = 'up'
-        t.at = null
-        t.verified = false
-        t.absentCount = 0
-        t.absentSince = null
-        t.presentCount = 0
+    // clock jumped back, so this is a new game
+    if (gameTime + 5 < this.lastGameTime) this.reset()
+    this.lastGameTime = gameTime
+    for (const track of this.tracks) {
+      if (track.phase === 'spawn' && track.at !== null && gameTime >= track.at) {
+        track.phase = 'up'
+        track.at = null
+        track.verified = false
+        track.absentCount = 0
+        track.absentSince = null
+        track.presentCount = 0
       }
     }
   }
 
-  /** One classification per pad (null = no picture). Returns the ids of relics seen taken. */
+  /** One classification per pad (null = no picture). Returns the ids of relics that were just taken. */
   observe(gameTime: number, seen: (RelicSeen | null)[]): string[] {
     this.tick(gameTime)
     const taken: string[] = []
-    seen.forEach((s, i) => {
-      const t = this.tracks[i]
-      if (!t || !s || s === 'unclear') return
-      if (t.phase === 'up') {
-        if (s === 'present') {
-          t.verified = true
-          t.absentCount = 0
-          t.absentSince = null
-        } else if (t.verified) {
-          t.absentSince ??= gameTime
-          // 4 s without the cross: taken (a champion walking over it is shorter or "unclear")
-          if (++t.absentCount >= 4) {
-            t.phase = 'spawn'
-            t.takenAt = t.absentSince
-            t.at = t.absentSince + this.respawnTime
-            t.presentCount = 0
+    seen.forEach((result, i) => {
+      const track = this.tracks[i]
+      if (!track || !result || result === 'unclear') return
+      if (track.phase === 'up') {
+        if (result === 'present') {
+          track.verified = true
+          track.absentCount = 0
+          track.absentSince = null
+        } else if (track.verified) {
+          track.absentSince ??= gameTime
+          // 4 s without the cross means taken. A champion walking over it is shorter or reads as "unclear".
+          if (++track.absentCount >= 4) {
+            track.phase = 'spawn'
+            track.takenAt = track.absentSince
+            track.at = track.absentSince + this.respawnTime
+            track.presentCount = 0
             taken.push(RELICS[i].id)
           }
         }
-      } else if (t.phase === 'spawn' && t.at !== null && gameTime > RELIC_TIMES[RELICS[i].kind]) {
-        t.presentCount = s === 'present' ? t.presentCount + 1 : 0
-        if (t.presentCount >= 3) {
-          const since = t.takenAt !== null ? gameTime - 2 - t.takenAt : 0
+      } else if (track.phase === 'spawn' && track.at !== null && gameTime > RELIC_TIMES[RELICS[i].kind]) {
+        track.presentCount = result === 'present' ? track.presentCount + 1 : 0
+        if (track.presentCount >= 3) {
+          const since = track.takenAt !== null ? gameTime - 2 - track.takenAt : 0
           if (since >= 20 && since <= 120) {
-            // the relic really is back – it respawns faster/slower than assumed: learn it
+            // the relic is really back earlier or later than we assumed, so learn the actual respawn time
             this.respawnSamples.push(since)
             this.log(`relic ${RELICS[i].id} back after ${Math.round(since)} s (respawn now ${Math.round(this.respawnTime)} s)`)
           } else this.log(`relic ${RELICS[i].id} still there after ${Math.round(since)} s – not taken`)
-          t.phase = 'up'
-          t.at = null
-          t.verified = true
-          t.absentCount = 0
-          t.absentSince = null
-          t.presentCount = 0
+          track.phase = 'up'
+          track.at = null
+          track.verified = true
+          track.absentCount = 0
+          track.absentSince = null
+          track.presentCount = 0
         }
       }
     })
@@ -206,15 +209,15 @@ export class RelicTracker {
   }
 
   snapshot(): MinimapState['relics'] {
-    return RELICS.map((r, i) => {
-      const t = this.tracks[i]
+    return RELICS.map((relic, i) => {
+      const track = this.tracks[i]
       return {
-        id: r.id,
-        team: r.team,
-        kind: r.kind,
-        pos: r.pos,
-        state: t.phase === 'spawn' ? 'spawn' : t.verified ? 'up' : 'unknown',
-        at: t.phase === 'spawn' ? t.at : null
+        id: relic.id,
+        team: relic.team,
+        kind: relic.kind,
+        pos: relic.pos,
+        state: track.phase === 'spawn' ? 'spawn' : track.verified ? 'up' : 'unknown',
+        at: track.phase === 'spawn' ? track.at : null
       }
     })
   }

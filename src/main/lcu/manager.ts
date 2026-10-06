@@ -36,16 +36,16 @@ export interface LcuManagerDeps {
   staticData(): Promise<StaticData>
   build(championId: number, role: StatRole | null, mode: GameMode): Promise<ChampionBuild | null>
   emit: {
-    client(s: ClientStatus): void
-    champSelect(s: ChampSelectState | null): void
-    live(s: LiveGameState | null): void
-    imported(r: ImportResult & { championId: number }): void
-    loading(s: LoadingState | null): void
-    summary(s: GameSummary): void
-    /** everyone accepted the match (ready check → champ select): time to travel to a new galaxy */
+    client(status: ClientStatus): void
+    champSelect(state: ChampSelectState | null): void
+    live(state: LiveGameState | null): void
+    imported(result: ImportResult & { championId: number }): void
+    loading(state: LoadingState | null): void
+    summary(summary: GameSummary): void
+    /** Everyone accepted (ready check went straight to champ select). The app jumps to a new galaxy. */
     matchAccepted(): void
   }
-  /** gold/kill lead recorded from the live data (fallback when the client has no timeline) */
+  /** Gold/kill lead recorded from the live data, used when the client has no timeline. */
   liveCurve(): CurvePoint[]
 }
 
@@ -60,10 +60,6 @@ interface PerkPage {
   current: boolean
 }
 
-/**
- * Keeps a connection to the local League client (LCU): detects the client, follows the
- * gameflow, parses champion select, auto-imports builds and polls live game data.
- */
 interface ReadyCheck {
   state?: string
   playerResponse?: string
@@ -71,6 +67,10 @@ interface ReadyCheck {
   timer?: number
 }
 
+/**
+ * Keeps a connection to the local League client (LCU). Follows the gameflow, parses champ select,
+ * auto-imports builds and polls live game data.
+ */
 export class LcuManager {
   private client: LcuClient | null = null
   private status: ClientStatus = { connected: false, phase: 'None', summoner: null }
@@ -80,7 +80,7 @@ export class LcuManager {
   private queue: { id: number | null; gameMode: string | null } = { id: null, gameMode: null }
   private importTimer: NodeJS.Timeout | null = null
   private gameQueueId: number | null = null
-  /** ARAM/Mayhem have no lock-in: import once the champion has been stable for this long */
+  /** ARAM/Mayhem have no lock-in, so we import once the champion has been stable for this long. */
   private static readonly ARAM_IMPORT_DELAY_MS = 1500
   private pollTimer: NodeJS.Timeout | null = null
   private liveTimer: NodeJS.Timeout | null = null
@@ -113,17 +113,17 @@ export class LcuManager {
     return this.liveState
   }
 
-  private setStatus(p: Partial<ClientStatus>): void {
-    this.status = { ...this.status, ...p }
+  private setStatus(patch: Partial<ClientStatus>): void {
+    this.status = { ...this.status, ...patch }
     this.deps.emit.client(this.status)
   }
 
   private async tryConnect(): Promise<void> {
     this.connecting = true
     try {
-      const creds = await findCredentials(this.deps.settings().leaguePath || undefined)
-      if (!creds) return
-      const client = new LcuClient(creds)
+      const credentials = await findCredentials(this.deps.settings().leaguePath || undefined)
+      if (!credentials) return
+      const client = new LcuClient(credentials)
       await client.connect([
         'OnJsonApiEvent_lol-gameflow_v1_gameflow-phase',
         'OnJsonApiEvent_lol-champ-select_v1_session',
@@ -131,7 +131,7 @@ export class LcuManager {
         'OnJsonApiEvent_lol-summoner_v1_current-summoner'
       ])
       this.client = client
-      client.on('event', (e: LcuEvent) => void this.onEvent(e))
+      client.on('event', (event: LcuEvent) => void this.onEvent(event))
       client.on('close', () => this.onDisconnect())
 
       const [summoner, phase, session] = await Promise.all([
@@ -164,18 +164,18 @@ export class LcuManager {
   private async fetchSummoner(): Promise<ClientSummoner | null> {
     if (!this.client) return null
     try {
-      const [s, region] = await Promise.all([
+      const [summoner, region] = await Promise.all([
         this.client.get<{ gameName: string; tagLine: string; puuid: string; summonerLevel: number; profileIconId: number }>(
           '/lol-summoner/v1/current-summoner'
         ),
         this.client.get<{ region: string }>('/riotclient/region-locale').catch(() => ({ region: '' }))
       ])
       return {
-        gameName: s.gameName,
-        tagLine: s.tagLine,
-        puuid: s.puuid,
-        summonerLevel: s.summonerLevel,
-        profileIconId: s.profileIconId,
+        gameName: summoner.gameName,
+        tagLine: summoner.tagLine,
+        puuid: summoner.puuid,
+        summonerLevel: summoner.summonerLevel,
+        profileIconId: summoner.profileIconId,
         platform: regionToPlatform(region.region)
       }
     } catch {
@@ -192,26 +192,26 @@ export class LcuManager {
     }
   }
 
-  private async onEvent(e: LcuEvent): Promise<void> {
-    switch (e.uri) {
+  private async onEvent(event: LcuEvent): Promise<void> {
+    switch (event.uri) {
       case '/lol-gameflow/v1/gameflow-phase':
-        this.setStatus({ phase: String(e.data) })
-        if (e.data === 'ChampSelect') await this.fetchQueue()
-        this.onPhase(String(e.data))
+        this.setStatus({ phase: String(event.data) })
+        if (event.data === 'ChampSelect') await this.fetchQueue()
+        this.onPhase(String(event.data))
         break
       case '/lol-champ-select/v1/session':
-        if (e.eventType === 'Delete') {
+        if (event.eventType === 'Delete') {
           this.champSelectState = null
           this.lastAutoImport = ''
           this.queue = { id: null, gameMode: null }
           this.deps.emit.champSelect(null)
         } else {
           if (this.queue.id === null) await this.fetchQueue()
-          this.onChampSelect(e.data as RawSession)
+          this.onChampSelect(event.data as RawSession)
         }
         break
       case '/lol-matchmaking/v1/ready-check':
-        this.onReadyCheck(e.data as ReadyCheck | null)
+        this.onReadyCheck(event.data as ReadyCheck | null)
         break
       case '/lol-summoner/v1/current-summoner':
         this.setStatus({ summoner: await this.fetchSummoner() })
@@ -219,7 +219,7 @@ export class LcuManager {
     }
   }
 
-  // --- auto accept ----------------------------------------------------------
+  // --- auto accept ---
 
   private acceptTimer: NodeJS.Timeout | null = null
 
@@ -229,31 +229,32 @@ export class LcuManager {
   }
 
   /**
-   * Accepts the ready check after a random, human-like delay (not the instant the popup appears).
-   * Uses the same documented client API as the Accept button. If you accept or decline yourself,
-   * or the check ends, the pending accept is dropped.
+   * Accepts the ready check after a random, human-like delay instead of the moment it pops.
+   * Uses the same client endpoint as the Accept button. If the player answers themselves or the
+   * check ends first, the pending accept is dropped.
    */
-  private onReadyCheck(rc: ReadyCheck | null): void {
-    const s = this.deps.settings().client
-    const open = rc?.state === 'InProgress' && rc.playerResponse === 'None'
-    if (!s.autoAccept || !open) return this.cancelAccept()
+  private onReadyCheck(readyCheck: ReadyCheck | null): void {
+    const clientSettings = this.deps.settings().client
+    const open = readyCheck?.state === 'InProgress' && readyCheck.playerResponse === 'None'
+    if (!clientSettings.autoAccept || !open) return this.cancelAccept()
     if (this.acceptTimer) return
-    const delay = acceptDelayMs(s.acceptDelay, rc?.timer)
+    const delay = acceptDelayMs(clientSettings.acceptDelay, readyCheck?.timer)
     this.acceptTimer = setTimeout(async () => {
       this.acceptTimer = null
-      const now = await this.client?.get<ReadyCheck>('/lol-matchmaking/v1/ready-check').catch(() => null)
-      if (!this.deps.settings().client.autoAccept || now?.state !== 'InProgress' || now.playerResponse !== 'None') return
+      // re-check right before accepting, the state may have changed during the delay
+      const latest = await this.client?.get<ReadyCheck>('/lol-matchmaking/v1/ready-check').catch(() => null)
+      if (!this.deps.settings().client.autoAccept || latest?.state !== 'InProgress' || latest.playerResponse !== 'None') return
       await this.client?.request('POST', '/lol-matchmaking/v1/ready-check/accept').catch(() => undefined)
     }, delay)
   }
 
-  // --- party & loading screen ------------------------------------------------
+  // --- party & loading screen ---
 
   private currentGameId: number | null = null
 
   /**
-   * After the game: the client's match history entry has all ten players (stats, augments) and a
-   * timeline (gold per minute, kills). It can take a little while to appear – retry for ~2 min.
+   * Post-game summary from the client's match history (all ten players, augments) plus its timeline
+   * (gold per minute, kills). The entry can take a while to show up, so we retry for about 2 minutes.
    */
   private async fetchSummary(gameId: number): Promise<void> {
     for (let attempt = 0; attempt < 24; attempt++) {
@@ -266,7 +267,7 @@ export class LcuManager {
         this.deps.emit.summary(summary)
         return
       }
-      await new Promise((r) => setTimeout(r, 5000))
+      await new Promise((resolve) => setTimeout(resolve, 5000))
     }
   }
 
@@ -280,23 +281,25 @@ export class LcuManager {
   }
 
   private async riotIdOf(puuid: string): Promise<string> {
-    const s = await this.client?.get<{ gameName?: string; tagLine?: string }>(`/lol-summoner/v2/summoners/puuid/${puuid}`).catch(() => null)
-    return s?.gameName ? `${s.gameName}#${s.tagLine ?? ''}` : ''
+    const summoner = await this.client
+      ?.get<{ gameName?: string; tagLine?: string }>(`/lol-summoner/v2/summoners/puuid/${puuid}`)
+      .catch(() => null)
+    return summoner?.gameName ? `${summoner.gameName}#${summoner.tagLine ?? ''}` : ''
   }
 
-  /** Remembers who is in your party (lobby) – shown as premades during the game. */
+  /** Remembers who is in the lobby with us, shown as premades during the game. */
   private async fetchParty(): Promise<void> {
     const lobby = await this.client?.get<{ members?: { puuid?: string }[] }>('/lol-lobby/v2/lobby').catch(() => null)
-    const me = this.status.summoner?.puuid
-    const puuids = (lobby?.members ?? []).map((m) => m.puuid).filter((p): p is string => !!p && p !== me)
-    if (!puuids.length && !lobby) return // no lobby right now – keep what we knew
+    const myPuuid = this.status.summoner?.puuid
+    const puuids = (lobby?.members ?? []).map((member) => member.puuid).filter((puuid): puuid is string => !!puuid && puuid !== myPuuid)
+    if (!puuids.length && !lobby) return // no lobby right now, keep what we had
     this.premadePuuids = new Set(puuids)
-    this.premades = (await Promise.all(puuids.map((p) => this.riotIdOf(p)))).filter(Boolean)
+    this.premades = (await Promise.all(puuids.map((puuid) => this.riotIdOf(puuid)))).filter(Boolean)
   }
 
   /**
-   * Loading screen: read the players from the game session and look up each player's recent
-   * games of this mode in the client's match history (the same data the client's profile shows).
+   * Loading screen: takes the players from the game session and looks up each one's recent games in
+   * this mode from the client's match history (same data the in-client profile shows).
    */
   private async fetchLoading(): Promise<void> {
     const client = this.client
@@ -307,42 +310,43 @@ export class LcuManager {
         gameData?: { gameId?: number; queue?: { id?: number; gameMode?: string }; teamOne?: SessionPlayer[]; teamTwo?: SessionPlayer[] }
       }>('/lol-gameflow/v1/session')
       .catch(() => null)
-    const g = session?.gameData
-    const queue = g?.queue?.id ?? null
+    const gameData = session?.gameData
+    const queueId = gameData?.queue?.id ?? null
+    // KIWI is the internal gameMode of ARAM: Mayhem
     const mode: LoadingState['mode'] | null =
-      g?.queue?.gameMode === 'KIWI' || (queue !== null && (QUEUE_IDS.mayhem as readonly number[]).includes(queue))
+      gameData?.queue?.gameMode === 'KIWI' || (queueId !== null && (QUEUE_IDS.mayhem as readonly number[]).includes(queueId))
         ? 'mayhem'
-        : g?.queue?.gameMode === 'ARAM' || (queue !== null && (QUEUE_IDS.aram as readonly number[]).includes(queue))
+        : gameData?.queue?.gameMode === 'ARAM' || (queueId !== null && (QUEUE_IDS.aram as readonly number[]).includes(queueId))
           ? 'aram'
           : null
-    if (!g || !mode || g.gameId === this.loadingGame) return
-    this.loadingGame = g.gameId ?? null
-    const me = this.status.summoner?.puuid
-    const mine = (g.teamOne ?? []).some((p) => p.puuid === me) ? (g.teamOne ?? []) : (g.teamTwo ?? [])
-    const all = [...(g.teamOne ?? []), ...(g.teamTwo ?? [])].filter((p) => p.puuid)
-    const players: LoadingPlayer[] = all.map((p) => ({
-      puuid: p.puuid!,
-      riotId: p.gameName ? `${p.gameName}#${p.tagLine ?? ''}` : (p.summonerName ?? ''),
-      championId: p.championId ?? 0,
-      ally: mine.includes(p),
-      me: p.puuid === me,
-      premade: this.premadePuuids.has(p.puuid!),
+    if (!gameData || !mode || gameData.gameId === this.loadingGame) return
+    this.loadingGame = gameData.gameId ?? null
+    const myPuuid = this.status.summoner?.puuid
+    const myTeam = (gameData.teamOne ?? []).some((player) => player.puuid === myPuuid) ? (gameData.teamOne ?? []) : (gameData.teamTwo ?? [])
+    const everyone = [...(gameData.teamOne ?? []), ...(gameData.teamTwo ?? [])].filter((player) => player.puuid)
+    const players: LoadingPlayer[] = everyone.map((player) => ({
+      puuid: player.puuid!,
+      riotId: player.gameName ? `${player.gameName}#${player.tagLine ?? ''}` : (player.summonerName ?? ''),
+      championId: player.championId ?? 0,
+      ally: myTeam.includes(player),
+      me: player.puuid === myPuuid,
+      premade: this.premadePuuids.has(player.puuid!),
       record: null,
       loading: true
     }))
     this.loadingState = { mode, players }
     this.deps.emit.loading(this.loadingState)
 
-    // names + records, three at a time so the client isn't hammered during loading
-    const queue_ = [...players]
+    // names and records, three at a time so we don't hammer the client while the game is loading
+    const pending = [...players]
     const worker = async (): Promise<void> => {
-      for (let p = queue_.shift(); p; p = queue_.shift()) {
-        if (!p.riotId) p.riotId = await this.riotIdOf(p.puuid)
+      for (let player = pending.shift(); player; player = pending.shift()) {
+        if (!player.riotId) player.riotId = await this.riotIdOf(player.puuid)
         const history = await client
-          .get<LcuHistory>(`/lol-match-history/v1/products/lol/${p.puuid}/matches?begIndex=0&endIndex=99`)
+          .get<LcuHistory>(`/lol-match-history/v1/products/lol/${player.puuid}/matches?begIndex=0&endIndex=99`)
           .catch(() => null)
-        p.record = history ? modeRecord(history, p.puuid, mode) : null
-        p.loading = false
+        player.record = history ? modeRecord(history, player.puuid, mode) : null
+        player.loading = false
         if (this.loadingState?.players === players) this.deps.emit.loading({ mode, players: [...players] })
       }
     }
@@ -362,17 +366,17 @@ export class LcuManager {
       this.deps.emit.loading(null)
     }
     if (['PreEndOfGame', 'WaitingForStats', 'EndOfGame'].includes(phase) && this.currentGameId) {
-      const id = this.currentGameId
+      const gameId = this.currentGameId
       this.currentGameId = null
-      void this.fetchSummary(id)
+      void this.fetchSummary(gameId)
     }
     if (phase === 'InProgress') {
-      // remember the queue (and id) of the running game (the champ-select queue is cleared when it ends)
+      // remember queue and game id of the running game, the champ select queue is cleared when it ends
       void this.client
         ?.get<{ gameData?: { gameId?: number; queue?: { id?: number } } }>('/lol-gameflow/v1/session')
-        .then((s) => {
-          this.gameQueueId = s?.gameData?.queue?.id ?? null
-          this.currentGameId = s?.gameData?.gameId ?? null
+        .then((session) => {
+          this.gameQueueId = session?.gameData?.queue?.id ?? null
+          this.currentGameId = session?.gameData?.gameId ?? null
         })
         .catch(() => undefined)
       this.startLivePolling()
@@ -398,7 +402,7 @@ export class LcuManager {
     const key = `${state.mode}:${state.myChampionId}:${state.myRole}`
     if (key === this.lastAutoImport) return
     if (aramLike) {
-      // champions can still be swapped via the bench – wait until the choice settles
+      // champions can still be swapped via the bench, so wait until the pick settles
       if (this.importTimer) clearTimeout(this.importTimer)
       this.importTimer = setTimeout(() => {
         this.importTimer = null
@@ -410,32 +414,32 @@ export class LcuManager {
   }
 
   private autoImport(state: ChampSelectState, key: string): void {
-    const c = this.deps.settings().client
+    const clientSettings = this.deps.settings().client
     const what = [
-      ...(c.autoImportRunes ? (['runes'] as const) : []),
-      ...(c.autoImportItems ? (['items'] as const) : []),
-      ...(c.autoImportSpells ? (['spells'] as const) : [])
+      ...(clientSettings.autoImportRunes ? (['runes'] as const) : []),
+      ...(clientSettings.autoImportItems ? (['items'] as const) : []),
+      ...(clientSettings.autoImportSpells ? (['spells'] as const) : [])
     ]
     if (!what.length) return
     this.lastAutoImport = key
     const mode = statsModeOf(state.mode)
     const role = mode === 'aram' ? 'ARAM' : state.myRole
-    void this.importBuild(state.myChampionId, role, [...what], mode).then((r) =>
-      this.deps.emit.imported({ ...r, championId: state.myChampionId })
+    void this.importBuild(state.myChampionId, role, [...what], mode).then((result) =>
+      this.deps.emit.imported({ ...result, championId: state.myChampionId })
     )
   }
 
-  // --- live game ------------------------------------------------------------
+  // --- live game ---
 
-  /** bumped on every stop – a request still in flight then must not schedule the next poll */
-  private liveGen = 0
+  /** Bumped on every stop, so a request still in flight doesn't schedule another poll. */
+  private liveGeneration = 0
 
   private startLivePolling(): void {
     if (this.liveTimer) return
-    const gen = this.liveGen
+    const generation = this.liveGeneration
     const poll = async (): Promise<void> => {
       const state = parseLiveData(await fetchAllGameData())
-      if (gen !== this.liveGen) return // the game ended while the request was running
+      if (generation !== this.liveGeneration) return // game ended while the request was running
       if (state) state.premades = this.premades
       this.liveState = state
       this.deps.emit.live(state)
@@ -445,7 +449,7 @@ export class LcuManager {
   }
 
   private stopLivePolling(): void {
-    this.liveGen++
+    this.liveGeneration++
     if (this.liveTimer) clearTimeout(this.liveTimer)
     this.liveTimer = null
     if (this.liveState) {
@@ -454,7 +458,7 @@ export class LcuManager {
     }
   }
 
-  // --- import ---------------------------------------------------------------
+  // --- import ---
 
   async importBuild(
     championId: number,
@@ -468,20 +472,20 @@ export class LcuManager {
     const build = await this.deps.build(championId, role, mode)
     if (!build) return { errors: ['No data for this champion yet – start the crawler.'] }
     const data = await this.deps.staticData()
-    const champName = data.champions[championId]?.name ?? String(championId)
+    const championName = data.champions[championId]?.name ?? String(championId)
 
     if (what.includes('runes')) {
       try {
-        result.runes = await this.importRunes(client, build, champName)
-      } catch (e) {
-        result.errors.push(`Runes: ${(e as Error).message}`)
+        result.runes = await this.importRunes(client, build, championName)
+      } catch (err) {
+        result.errors.push(`Runes: ${(err as Error).message}`)
       }
     }
     if (what.includes('items')) {
       try {
         result.items = await this.importItems(client, build, data)
-      } catch (e) {
-        result.errors.push(`Items: ${(e as Error).message}`)
+      } catch (err) {
+        result.errors.push(`Items: ${(err as Error).message}`)
       }
     }
     if (what.includes('spells')) {
@@ -491,8 +495,8 @@ export class LcuManager {
           await client.request('PATCH', '/lol-champ-select/v1/session/my-selection', { spell1Id: order[0], spell2Id: order[1] })
           result.spells = order.map((id) => data.spells[id]?.name ?? id).join(' + ')
         }
-      } catch (e) {
-        result.errors.push(`Summoner spells: ${(e as Error).message}`)
+      } catch (err) {
+        result.errors.push(`Summoner spells: ${(err as Error).message}`)
       }
     }
     return result
@@ -505,18 +509,18 @@ export class LcuManager {
     return personalMayhemStats(history, this.status.summoner?.puuid ?? null)
   }
 
-  private async importRunes(client: LcuClient, build: ChampionBuild, champName: string): Promise<string> {
-    const payload = buildRunePagePayload(build, champName)
+  private async importRunes(client: LcuClient, build: ChampionBuild, championName: string): Promise<string> {
+    const payload = buildRunePagePayload(build, championName)
     if (!payload) throw new Error('no rune data')
     const pages = await client.get<PerkPage[]>('/lol-perks/v1/pages')
-    for (const p of pages.filter((p) => isOurRunePage(p.name) && p.isDeletable)) {
-      await client.request('DELETE', `/lol-perks/v1/pages/${p.id}`)
+    for (const page of pages.filter((page) => isOurRunePage(page.name) && page.isDeletable)) {
+      await client.request('DELETE', `/lol-perks/v1/pages/${page.id}`)
     }
     try {
       await client.request('POST', '/lol-perks/v1/pages', payload)
     } catch {
-      // page limit reached – replace the currently selected editable page (same as other companion apps)
-      const current = pages.find((p) => p.current && p.isDeletable && !isOurRunePage(p.name))
+      // page limit reached: replace the currently selected page, like other companion apps do
+      const current = pages.find((page) => page.current && page.isDeletable && !isOurRunePage(page.name))
       if (!current) throw new Error('No free rune page available.')
       await client.request('DELETE', `/lol-perks/v1/pages/${current.id}`)
       await client.request('POST', '/lol-perks/v1/pages', payload)
@@ -528,12 +532,13 @@ export class LcuManager {
     const summoner = await client.get<{ summonerId: number }>('/lol-summoner/v1/current-summoner')
     const path = `/lol-item-sets/v1/item-sets/${summoner.summonerId}/sets`
     const current = await client.get<{ accountId: number; itemSets: { uid: string }[]; timestamp: number }>(path)
-    const set = buildItemSet(build, data)
+    const itemSet = buildItemSet(build, data)
+    // replace our previous set for this champion instead of adding another one
     const itemSets = current.itemSets.filter(
-      (s) => s.uid !== set.uid && !(s.uid ?? '').startsWith(`${ITEM_SET_UID_PREFIX}${build.championId}`)
+      (existing) => existing.uid !== itemSet.uid && !(existing.uid ?? '').startsWith(`${ITEM_SET_UID_PREFIX}${build.championId}`)
     )
-    itemSets.unshift(set)
+    itemSets.unshift(itemSet)
     await client.request('PUT', path, { ...current, itemSets, timestamp: Date.now() })
-    return set.title
+    return itemSet.title
   }
 }

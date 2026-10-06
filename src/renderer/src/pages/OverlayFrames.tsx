@@ -19,15 +19,15 @@ export function OverlayFrames() {
     return api.on('framesOffer', setOffer)
   }, [])
 
-  const liveChamp = liveChampionKey(statics, live)
-  const championId = offer?.championId ?? liveChamp
+  const liveChampionId = liveChampionKey(statics, live)
+  const championId = offer?.championId ?? liveChampionId
   const tierById = useMemo(() => {
-    // combos with the augments already picked lift (or sink) the offered cards
+    // Combos with augments we already own can push an offered card up or down
     const tiers = data && statics && championId ? augmentTiersWithOwned(data, statics, championId, owned) : []
-    return new Map(tiers.map((t) => [t.augment.id, t]))
+    return new Map(tiers.map((tier) => [tier.augment.id, tier]))
   }, [data, statics, championId, owned])
   const names = useMemo(
-    () => Object.fromEntries(Object.values(data?.augments ?? {}).map((a) => [a.id, a.name])) as Record<number, string>,
+    () => Object.fromEntries(Object.values(data?.augments ?? {}).map((augment) => [augment.id, augment.name])) as Record<number, string>,
     [data]
   )
 

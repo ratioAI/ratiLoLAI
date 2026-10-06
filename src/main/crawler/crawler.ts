@@ -16,39 +16,41 @@ export interface CrawlOptions {
   classify: ItemClassifier
 }
 
-/** Upper bound for the snowball player pool (ARAM needs it, apex players rarely play ARAM). */
+/** Cap for the snowball player pool (only used for ARAM, apex players rarely play it). */
 const MAX_PLAYERS = 50_000
+/** only look at games from the last 3 weeks */
 const LOOKBACK_MS = 21 * 24 * 3600 * 1000
 const WORKERS = 3
 const FLUSH_EVERY = 10
 
-function shuffle<T>(arr: T[]): T[] {
-  for (let i = arr.length - 1; i > 0; i--) {
+/** Fisher-Yates, in place. */
+function shuffle<T>(items: T[]): T[] {
+  for (let i = items.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
-    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+    ;[items[i], items[j]] = [items[j], items[i]]
   }
-  return arr
+  return items
 }
 
 /** Compares "15.9" and "15.10" numerically. */
 export function comparePatch(a: string, b: string): number {
-  const [a1, a2] = a.split('.').map(Number)
-  const [b1, b2] = b.split('.').map(Number)
-  return a1 - b1 || a2 - b2
+  const [majorA, minorA] = a.split('.').map(Number)
+  const [majorB, minorB] = b.split('.').map(Number)
+  return majorA - majorB || minorA - minorB
 }
 
 /**
- * Crawls high-elo ranked games through the official Riot API and feeds them into the
- * aggregated statistics. Uses a small worker pool; throughput is bounded by the rate limiter.
+ * Crawls high-elo games through the official Riot API and adds them to the aggregated stats.
+ * Runs a few workers in parallel, the rate limiter decides the actual throughput.
  */
 export class Crawler {
-  private abort: AbortController | null = null
+  private abortController: AbortController | null = null
   private status: CrawlerStatus = Crawler.idleStatus()
 
   constructor(
     private readonly client: RiotClient,
     private readonly store: StatsStore,
-    private readonly onStatus: (s: CrawlerStatus) => void,
+    private readonly onStatus: (status: CrawlerStatus) => void,
     private readonly onStatsUpdated: (patch: string, mode: GameMode) => void
   ) {}
 
@@ -74,21 +76,21 @@ export class Crawler {
     return { ...this.status, requests: this.client.requestCount }
   }
 
-  private update(p: Partial<CrawlerStatus>): void {
-    this.status = { ...this.status, ...p }
+  private update(patch: Partial<CrawlerStatus>): void {
+    this.status = { ...this.status, ...patch }
     this.onStatus(this.getStatus())
   }
 
-  /** A new API key was saved: an error left over from the old key is no longer true. */
+  /** A new API key was saved, so an error from the old key no longer applies. */
   clearKeyError(): void {
     if (this.status.running || this.status.phase !== 'error') return
     this.update({ phase: 'idle', message: 'Ready – new API key saved', lastError: null })
   }
 
   stop(): void {
-    if (this.abort) {
+    if (this.abortController) {
       this.update({ phase: 'stopping', message: 'Stopping …' })
-      this.abort.abort()
+      this.abortController.abort()
     }
   }
 
@@ -96,8 +98,8 @@ export class Crawler {
     if (this.status.running) return
     const mode = opts.mode ?? 'ranked'
     const queue = GAME_MODES[mode].queue
-    this.abort = new AbortController()
-    const signal = this.abort.signal
+    this.abortController = new AbortController()
+    const signal = this.abortController.signal
     const stored = await this.store.load(opts.patch, mode)
 
     this.status = {
@@ -112,32 +114,32 @@ export class Crawler {
     this.onStatus(this.getStatus())
 
     try {
-      // 1) seed players from the apex leagues of every selected platform
+      // 1. seed players from the apex leagues of every selected platform
       const perPlatform: { platform: Platform; puuid: string }[][] = []
       for (const platform of opts.platforms) {
-        const list: { platform: Platform; puuid: string }[] = []
+        const platformPlayers: { platform: Platform; puuid: string }[] = []
         for (const tier of opts.seedTiers) {
           if (signal.aborted) break
           const league = await this.client.apexLeague(platform, tier, signal)
-          for (const e of league?.entries ?? []) if (e.puuid) list.push({ platform, puuid: e.puuid })
+          for (const entry of league?.entries ?? []) if (entry.puuid) platformPlayers.push({ platform, puuid: entry.puuid })
         }
-        perPlatform.push(shuffle(list))
+        perPlatform.push(shuffle(platformPlayers))
       }
-      // interleave platforms so that every region is represented from the start
+      // interleave platforms so every region shows up from the start
       const players: { platform: Platform; puuid: string }[] = []
       const known = new Set<string>()
-      const addPlayer = (p: { platform: Platform; puuid: string }): void => {
-        if (!p.puuid || known.has(p.puuid) || players.length >= MAX_PLAYERS) return
-        known.add(p.puuid)
-        players.push(p)
+      const addPlayer = (player: { platform: Platform; puuid: string }): void => {
+        if (!player.puuid || known.has(player.puuid) || players.length >= MAX_PLAYERS) return
+        known.add(player.puuid)
+        players.push(player)
       }
-      for (let i = 0; perPlatform.some((l) => i < l.length); i++) for (const l of perPlatform) if (l[i]) addPlayer(l[i])
-      // ARAM: apex players rarely queue up, so every crawled game adds its players to the pool
+      for (let i = 0; perPlatform.some((list) => i < list.length); i++) for (const list of perPlatform) if (list[i]) addPlayer(list[i])
+      // apex players rarely queue ARAM, so in ARAM every crawled game adds its players to the pool
       const snowball = mode === 'aram'
 
       this.update({ phase: 'crawling', players: players.length, message: `${players.length} players found` })
 
-      // 2) crawl their recent ranked games
+      // 2. crawl their recent games
       let cursor = 0
       let sinceFlush = 0
       const startTime = Date.now() - LOOKBACK_MS
@@ -148,24 +150,24 @@ export class Crawler {
           const { platform, puuid } = players[cursor++]
           const regional = regionalOf(platform)
           const ids = await this.client.matchIds(regional, puuid, { queue, count: opts.matchesPerPlayer, startTime }, signal)
-          for (const id of ids) {
+          for (const matchId of ids) {
             if (enough()) break
-            if (stored.processed.has(id)) continue
-            // only marked as done once it has been fetched: a request that fails (expired key,
-            // network) must not lose the match for the next run
-            const match = await this.client.match(regional, id, signal)
-            stored.processed.add(id)
+            if (stored.processed.has(matchId)) continue
+            // mark as processed only after the fetch, so a failed request (expired key, network)
+            // doesn't lose the match for the next run
+            const match = await this.client.match(regional, matchId, signal)
+            stored.processed.add(matchId)
             if (!match) continue
             const matchPatch = patchOf(match.info.gameVersion)
             if (matchPatch !== opts.patch) {
               this.update({ skippedOldPatch: this.status.skippedOldPatch + 1 })
-              // match ids are newest-first: everything after an older patch is older too
+              // match ids come newest first, so everything after an older patch is older too
               if (comparePatch(matchPatch, opts.patch) < 0) break
               continue
             }
             if (match.info.queueId !== queue) continue
-            if (snowball) for (const p of match.info.participants) addPlayer({ platform, puuid: p.puuid })
-            const timeline = await this.client.timeline(regional, id, signal)
+            if (snowball) for (const participant of match.info.participants) addPlayer({ platform, puuid: participant.puuid })
+            const timeline = await this.client.timeline(regional, matchId, signal)
             if (aggregateMatch(stored.stats, match, timeline, opts.classify)) {
               this.store.markDirty(opts.patch, mode)
               this.update({
@@ -190,18 +192,18 @@ export class Crawler {
         phase: 'done',
         message: signal.aborted ? 'Stopped' : `Done – ${this.status.matchesThisRun} new matches`
       })
-    } catch (e) {
+    } catch (err) {
       if (signal.aborted) {
         this.update({ phase: 'done', message: 'Stopped' })
       } else {
-        const msg = e instanceof Error ? e.message : String(e)
-        this.update({ phase: 'error', message: msg, lastError: msg })
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        this.update({ phase: 'error', message: errorMessage, lastError: errorMessage })
       }
     } finally {
       this.store.markDirty(opts.patch, mode)
       await this.store.flush().catch(() => undefined)
       this.onStatsUpdated(opts.patch, mode)
-      this.abort = null
+      this.abortController = null
       this.update({ running: false })
     }
   }

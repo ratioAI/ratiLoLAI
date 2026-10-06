@@ -1,8 +1,8 @@
 /**
- * Hand-written one-line notes for ARAM: Mayhem augments (5–12 words: why/when an augment is good)
- * plus the champion archetypes it fits. Keyed by the augment platform id used by the game client.
+ * Short hand-written notes for ARAM: Mayhem augments (when and why the augment is good) plus the
+ * champion archetypes it fits. Keyed by the augment id the game client uses.
  *
- * Fit tags: ap · ad · crit · onhit (attack speed / on-hit users) · tank · sup (healers & shielders) · any
+ * Fit tags: ap, ad, crit, onhit (attack speed / on-hit users), tank, sup (healers and shielders), any.
  */
 export type AugmentFit = 'ap' | 'ad' | 'crit' | 'onhit' | 'tank' | 'sup' | 'any'
 

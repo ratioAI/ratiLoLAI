@@ -12,19 +12,20 @@ import { Attribution, AugmentIcon, MayhemChampionPanel, RARITY_COLORS, RARITY_LA
 export function Mayhem() {
   const { data: statics, champSelect, live, client } = useApp()
   const { data, error } = useMayhemData()
-  const currentChamp = useMemo(() => {
+  const currentChampionId = useMemo(() => {
     if (champSelect?.myChampionId) return champSelect.myChampionId
     return liveChampionKey(statics, live)
   }, [champSelect, live, statics])
-  const [picked, setPicked] = useState<number>(0)
-  const championId = picked || currentChamp || 103
+  const [pickedChampionId, setPickedChampionId] = useState<number>(0)
+  // Falls back to Ahri (103) as an example when nothing is picked or being played
+  const championId = pickedChampionId || currentChampionId || 103
   const [champQuery, setChampQuery] = useState('')
 
   const champMatches = useMemo(() => {
-    const q = champQuery.trim().toLowerCase()
-    if (!q || !statics) return []
+    const search = champQuery.trim().toLowerCase()
+    if (!search || !statics) return []
     return Object.values(statics.champions)
-      .filter((c) => c.name.toLowerCase().includes(q))
+      .filter((champion) => champion.name.toLowerCase().includes(search))
       .slice(0, 8)
   }, [champQuery, statics])
 
@@ -49,7 +50,7 @@ export function Mayhem() {
             <div className="flex-1">
               <div className="text-lg font-extrabold">{statics?.champions[championId]?.name}</div>
               <div className="text-xs text-muted">
-                {picked ? 'selected' : currentChamp ? 'your current champion' : 'example – pick a champion'}
+                {pickedChampionId ? 'selected' : currentChampionId ? 'your current champion' : 'example – pick a champion'}
               </div>
             </div>
             <div className="relative">
@@ -57,20 +58,20 @@ export function Mayhem() {
                 className="input w-52"
                 placeholder="Pick champion …"
                 value={champQuery}
-                onChange={(e) => setChampQuery(e.target.value)}
+                onChange={(event) => setChampQuery(event.target.value)}
               />
               {champMatches.length > 0 && (
                 <div className="absolute right-0 z-20 mt-1 w-52 rounded-xl border border-line bg-panel p-1 shadow-xl">
-                  {champMatches.map((c) => (
+                  {champMatches.map((champion) => (
                     <button
-                      key={c.key}
+                      key={champion.key}
                       onClick={() => {
-                        setPicked(c.key)
+                        setPickedChampionId(champion.key)
                         setChampQuery('')
                       }}
                       className="flex w-full items-center gap-2 rounded-lg p-1.5 text-left text-sm hover:bg-panel-2"
                     >
-                      <ChampIcon id={c.key} size={24} tooltip={false} /> {c.name}
+                      <ChampIcon id={champion.key} size={24} tooltip={false} /> {champion.name}
                     </button>
                   ))}
                 </div>
@@ -101,11 +102,14 @@ function AugmentBrowser() {
   const { data } = useMayhemData()
   const [query, setQuery] = useState('')
   const [rarity, setRarity] = useState<AugmentRarity | null>(null)
-  const list = useMemo(() => {
+  const augments = useMemo(() => {
     if (!data) return []
-    const q = query.trim().toLowerCase()
+    const search = query.trim().toLowerCase()
     return Object.values(data.augments)
-      .filter((a) => a.pickRate != null && (!rarity || a.rarity === rarity) && (!q || a.name.toLowerCase().includes(q)))
+      .filter(
+        (augment) =>
+          augment.pickRate != null && (!rarity || augment.rarity === rarity) && (!search || augment.name.toLowerCase().includes(search))
+      )
       .sort((a, b) => (b.pickRate ?? 0) - (a.pickRate ?? 0))
   }, [data, query, rarity])
   if (!data) return null
@@ -113,32 +117,32 @@ function AugmentBrowser() {
     <section className="panel p-5">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-bold tracking-wide text-muted uppercase">All augments by popularity</h2>
-        <input className="input w-44" placeholder="Search …" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input className="input w-44" placeholder="Search …" value={query} onChange={(event) => setQuery(event.target.value)} />
       </div>
       <div className="mb-3 flex gap-1.5">
-        {(['prismatic', 'gold', 'silver'] as AugmentRarity[]).map((r) => (
+        {(['prismatic', 'gold', 'silver'] as AugmentRarity[]).map((option) => (
           <button
-            key={r}
-            onClick={() => setRarity((cur) => (cur === r ? null : r))}
-            className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${rarity && rarity !== r ? 'opacity-40' : ''}`}
-            style={{ color: RARITY_COLORS[r], borderColor: `color-mix(in srgb, ${RARITY_COLORS[r]} 40%, transparent)` }}
+            key={option}
+            onClick={() => setRarity((current) => (current === option ? null : option))}
+            className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${rarity && rarity !== option ? 'opacity-40' : ''}`}
+            style={{ color: RARITY_COLORS[option], borderColor: `color-mix(in srgb, ${RARITY_COLORS[option]} 40%, transparent)` }}
           >
-            {RARITY_LABELS[r]}
+            {RARITY_LABELS[option]}
           </button>
         ))}
       </div>
       <div className="max-h-[460px] space-y-1 overflow-y-auto pr-1">
-        {list.map((a) => (
-          <div key={a.id} className="flex items-center gap-3 rounded-lg px-1.5 py-1 hover:bg-panel-2">
-            <span className="w-7 text-right text-xs text-muted tabular-nums">{a.pickRateRank}</span>
-            <AugmentIcon augment={a} size={32} />
-            <span className="min-w-0 flex-1 truncate text-sm">{a.name}</span>
-            <span className="w-14 text-right text-sm font-semibold tabular-nums">{a.pickRate?.toFixed(1)} %</span>
+        {augments.map((augment) => (
+          <div key={augment.id} className="flex items-center gap-3 rounded-lg px-1.5 py-1 hover:bg-panel-2">
+            <span className="w-7 text-right text-xs text-muted tabular-nums">{augment.pickRateRank}</span>
+            <AugmentIcon augment={augment} size={32} />
+            <span className="min-w-0 flex-1 truncate text-sm">{augment.name}</span>
+            <span className="w-14 text-right text-sm font-semibold tabular-nums">{augment.pickRate?.toFixed(1)} %</span>
             <span className="flex w-14 items-center justify-end text-xs tabular-nums">
-              {a.pickRateChange ? (
-                <span className={`flex items-center ${a.pickRateChange > 0 ? 'text-win' : 'text-loss'}`}>
-                  {a.pickRateChange > 0 ? <ArrowUp size={11} /> : <ArrowDown size={11} />}
-                  {Math.abs(a.pickRateChange).toFixed(1)}
+              {augment.pickRateChange ? (
+                <span className={`flex items-center ${augment.pickRateChange > 0 ? 'text-win' : 'text-loss'}`}>
+                  {augment.pickRateChange > 0 ? <ArrowUp size={11} /> : <ArrowDown size={11} />}
+                  {Math.abs(augment.pickRateChange).toFixed(1)}
                 </span>
               ) : (
                 <span className="text-muted">–</span>
@@ -158,14 +162,14 @@ function PersonalStats({ connected }: { connected: boolean }) {
   const { data } = useMayhemData()
   const [stats, setStats] = useState<MayhemPersonal | null>(null)
   const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const load = async () => {
     setBusy(true)
-    setErr(null)
+    setErrorMessage(null)
     try {
       setStats(await api.getMayhemPersonal())
-    } catch (e) {
-      setErr((e as Error).message)
+    } catch (err) {
+      setErrorMessage((err as Error).message)
     } finally {
       setBusy(false)
     }
@@ -179,7 +183,7 @@ function PersonalStats({ connected }: { connected: boolean }) {
         </button>
       </div>
       {!connected && <p className="text-sm text-muted">Start the League client to analyse your recent Mayhem games.</p>}
-      {err && <p className="text-sm text-loss">{err}</p>}
+      {errorMessage && <p className="text-sm text-loss">{errorMessage}</p>}
       {stats && stats.games === 0 && <p className="text-sm text-muted">No Mayhem game in your last 100 games.</p>}
       {stats && stats.games > 0 && (
         <>
@@ -193,29 +197,29 @@ function PersonalStats({ connected }: { connected: boolean }) {
           </div>
           <h3 className="mb-2 text-xs font-semibold text-muted">Your most picked augments</h3>
           <div className="mb-4 space-y-1.5">
-            {stats.augments.slice(0, 8).map((a) => (
-              <div key={a.id} className="flex items-center gap-3 text-sm">
-                <AugmentIcon augment={data?.augments[a.id]} size={30} />
-                <span className="flex-1 truncate">{data?.augments[a.id]?.name ?? `Augment #${a.id}`}</span>
-                <span style={{ color: wrColor(a.wins / a.games) }} className="font-semibold">
-                  {pct(a.wins / a.games, 0)}
+            {stats.augments.slice(0, 8).map((augmentStats) => (
+              <div key={augmentStats.id} className="flex items-center gap-3 text-sm">
+                <AugmentIcon augment={data?.augments[augmentStats.id]} size={30} />
+                <span className="flex-1 truncate">{data?.augments[augmentStats.id]?.name ?? `Augment #${augmentStats.id}`}</span>
+                <span style={{ color: wrColor(augmentStats.wins / augmentStats.games) }} className="font-semibold">
+                  {pct(augmentStats.wins / augmentStats.games, 0)}
                 </span>
-                <span className="w-16 text-right text-xs text-muted">{a.games} games</span>
+                <span className="w-16 text-right text-xs text-muted">{augmentStats.games} games</span>
               </div>
             ))}
           </div>
           <h3 className="mb-2 text-xs font-semibold text-muted">Recent games</h3>
           <div className="space-y-1.5">
-            {stats.recent.slice(0, 6).map((g) => (
-              <div key={g.gameId} className="flex items-center gap-2 rounded-lg bg-bg-2 p-1.5">
-                <span className={`h-8 w-1 rounded-full ${g.win ? 'bg-win' : 'bg-loss'}`} />
-                <ChampIcon id={g.championId} size={30} />
+            {stats.recent.slice(0, 6).map((game) => (
+              <div key={game.gameId} className="flex items-center gap-2 rounded-lg bg-bg-2 p-1.5">
+                <span className={`h-8 w-1 rounded-full ${game.win ? 'bg-win' : 'bg-loss'}`} />
+                <ChampIcon id={game.championId} size={30} />
                 <div className="flex gap-1">
-                  {g.augments.map((id) => (
+                  {game.augments.map((id) => (
                     <AugmentIcon key={id} augment={data?.augments[id]} size={26} />
                   ))}
                 </div>
-                <span className="ml-auto text-xs text-muted">{timeAgo(g.createdAt)}</span>
+                <span className="ml-auto text-xs text-muted">{timeAgo(game.createdAt)}</span>
               </div>
             ))}
           </div>

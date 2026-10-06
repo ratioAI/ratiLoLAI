@@ -5,13 +5,13 @@ export interface FrameSpec {
   rect: { x: number; y: number; width: number; height: number }
   tier: Tier
   best: boolean
-  /** builds a combo with an owned augment: mint/gold, extra glow, full colour flow */
+  /** builds a combo with an augment we already own (drawn mint/gold with extra glow) */
   combo?: boolean
 }
 
 /**
- * Per tier: two base colours, how psychedelic (0 = tier colours only, 1 = full colour flow),
- * how much the border wobbles (px) and how strong the glow is.
+ * Per tier: two base colours, `psy` (0 = only the tier colours, 1 = full rainbow flow), border
+ * wobble in px, and glow strength.
  */
 const STYLE: Record<Tier, { a: string; b: string; psy: number; wobble: number; glow: number }> = {
   'S+': { a: '#ffe27a', b: '#36e3ff', psy: 1, wobble: 4.5, glow: 1 },
@@ -25,14 +25,15 @@ const STYLE: Record<Tier, { a: string; b: string; psy: number; wobble: number; g
 const COMBO_STYLE = { a: '#5dffb0', b: '#ffd36b', psy: 0.9, wobble: 5, glow: 1.1 }
 
 const rgb = (hex: string): [number, number, number] => {
-  const n = parseInt(hex.slice(1), 16)
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
+  const value = parseInt(hex.slice(1), 16)
+  return [((value >> 16) & 255) / 255, ((value >> 8) & 255) / 255, (value & 255) / 255]
 }
 
 const VERT = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`
 
-// One full-window pass: signed distance to each card's rounded rectangle, displaced by travelling
-// waves + value noise (the "wobble"), coloured by a hue that flows around the frame.
+// Single full-window pass. For each card we take the signed distance to its rounded rectangle, push
+// it around with travelling waves plus value noise (the wobble) and colour it with a hue that flows
+// around the frame.
 const FRAG = `
 precision mediump float;
 uniform vec2 u_res;
@@ -55,13 +56,13 @@ vec3 hsv(float h, float s, float v){
 float sdRound(vec2 p, vec2 b, float r){ vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
 
 void main(){
-  vec2 frag = vec2(gl_FragCoord.x, u_res.y - gl_FragCoord.y) / u_scale;
+  vec2 frag = vec2(gl_FragCoord.x, u_res.y - gl_FragCoord.y) / u_scale;   // CSS px, y down like the card rects
   vec3 col = vec3(0.0);
   float alpha = 0.0;
   for (int i = 0; i < 3; i++) {
     vec4 r = u_rect[i];
     vec4 prm = u_p[i];
-    if (prm.w < 0.5) continue;
+    if (prm.w < 0.5) continue;   // w = 0 means this slot has no card
     vec2 d = frag - (r.xy + r.zw * 0.5);
     float ang = atan(d.y, d.x);
     float t = u_time + float(i) * 1.7;
@@ -80,7 +81,7 @@ void main(){
     col += c * a;
     alpha = max(alpha, a);
   }
-  // fade out towards the window edge, so the glow never ends in a hard line
+  // fade out near the window edge so the glow doesn't get cut off in a hard line
   vec2 css = u_res / u_scale;
   float edge = min(min(frag.x, css.x - frag.x), min(frag.y, css.y - frag.y));
   float fade = smoothstep(0.0, 22.0, edge);
@@ -91,49 +92,50 @@ void main(){
 const FPS = { smooth: 30, low: 15, off: 0 } as const
 
 /**
- * Animated, wobbling tier frames around the augment cards, drawn by a tiny WebGL shader at a capped
- * frame rate and 75 % resolution. Everything else in the overlay is static, so the window only
- * repaints when this canvas does.
+ * Animated tier frames around the augment cards, drawn with a small WebGL shader at a capped frame
+ * rate. Everything else in the overlay is static, so the window only repaints when this canvas does.
  */
 export function FrameCanvas({ frames, animation }: { frames: FrameSpec[]; animation: keyof typeof FPS }) {
-  const ref = useRef<HTMLCanvasElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const framesRef = useRef(frames)
   framesRef.current = frames
-  // static frames are drawn once, so they are redrawn when the cards change
+  // with animation off we only draw once, so a change in the cards has to restart the effect
   const staticKey = animation === 'off' ? JSON.stringify(frames) : ''
 
   useEffect(() => {
-    const canvas = ref.current
+    const canvas = canvasRef.current
     if (!canvas) return
     const gl = canvas.getContext('webgl', { premultipliedAlpha: true, antialias: false, alpha: true, powerPreference: 'low-power' })
     if (!gl) return
-    const shader = (type: number, src: string): WebGLShader => {
-      const s = gl.createShader(type)!
-      gl.shaderSource(s, src)
-      gl.compileShader(s)
-      return s
+    const compile = (type: number, source: string): WebGLShader => {
+      const shader = gl.createShader(type)!
+      gl.shaderSource(shader, source)
+      gl.compileShader(shader)
+      return shader
     }
-    const prog = gl.createProgram()!
-    gl.attachShader(prog, shader(gl.VERTEX_SHADER, VERT))
-    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FRAG))
-    gl.linkProgram(prog)
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return
-    gl.useProgram(prog)
-    const buf = gl.createBuffer()
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf)
+    const program = gl.createProgram()!
+    gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT))
+    gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG))
+    gl.linkProgram(program)
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return
+    gl.useProgram(program)
+    // two triangles covering the whole viewport
+    const quadBuffer = gl.createBuffer()
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer)
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW)
-    const loc = gl.getAttribLocation(prog, 'p')
-    gl.enableVertexAttribArray(loc)
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
-    const u = (n: string) => gl.getUniformLocation(prog, n)
-    const uRes = u('u_res')
-    const uTime = u('u_time')
-    const uScale = u('u_scale')
-    const uRect = u('u_rect')
-    const uA = u('u_a')
-    const uB = u('u_b')
-    const uP = u('u_p')
+    const posAttrib = gl.getAttribLocation(program, 'p')
+    gl.enableVertexAttribArray(posAttrib)
+    gl.vertexAttribPointer(posAttrib, 2, gl.FLOAT, false, 0, 0)
+    const uniform = (name: string) => gl.getUniformLocation(program, name)
+    const uRes = uniform('u_res')
+    const uTime = uniform('u_time')
+    const uScale = uniform('u_scale')
+    const uRect = uniform('u_rect')
+    const uA = uniform('u_a')
+    const uB = uniform('u_b')
+    const uP = uniform('u_p')
 
+    // 75% of device resolution (capped at 2x) is plenty for soft glowing borders
     const scale = Math.min(2, (window.devicePixelRatio || 1) * 0.75)
     const resize = () => {
       canvas.width = Math.round(canvas.clientWidth * scale)
@@ -144,48 +146,49 @@ export function FrameCanvas({ frames, animation }: { frames: FrameSpec[]; animat
     window.addEventListener('resize', resize)
 
     const draw = (time: number) => {
-      const f = framesRef.current
-      const rect = new Float32Array(12)
-      const a = new Float32Array(9)
-      const b = new Float32Array(9)
-      const p = new Float32Array(12)
-      f.slice(0, 3).forEach((fr, i) => {
-        const st = fr.combo ? COMBO_STYLE : STYLE[fr.tier]
-        rect.set([fr.rect.x, fr.rect.y, fr.rect.width, fr.rect.height], i * 4)
-        a.set(rgb(st.a), i * 3)
-        b.set(rgb(st.b), i * 3)
-        p.set([st.psy, st.wobble, st.glow + (fr.best || fr.combo ? 0.35 : 0), 1], i * 4)
+      // the shader has three fixed slots; unused ones keep w = 0 in u_p and are skipped
+      const rects = new Float32Array(12)
+      const colorsA = new Float32Array(9)
+      const colorsB = new Float32Array(9)
+      const params = new Float32Array(12)
+      framesRef.current.slice(0, 3).forEach((frame, i) => {
+        const style = frame.combo ? COMBO_STYLE : STYLE[frame.tier]
+        rects.set([frame.rect.x, frame.rect.y, frame.rect.width, frame.rect.height], i * 4)
+        colorsA.set(rgb(style.a), i * 3)
+        colorsB.set(rgb(style.b), i * 3)
+        params.set([style.psy, style.wobble, style.glow + (frame.best || frame.combo ? 0.35 : 0), 1], i * 4)
       })
       gl.uniform2f(uRes, canvas.width, canvas.height)
       gl.uniform1f(uTime, time)
       gl.uniform1f(uScale, scale)
-      gl.uniform4fv(uRect, rect)
-      gl.uniform3fv(uA, a)
-      gl.uniform3fv(uB, b)
-      gl.uniform4fv(uP, p)
+      gl.uniform4fv(uRect, rects)
+      gl.uniform3fv(uA, colorsA)
+      gl.uniform3fv(uB, colorsB)
+      gl.uniform4fv(uP, params)
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
 
     const fps = FPS[animation]
-    let raf = 0
-    let last = 0
-    const t0 = performance.now()
+    let rafId = 0
+    let lastDraw = 0
+    const startTime = performance.now()
     const loop = (now: number) => {
-      raf = requestAnimationFrame(loop)
-      if (now - last < 1000 / fps - 2) return
-      last = now
-      draw((now - t0) / 1000)
+      rafId = requestAnimationFrame(loop)
+      // 2 ms slack so rAF jitter doesn't make us skip every other frame
+      if (now - lastDraw < 1000 / fps - 2) return
+      lastDraw = now
+      draw((now - startTime) / 1000)
     }
-    if (fps) raf = requestAnimationFrame(loop)
-    else draw(1.3)
+    if (fps) rafId = requestAnimationFrame(loop)
+    else draw(1.3) // still image: any fixed point in time will do
     return () => {
-      cancelAnimationFrame(raf)
+      cancelAnimationFrame(rafId)
       window.removeEventListener('resize', resize)
       gl.getExtension('WEBGL_lose_context')?.loseContext()
     }
   }, [animation, staticKey])
 
-  return <canvas key={`${animation}:${staticKey}`} ref={ref} className="pointer-events-none absolute inset-0 h-full w-full" />
+  return <canvas key={`${animation}:${staticKey}`} ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
 }

@@ -25,8 +25,8 @@ export function Profile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client.summoner, settings])
 
-  const search = async (e?: React.FormEvent) => {
-    e?.preventDefault()
+  const search = async (event?: React.FormEvent) => {
+    event?.preventDefault()
     setBusy(true)
     setError(null)
     try {
@@ -42,11 +42,11 @@ export function Profile() {
     <div className="page-enter mx-auto max-w-6xl p-8">
       <PageHeader title="Player profile" subtitle="Rank, match history and champion stats – like op.gg, just without ads">
         <form onSubmit={search} className="flex gap-2">
-          <input className="input w-64" placeholder="Name#TAG" value={riotId} onChange={(e) => setRiotId(e.target.value)} />
-          <select className="input" value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}>
-            {Object.entries(PLATFORMS).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v.label}
+          <input className="input w-64" placeholder="Name#TAG" value={riotId} onChange={(event) => setRiotId(event.target.value)} />
+          <select className="input" value={platform} onChange={(event) => setPlatform(event.target.value as Platform)}>
+            {Object.entries(PLATFORMS).map(([key, info]) => (
+              <option key={key} value={key}>
+                {info.label}
               </option>
             ))}
           </select>
@@ -75,11 +75,11 @@ export function Profile() {
 function ProfileView({ p }: { p: ProfileData }) {
   const { data } = useApp()
   if (!data) return null
-  const games = p.matches.filter((m) => !m.remake)
-  const wins = games.filter((m) => m.win).length
-  const k = games.reduce((n, m) => n + m.kills, 0)
-  const d = games.reduce((n, m) => n + m.deaths, 0)
-  const a = games.reduce((n, m) => n + m.assists, 0)
+  const games = p.matches.filter((match) => !match.remake)
+  const wins = games.filter((match) => match.win).length
+  const kills = games.reduce((sum, match) => sum + match.kills, 0)
+  const deaths = games.reduce((sum, match) => sum + match.deaths, 0)
+  const assists = games.reduce((sum, match) => sum + match.assists, 0)
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[320px_1fr]">
@@ -99,8 +99,8 @@ function ProfileView({ p }: { p: ProfileData }) {
           </div>
         </div>
 
-        {['RANKED_SOLO_5x5', 'RANKED_FLEX_SR'].map((q) => (
-          <RankCard key={q} queue={q} entry={p.ranked.find((r) => r.queueType === q)} />
+        {['RANKED_SOLO_5x5', 'RANKED_FLEX_SR'].map((queue) => (
+          <RankCard key={queue} queue={queue} entry={p.ranked.find((entry) => entry.queueType === queue)} />
         ))}
 
         <div className="panel p-5">
@@ -110,19 +110,19 @@ function ProfileView({ p }: { p: ProfileData }) {
               {pct(wins / Math.max(1, games.length), 0)}
             </span>
             <span className="text-sm text-muted">
-              {wins}W {games.length - wins}L · {((k + a) / Math.max(1, d)).toFixed(2)} KDA
+              {wins}W {games.length - wins}L · {((kills + assists) / Math.max(1, deaths)).toFixed(2)} KDA
             </span>
           </div>
           <div className="space-y-2">
-            {p.championSummary.slice(0, 6).map((c) => (
-              <div key={c.championId} className="flex items-center gap-3 text-sm">
-                <ChampIcon id={c.championId} size={30} />
-                <span className="flex-1 truncate">{data.champions[c.championId]?.name}</span>
-                <span style={{ color: wrColor(c.wins / c.games) }} className="font-semibold">
-                  {pct(c.wins / c.games, 0)}
+            {p.championSummary.slice(0, 6).map((championStats) => (
+              <div key={championStats.championId} className="flex items-center gap-3 text-sm">
+                <ChampIcon id={championStats.championId} size={30} />
+                <span className="flex-1 truncate">{data.champions[championStats.championId]?.name}</span>
+                <span style={{ color: wrColor(championStats.wins / championStats.games) }} className="font-semibold">
+                  {pct(championStats.wins / championStats.games, 0)}
                 </span>
                 <span className="w-16 text-right text-xs text-muted">
-                  {c.games} · {c.kda.toFixed(1)}
+                  {championStats.games} · {championStats.kda.toFixed(1)}
                 </span>
               </div>
             ))}
@@ -133,11 +133,11 @@ function ProfileView({ p }: { p: ProfileData }) {
           <div className="panel p-5">
             <h3 className="mb-3 text-xs font-bold tracking-wide text-muted uppercase">Mastery</h3>
             <div className="grid grid-cols-3 gap-3">
-              {p.mastery.map((m) => (
-                <div key={m.championId} className="flex flex-col items-center gap-1 text-center">
-                  <ChampIcon id={m.championId} size={44} />
-                  <span className="text-xs font-semibold">Lvl {m.level}</span>
-                  <span className="text-[11px] text-muted">{num(m.points)}</span>
+              {p.mastery.map((mastery) => (
+                <div key={mastery.championId} className="flex flex-col items-center gap-1 text-center">
+                  <ChampIcon id={mastery.championId} size={44} />
+                  <span className="text-xs font-semibold">Lvl {mastery.level}</span>
+                  <span className="text-[11px] text-muted">{num(mastery.points)}</span>
                 </div>
               ))}
             </div>
@@ -146,8 +146,8 @@ function ProfileView({ p }: { p: ProfileData }) {
       </div>
 
       <div className="space-y-2">
-        {p.matches.map((m) => (
-          <MatchRow key={m.matchId} m={m} puuid={p.puuid} />
+        {p.matches.map((match) => (
+          <MatchRow key={match.matchId} m={match} puuid={p.puuid} />
         ))}
       </div>
     </div>
@@ -163,7 +163,8 @@ function RankCard({ queue, entry }: { queue: string; entry?: RankedEntry }) {
         <div className="mt-1 text-sm text-muted">Unranked</div>
       </div>
     )
-  const wr = entry.wins / Math.max(1, entry.wins + entry.losses)
+  const winRate = entry.wins / Math.max(1, entry.wins + entry.losses)
+  // Master and above have no divisions
   const apex = ['MASTER', 'GRANDMASTER', 'CHALLENGER'].includes(entry.tier)
   return (
     <div className="panel flex items-center gap-4 p-5">
@@ -182,8 +183,8 @@ function RankCard({ queue, entry }: { queue: string; entry?: RankedEntry }) {
         </div>
         <div className="text-xs text-muted">
           {entry.wins}W {entry.losses}L ·{' '}
-          <span style={{ color: wrColor(wr) }} className="font-semibold">
-            {pct(wr, 0)}
+          <span style={{ color: wrColor(winRate) }} className="font-semibold">
+            {pct(winRate, 0)}
           </span>
         </div>
       </div>
@@ -214,8 +215,8 @@ function MatchRow({ m, puuid }: { m: MatchSummary; puuid: string }) {
       <div className="flex shrink-0 items-center gap-1.5">
         <ChampIcon id={m.championId} size={48} />
         <div className="grid shrink-0 grid-cols-[22px_22px] gap-0.5">
-          {m.spells.map((s) => (
-            <SpellIcon key={s} id={s} size={22} />
+          {m.spells.map((spellId) => (
+            <SpellIcon key={spellId} id={spellId} size={22} />
           ))}
           {m.keystone ? <RuneIcon id={m.keystone} size={22} /> : <span />}
           {m.subStyle ? <RuneIcon id={m.subStyle} size={22} /> : <span />}
@@ -240,14 +241,16 @@ function MatchRow({ m, puuid }: { m: MatchSummary; puuid: string }) {
         ))}
       </div>
       <div className="ml-auto hidden shrink-0 grid-cols-2 gap-x-3 gap-y-0.5 2xl:grid">
-        {[100, 200].map((t) => (
-          <div key={t} className="space-y-0.5">
+        {[100, 200].map((teamId) => (
+          <div key={teamId} className="space-y-0.5">
             {m.teams
-              .filter((x) => x.teamId === t)
-              .map((x) => (
-                <div key={x.puuid} className="flex w-28 items-center gap-1 text-[11px]">
-                  <ChampIcon id={x.championId} size={15} tooltip={false} className="rounded" />
-                  <span className={`truncate ${x.puuid === puuid ? 'font-bold text-text' : 'text-muted'}`}>{x.riotId.split('#')[0]}</span>
+              .filter((participant) => participant.teamId === teamId)
+              .map((participant) => (
+                <div key={participant.puuid} className="flex w-28 items-center gap-1 text-[11px]">
+                  <ChampIcon id={participant.championId} size={15} tooltip={false} className="rounded" />
+                  <span className={`truncate ${participant.puuid === puuid ? 'font-bold text-text' : 'text-muted'}`}>
+                    {participant.riotId.split('#')[0]}
+                  </span>
                 </div>
               ))}
           </div>

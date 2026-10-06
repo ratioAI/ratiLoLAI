@@ -22,8 +22,8 @@ export function regionalOf(platform: Platform): Regional {
 
 /** "EUW1_7123456789" -> "euw1" */
 export function platformOfMatchId(matchId: string): Platform | null {
-  const p = matchId.split('_')[0]?.toLowerCase()
-  return p && p in PLATFORMS ? (p as Platform) : null
+  const platform = matchId.split('_')[0]?.toLowerCase()
+  return platform && platform in PLATFORMS ? (platform as Platform) : null
 }
 
 type FetchLike = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => Promise<Response>
@@ -39,19 +39,20 @@ export class RiotClient {
   ) {}
 
   /**
-   * A new key is a new application for Riot: its rate limits and any pause from a 429 of the old
-   * key no longer apply (and must not delay the first requests with the new key).
+   * Riot treats a new key as a new application, so the old key's limits and any 429 pause
+   * shouldn't hold back the first requests with the new one.
    */
   resetForNewKey(): void {
     this.limiters.clear()
   }
 
   private limiter(host: string): RateLimiter {
-    let l = this.limiters.get(host)
-    if (!l) this.limiters.set(host, (l = new RateLimiter()))
-    return l
+    let limiter = this.limiters.get(host)
+    if (!limiter) this.limiters.set(host, (limiter = new RateLimiter()))
+    return limiter
   }
 
+  /** GET with rate limiting and up to 5 attempts (network errors, 429 and 5xx are retried). */
   async request<T>(host: string, path: string, opts: { allow404?: boolean; signal?: AbortSignal } = {}): Promise<T | null> {
     const key = this.getKey()
     if (!key) throw new RiotApiError(401, 'No Riot API key configured (Settings).')
@@ -67,29 +68,30 @@ export class RiotClient {
           headers: { 'X-Riot-Token': key },
           signal: opts.signal
         })
-      } catch (e) {
-        if (opts.signal?.aborted) throw e
-        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
+      } catch (err) {
+        if (opts.signal?.aborted) throw err
+        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)))
         continue
       }
 
+      // use the real limits of this key instead of the dev key defaults
       const windows = parseRateLimitHeader(res.headers.get('x-app-rate-limit'))
       if (windows) limiter.setWindows(windows)
 
       if (res.ok) return (await res.json()) as T
       if (res.status === 404 && opts.allow404) return null
       if (res.status === 429) {
-        const retry = Number(res.headers.get('retry-after') ?? 5)
-        limiter.pause((Number.isFinite(retry) ? retry : 5) * 1000)
+        const retryAfter = Number(res.headers.get('retry-after') ?? 5)
+        limiter.pause((Number.isFinite(retryAfter) ? retryAfter : 5) * 1000)
         continue
       }
       if (res.status >= 500) {
-        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)))
+        await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)))
         continue
       }
       const riotMessage = await res
         .json()
-        .then((b: { status?: { message?: string } }) => b?.status?.message ?? null)
+        .then((body: { status?: { message?: string } }) => body?.status?.message ?? null)
         .catch(() => null)
       if (res.status === 401 || res.status === 403) {
         throw new RiotApiError(res.status, describeKeyError(res.status, riotMessage), riotMessage)
@@ -99,7 +101,7 @@ export class RiotClient {
     throw new RiotApiError(503, `Riot API unreachable (${path})`)
   }
 
-  // --- account / summoner -------------------------------------------------
+  // --- account / summoner ---
 
   accountByRiotId(regional: Regional, gameName: string, tagLine: string): Promise<AccountDTO | null> {
     return this.request(regional, `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`, {
@@ -127,26 +129,27 @@ export class RiotClient {
     return this.request(platform, `/lol/spectator/v5/active-games/by-summoner/${puuid}`, { allow404: true })
   }
 
-  // --- leagues --------------------------------------------------------------
+  // --- leagues ---
 
   async apexLeague(platform: Platform, tier: SeedTier, signal?: AbortSignal): Promise<LeagueListDTO | null> {
     const segment = { CHALLENGER: 'challengerleagues', GRANDMASTER: 'grandmasterleagues', MASTER: 'masterleagues' }[tier]
     return this.request(platform, `/lol/league/v4/${segment}/by-queue/RANKED_SOLO_5x5`, { allow404: true, signal })
   }
 
-  // --- matches ----------------------------------------------------------------
+  // --- matches ---
 
   async matchIds(
     regional: Regional,
     puuid: string,
-    q: { queue?: number; count?: number; start?: number; startTime?: number },
+    query: { queue?: number; count?: number; start?: number; startTime?: number },
     signal?: AbortSignal
   ): Promise<string[]> {
     const params = new URLSearchParams()
-    if (q.queue) params.set('queue', String(q.queue))
-    params.set('count', String(q.count ?? 20))
-    if (q.start) params.set('start', String(q.start))
-    if (q.startTime) params.set('startTime', String(Math.floor(q.startTime / 1000)))
+    if (query.queue) params.set('queue', String(query.queue))
+    params.set('count', String(query.count ?? 20))
+    if (query.start) params.set('start', String(query.start))
+    // startTime is in ms here, Riot expects epoch seconds
+    if (query.startTime) params.set('startTime', String(Math.floor(query.startTime / 1000)))
     return (
       (await this.request<string[]>(regional, `/lol/match/v5/matches/by-puuid/${puuid}/ids?${params}`, {
         allow404: true,

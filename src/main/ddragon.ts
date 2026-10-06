@@ -4,17 +4,19 @@ import type { StaticData } from '@shared/types'
 import { DDRAGON as CDN, loadStaticData } from '@shared/staticData'
 import type { ItemClass, ItemClassifier } from './crawler/aggregator'
 
+/** Item classifier for the crawler, memoized per item id (unknown ids are cached as undefined too). */
 export function makeClassifier(data: StaticData): ItemClassifier {
   const cache = new Map<number, ItemClass | undefined>()
   return (id) => {
     if (cache.has(id)) return cache.get(id)
-    const it = data.items[id]
-    const c = it ? { completed: it.completed, boots: it.boots, trinket: it.tags.includes('Trinket') } : undefined
-    cache.set(id, c)
-    return c
+    const item = data.items[id]
+    const itemClass = item ? { completed: item.completed, boots: item.boots, trinket: item.tags.includes('Trinket') } : undefined
+    cache.set(id, itemClass)
+    return itemClass
   }
 }
 
+/** Static game data from Data Dragon, cached on disk per patch version and language. */
 export class DataDragon {
   private data: StaticData | null = null
   private loading: Promise<StaticData> | null = null
@@ -36,10 +38,11 @@ export class DataDragon {
     if (this.data) return Promise.resolve(this.data)
     if (!this.loading) {
       this.loading = this.load().then(
-        (d) => (this.data = d),
-        (e) => {
+        (data) => (this.data = data),
+        (err) => {
+          // allow a retry on the next call
           this.loading = null
-          throw e
+          throw err
         }
       )
     }
@@ -58,6 +61,7 @@ export class DataDragon {
     try {
       version = (await this.json<string[]>('/api/versions.json'))[0]
     } catch {
+      // offline: use whatever patch we cached last for this language
       const cached = await this.latestCached()
       if (cached) return cached
       throw new Error('Data Dragon unreachable and no cache available.')
@@ -67,7 +71,7 @@ export class DataDragon {
     try {
       return JSON.parse(await readFile(file, 'utf8')) as StaticData
     } catch {
-      /* not cached yet */
+      // not cached yet
     }
 
     const data = await loadStaticData((path) => this.json(path), version, this.language)
@@ -77,8 +81,9 @@ export class DataDragon {
 
   private async latestCached(): Promise<StaticData | null> {
     try {
-      const files = (await readdir(this.cacheDir)).filter((f) => f.endsWith(`-${this.language}.json`))
+      const files = (await readdir(this.cacheDir)).filter((file) => file.endsWith(`-${this.language}.json`))
       if (!files.length) return null
+      // file names start with the version, numeric compare puts the newest patch last
       files.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
       return JSON.parse(await readFile(join(this.cacheDir, files[files.length - 1]), 'utf8')) as StaticData
     } catch {

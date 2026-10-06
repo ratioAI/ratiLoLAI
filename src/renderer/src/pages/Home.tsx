@@ -7,6 +7,7 @@ import { useApp, useAsync } from '@/lib/store'
 import { ChampIcon, GameImage, RoleIcon, TierBadge } from '@/components/icons'
 import { img } from '@/lib/img'
 
+// Display text for the LCU gameflow phases
 const PHASES: Record<string, string> = {
   None: 'In the main menu',
   Lobby: 'In lobby',
@@ -24,7 +25,7 @@ export function Home() {
   const { data, client, champSelect, patch, patches, crawler, statsVersion, lastImport, mode } = useApp()
   const navigate = useNavigate()
   const { value: tiers } = useAsync(() => (patch ? api.getTierList(patch, mode) : Promise.resolve([])), [patch, statsVersion, mode])
-  const patchInfo = patches.find((p) => p.patch === patch)
+  const patchInfo = patches.find((patchStats) => patchStats.patch === patch)
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-8">
@@ -105,20 +106,20 @@ export function Home() {
               .slice()
               .sort((a, b) => a.rank - b.rank)
               .slice(0, 15)
-              .map((t) => (
+              .map((entry) => (
                 <button
-                  key={t.championId}
-                  onClick={() => navigate(`/champion/${t.championId}/ARAM`)}
+                  key={entry.championId}
+                  onClick={() => navigate(`/champion/${entry.championId}/ARAM`)}
                   className="flex items-center gap-2.5 rounded-lg p-1.5 text-left hover:bg-panel-2"
                 >
-                  <ChampIcon id={t.championId} size={32} tooltip={false} />
+                  <ChampIcon id={entry.championId} size={32} tooltip={false} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold">{data?.champions[t.championId]?.name}</div>
-                    <div className="text-[11px]" style={{ color: wrColor(t.winRate) }}>
-                      {pct(t.winRate)} WR
+                    <div className="truncate text-xs font-semibold">{data?.champions[entry.championId]?.name}</div>
+                    <div className="text-[11px]" style={{ color: wrColor(entry.winRate) }}>
+                      {pct(entry.winRate)} WR
                     </div>
                   </div>
-                  <TierBadge tier={t.tier} size="sm" />
+                  <TierBadge tier={entry.tier} size="sm" />
                 </button>
               ))}
             {!tiers?.length && <p className="text-xs text-muted">No ARAM data yet – start the ARAM crawler under "Data".</p>}
@@ -129,8 +130,8 @@ export function Home() {
           <h2 className="mb-3 text-sm font-bold tracking-wide text-muted uppercase">Meta picks per role</h2>
           <div className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {ROLES.map((role) => {
-              const top = (tiers ?? [])
-                .filter((t) => t.role === role)
+              const topPicks = (tiers ?? [])
+                .filter((entry) => entry.role === role)
                 .sort((a, b) => a.rank - b.rank)
                 .slice(0, 5)
               return (
@@ -138,22 +139,22 @@ export function Home() {
                   <div className="mb-3 flex items-center gap-2 text-sm font-bold">
                     <RoleIcon role={role} size={16} className="text-accent" /> {ROLE_LABELS[role]}
                   </div>
-                  {top.length ? (
+                  {topPicks.length ? (
                     <div className="space-y-2">
-                      {top.map((t) => (
+                      {topPicks.map((entry) => (
                         <button
-                          key={t.championId}
-                          onClick={() => navigate(`/champion/${t.championId}/${role}`)}
+                          key={entry.championId}
+                          onClick={() => navigate(`/champion/${entry.championId}/${role}`)}
                           className="flex w-full items-center gap-2.5 rounded-lg p-1 text-left hover:bg-panel-2"
                         >
-                          <ChampIcon id={t.championId} size={32} tooltip={false} />
+                          <ChampIcon id={entry.championId} size={32} tooltip={false} />
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs font-semibold">{data?.champions[t.championId]?.name}</div>
-                            <div className="text-[11px]" style={{ color: wrColor(t.winRate) }}>
-                              {pct(t.winRate)} WR
+                            <div className="truncate text-xs font-semibold">{data?.champions[entry.championId]?.name}</div>
+                            <div className="text-[11px]" style={{ color: wrColor(entry.winRate) }}>
+                              {pct(entry.winRate)} WR
                             </div>
                           </div>
-                          <TierBadge tier={t.tier} size="sm" />
+                          <TierBadge tier={entry.tier} size="sm" />
                         </button>
                       ))}
                     </div>

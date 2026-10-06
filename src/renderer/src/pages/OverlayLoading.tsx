@@ -9,6 +9,7 @@ import { Logo } from '@/components/Layout'
 
 const MODE_LABEL = { mayhem: 'ARAM: Mayhem', aram: 'ARAM' } as const
 
+// Example lobby for screenshots and the web demo
 const DEMO: LoadingState = {
   mode: 'mayhem',
   players: (
@@ -24,10 +25,10 @@ const DEMO: LoadingState = {
       ['Splitter', 11, false, false, false, 28, 13],
       ['NOATAQQ', 54, false, false, false, 6, 4]
     ] as const
-  ).map(([n, c, ally, me, premade, games, wins], i) => ({
+  ).map(([name, championId, ally, me, premade, games, wins], i) => ({
     puuid: String(i),
-    riotId: `${n}#EUW`,
-    championId: c,
+    riotId: `${name}#EUW`,
+    championId,
     ally,
     me,
     premade,
@@ -37,24 +38,24 @@ const DEMO: LoadingState = {
 }
 
 /** Name colour: you in gold, your premades in blue, everyone else white. */
-const nameClass = (p: LoadingPlayer): string => (p.me ? 'text-gold' : p.premade ? 'text-[#7cc4ff]' : 'text-text')
+const nameClass = (player: LoadingPlayer): string => (player.me ? 'text-gold' : player.premade ? 'text-[#7cc4ff]' : 'text-text')
 
 function Row({ p }: { p: LoadingPlayer }) {
-  const wr = p.record && p.record.games ? (p.record.wins / p.record.games) * 100 : null
-  const color = wr === null ? '#a39cc0' : wr >= 55 ? '#54f0a4' : wr <= 45 ? '#ff6b8b' : '#f1edfb'
+  const winRate = p.record && p.record.games ? (p.record.wins / p.record.games) * 100 : null
+  const color = winRate === null ? '#a39cc0' : winRate >= 55 ? '#54f0a4' : winRate <= 45 ? '#ff6b8b' : '#f1edfb'
   return (
     <div className="flex items-center gap-2.5 rounded-xl bg-black/35 px-2 py-1.5">
       <ChampIcon id={p.championId} size={30} tooltip={false} className="rounded-lg" />
       <span className={`w-[150px] truncate text-[13px] font-semibold ${nameClass(p)}`}>{p.riotId.split('#')[0] || '—'}</span>
       <span className="flex flex-1 items-center gap-2">
         <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
-          <span className="block h-full rounded-full" style={{ width: `${wr ?? 0}%`, background: color }} />
+          <span className="block h-full rounded-full" style={{ width: `${winRate ?? 0}%`, background: color }} />
         </span>
         {p.loading ? (
           <Loader2 size={13} className="animate-spin text-muted" />
         ) : (
           <span className="w-[86px] text-right text-[12px] font-bold tabular-nums" style={{ color }}>
-            {wr === null ? 'no games' : `${wr.toFixed(0)}%`}
+            {winRate === null ? 'no games' : `${winRate.toFixed(0)}%`}
             {p.record?.games ? <span className="ml-1 font-medium text-muted">{p.record.games} G</span> : null}
           </span>
         )}
@@ -73,23 +74,23 @@ export function OverlayLoading() {
 
   useEffect(() => {
     document.documentElement.classList.add('overlay-mode')
-    // '#/overlay/loading?demo' – example data for screenshots / the web demo
+    // '#/overlay/loading?demo' shows the example data (screenshots, web demo)
     if (window.location.hash.includes('demo')) setState(DEMO)
     return api.on('loading', setState)
   }, [])
 
-  const seed = state ? cosmicSeed(state.seed ?? state.players.map((p) => p.puuid).join()) : 0
+  const seed = state ? cosmicSeed(state.seed ?? state.players.map((player) => player.puuid).join()) : 0
   if (!state) return null
-  const still = settings?.ui.background === 'static'
-  const allies = state.players.filter((p) => p.ally)
-  const enemies = state.players.filter((p) => !p.ally)
+  const staticBackground = settings?.ui.background === 'static'
+  const allies = state.players.filter((player) => player.ally)
+  const enemies = state.players.filter((player) => !player.ally)
   return (
     <div
       className="fixed inset-1 overflow-hidden rounded-[22px] border border-white/15 shadow-2xl select-none"
       style={{ transform: 'translateZ(0)' }}
     >
-      {/* the night sky of the planet the app flew to when the match was accepted */}
-      <CosmosBackground seed={seed} mode={still ? 'static' : 'animated'} inGame={false} />
+      {/* Same sky as the planet the app flew to when the match was accepted */}
+      <CosmosBackground seed={seed} mode={staticBackground ? 'static' : 'animated'} inGame={false} />
       <div className="relative flex h-full flex-col bg-black/25 p-4">
         <div className="mb-3 flex items-center gap-2.5">
           <Logo size={24} />
@@ -105,13 +106,13 @@ export function OverlayLoading() {
           {[
             ['Your team', allies, '#4ea3ff'],
             ['Enemy team', enemies, '#ff5a78']
-          ].map(([title, list, c]) => (
+          ].map(([title, list, color]) => (
             <div key={title as string} className="flex flex-col gap-1.5">
-              <div className="text-[11px] font-bold tracking-wider uppercase" style={{ color: c as string }}>
+              <div className="text-[11px] font-bold tracking-wider uppercase" style={{ color: color as string }}>
                 {title as string}
               </div>
-              {(list as LoadingPlayer[]).map((p) => (
-                <Row key={p.puuid} p={p} />
+              {(list as LoadingPlayer[]).map((player) => (
+                <Row key={player.puuid} p={player} />
               ))}
             </div>
           ))}
