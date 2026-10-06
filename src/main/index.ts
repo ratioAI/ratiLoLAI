@@ -468,6 +468,38 @@ async function riotResults(puuid: string, mode: RecordMode): Promise<GameResults
 /** a dev key allows 100 requests per 2 minutes – 9 players × (1 + 8) stays below that */
 const RIOT_GAMES_PER_PLAYER = 8
 
+/** One crawler run for a mode with the current settings; resolves when the run is over. */
+async function startCrawl(mode: GameMode): Promise<void> {
+  const current = settings.get()
+  const data = await ddragon.get()
+  await crawler.start({
+    patch: data.patch,
+    mode,
+    platforms: [...new Set([current.platform, ...current.crawler.extraPlatforms])],
+    seedTiers: current.crawler.seedTiers,
+    maxMatches: current.crawler.maxMatchesPerRun,
+    matchesPerPlayer: current.crawler.matchesPerPlayer,
+    classify: makeClassifier(data)
+  })
+}
+
+/**
+ * Background crawling so nobody has to press "Start" after every update: ARAM first (what we mostly
+ * play), then ranked. Already counted matches are skipped, so a run only adds what is new. Never
+ * starts during a game or while a manual run is going.
+ */
+async function autoCrawl(): Promise<void> {
+  const ready = () => settings.get().crawler.autoCrawl && !!settings.getApiKey() && !inGame && !crawler.getStatus().running
+  if (!ready()) return
+  for (const mode of ['aram', 'ranked'] as const) {
+    if (!ready()) break
+    diag.log(`auto crawl: ${mode}`)
+    await startCrawl(mode).catch((err) => diag.log(`auto crawl ${mode} failed: ${(err as Error).message}`))
+  }
+}
+const AUTO_CRAWL_FIRST_MS = 2 * 60_000
+const AUTO_CRAWL_EVERY_MS = 6 * 3600_000
+
 const lcu = new LcuManager({
   liveCurve: () => liveCurve,
   records: {
@@ -559,18 +591,8 @@ function registerIpc(): void {
   handle('getChampionBuild', (patch: string, championId: number, role: StatRole | undefined, mode: GameMode) =>
     championBuild(patch, championId, role, assertMode(mode))
   )
-  handle('crawlerStart', async (mode: GameMode) => {
-    const current = settings.get()
-    const data = await ddragon.get()
-    void crawler.start({
-      patch: data.patch,
-      mode: assertMode(mode),
-      platforms: [...new Set([current.platform, ...current.crawler.extraPlatforms])],
-      seedTiers: current.crawler.seedTiers,
-      maxMatches: current.crawler.maxMatchesPerRun,
-      matchesPerPlayer: current.crawler.matchesPerPlayer,
-      classify: makeClassifier(data)
-    })
+  handle('crawlerStart', (mode: GameMode) => {
+    void startCrawl(assertMode(mode))
   })
   handle('crawlerStop', () => crawler.stop())
   handle('crawlerStatus', () => crawler.getStatus())
@@ -709,6 +731,8 @@ app.on('second-instance', () => {
 })
 
 void app.whenReady().then(async () => {
+  setTimeout(() => void autoCrawl(), AUTO_CRAWL_FIRST_MS)
+  setInterval(() => void autoCrawl(), AUTO_CRAWL_EVERY_MS)
   // Developer self-tests, run headless under xvfb and controlled through environment variables.
   if (process.env.RC_OCR_SELFTEST) {
     const { nativeImage } = await import('electron')

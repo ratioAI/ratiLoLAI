@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Info, Play, Square, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { GameMode } from '@shared/types'
 import { GAME_MODES, PLATFORMS } from '@shared/types'
 import { api } from '@/lib/api'
@@ -9,8 +9,21 @@ import { useApp } from '@/lib/store'
 import { PageHeader } from '@/components/Layout'
 
 export function Data() {
-  const { crawler, settings, patches, data, refreshPatches, mode } = useApp()
+  const { crawler, settings, setSettings, patches, data, refreshPatches, mode, statsVersion } = useApp()
   const [crawlMode, setCrawlMode] = useState<GameMode>(mode)
+  // what is already saved on disk for the selected mode and current patch (the crawler status only
+  // knows about the current run, so after a restart it would show 0)
+  const [saved, setSaved] = useState<number | null>(null)
+  useEffect(() => {
+    let active = true
+    void api.getPatches(crawlMode).then((list) => {
+      if (active) setSaved(list.find((entry) => entry.patch === (crawler?.patch ?? data?.patch))?.matches ?? 0)
+    })
+    return () => {
+      active = false
+    }
+  }, [crawlMode, data?.patch, crawler?.patch, statsVersion])
+  const totalMatches = Math.max(crawler?.mode === crawlMode ? (crawler?.matchesTotal ?? 0) : 0, saved ?? 0)
   const running = !!crawler?.running
   const elapsed = crawler?.startedAt ? (Date.now() - crawler.startedAt) / 1000 : 0
   // Wait 30 s before showing a rate, the first numbers are too noisy
@@ -60,6 +73,27 @@ export function Data() {
         </div>
       )}
 
+      {settings && (
+        <label className="panel mb-5 flex cursor-pointer items-center gap-3 p-4 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-[#c58bff]"
+            checked={settings.crawler.autoCrawl}
+            onChange={async (event) =>
+              setSettings(await api.saveSettings({ crawler: { ...settings.crawler, autoCrawl: event.target.checked } }))
+            }
+          />
+          <span className="flex-1">
+            <b>Crawl automatically</b>
+            <span className="text-muted">
+              {' '}
+              – two minutes after start and every 6 hours (ARAM, then ranked). Crawled matches are kept across updates; each run only adds
+              new ones.
+            </span>
+          </span>
+        </label>
+      )}
+
       <div className="panel mb-5 p-6">
         <div className="mb-2 flex items-center justify-between text-sm">
           <span className="font-semibold">
@@ -76,7 +110,7 @@ export function Data() {
         </div>
         <div className="mt-5 grid grid-cols-2 gap-4 md:grid-cols-4">
           <Metric label="New matches (this run)" value={num(crawler?.matchesThisRun ?? 0)} />
-          <Metric label="Matches total" value={num(crawler?.matchesTotal ?? 0)} />
+          <Metric label={`Saved matches (${GAME_MODES[crawlMode].label})`} value={num(totalMatches)} />
           <Metric label="Players processed" value={`${num(crawler?.playersDone ?? 0)} / ${num(crawler?.players ?? 0)}`} />
           <Metric label="Matches / minute" value={perMin ? perMin.toFixed(1) : '–'} />
           <Metric label="API requests" value={num(crawler?.requests ?? 0)} />

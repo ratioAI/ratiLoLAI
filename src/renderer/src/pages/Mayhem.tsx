@@ -1,5 +1,5 @@
 import { liveChampionKey } from '@shared/staticData'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Info, RefreshCw } from 'lucide-react'
 import type { AugmentRarity, MayhemPersonal } from '@shared/types'
 import { api } from '@/lib/api'
@@ -163,6 +163,11 @@ function PersonalStats({ connected }: { connected: boolean }) {
   const [stats, setStats] = useState<MayhemPersonal | null>(null)
   const [busy, setBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  // load as soon as the client is there – the numbers come straight from the client's match history
+  useEffect(() => {
+    if (connected && !stats && !busy) void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected])
   const load = async () => {
     setBusy(true)
     setErrorMessage(null)

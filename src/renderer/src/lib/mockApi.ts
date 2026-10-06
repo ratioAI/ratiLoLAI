@@ -442,7 +442,8 @@ export function createMockApi(): RcApi {
       extraPlatforms: ['kr'],
       maxMatchesPerRun: 1500,
       matchesPerPlayer: 10,
-      minGamesForTierList: 20
+      minGamesForTierList: 20,
+      autoCrawl: true
     },
     overlay: {
       enabled: true,

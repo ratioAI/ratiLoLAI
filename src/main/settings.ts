@@ -21,7 +21,8 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
     extraPlatforms: [],
     maxMatchesPerRun: 1500,
     matchesPerPlayer: 10,
-    minGamesForTierList: 20
+    minGamesForTierList: 20,
+    autoCrawl: true
   },
   overlay: {
     enabled: true,

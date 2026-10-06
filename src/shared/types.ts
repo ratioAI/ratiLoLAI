@@ -264,6 +264,8 @@ export interface Settings {
     maxMatchesPerRun: number
     matchesPerPlayer: number
     minGamesForTierList: number
+    /** keep the statistics fresh on its own: a run shortly after start and every few hours */
+    autoCrawl: boolean
   }
   overlay: {
     /** show the in-game augment overlay in ARAM: Mayhem */
