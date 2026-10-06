@@ -147,10 +147,9 @@ export function personalMayhemStats(history: LcuHistory, puuid: string | null): 
   return result
 }
 
-/** Games and wins of one player in a mode, taken from that player's client match history. */
-export function modeRecord(history: LcuHistory, puuid: string, mode: 'mayhem' | 'aram'): { games: number; wins: number } {
-  let games = 0
-  let wins = 0
+/** One player's results in a mode from their client match history (gameId → won). */
+export function modeResults(history: LcuHistory, puuid: string, mode: 'mayhem' | 'aram'): Map<number, boolean> {
+  const results = new Map<number, boolean>()
   for (const game of history.games?.games ?? []) {
     const match =
       mode === 'mayhem' ? isMayhemGame(game) : (QUEUE_IDS.aram as readonly number[]).includes(game.queueId) || game.gameMode === 'ARAM'
@@ -160,8 +159,13 @@ export function modeRecord(history: LcuHistory, puuid: string, mode: 'mayhem' | 
       game.participants.find((participant) => participant.participantId === participantId) ??
       (game.participants.length === 1 ? game.participants[0] : undefined)
     if (!me) continue
-    games++
-    if (me.stats.win === true) wins++
+    results.set(game.gameId, me.stats.win === true)
   }
-  return { games, wins }
+  return results
+}
+
+/** Games and wins of one player in a mode, taken from that player's client match history. */
+export function modeRecord(history: LcuHistory, puuid: string, mode: 'mayhem' | 'aram'): { games: number; wins: number } {
+  const results = modeResults(history, puuid, mode)
+  return { games: results.size, wins: [...results.values()].filter(Boolean).length }
 }

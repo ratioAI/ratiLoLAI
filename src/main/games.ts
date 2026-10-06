@@ -30,6 +30,13 @@ export class GameStore {
     }
   }
 
+  /** Every saved summary (at most 60, so reading them all is fine). */
+  async all(): Promise<GameSummary[]> {
+    const files = (await readdir(this.dir).catch(() => [] as string[])).filter((file) => file.endsWith('.json'))
+    const summaries = await Promise.all(files.map((file) => this.get(Number(file.slice(0, -5)))))
+    return summaries.filter((summary): summary is GameSummary => !!summary)
+  }
+
   async list(): Promise<GameListEntry[]> {
     if (!this.index) {
       const files = (await readdir(this.dir).catch(() => [] as string[])).filter((file) => file.endsWith('.json'))

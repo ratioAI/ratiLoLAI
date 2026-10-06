@@ -46,13 +46,21 @@ export function match(over: Partial<MatchDTO['info']> = {}, id = 'EUW1_1'): Matc
   return {
     metadata: { matchId: id, participants: [] },
     info: {
+      gameId: Number(id.split('_')[1]) || 1,
       gameCreation: 1_700_000_000_000,
       gameDuration: 1800,
       gameVersion: '15.19.712.1234',
       queueId: 420,
       participants: Array.from({ length: 10 }, (_, i) => participant(i)),
       teams: [
-        { teamId: 100, win: true, bans: [{ championId: 1, pickTurn: 1 }, { championId: -1, pickTurn: 2 }] },
+        {
+          teamId: 100,
+          win: true,
+          bans: [
+            { championId: 1, pickTurn: 1 },
+            { championId: -1, pickTurn: 2 }
+          ]
+        },
         { teamId: 200, win: false, bans: [{ championId: 2, pickTurn: 6 }] }
       ],
       ...over
@@ -64,7 +72,12 @@ export function timeline(events: TimelineEvent[]): TimelineDTO {
   return { metadata: { matchId: 'EUW1_1' }, info: { frames: [{ timestamp: 0, events }] } }
 }
 
-const buy = (participantId: number, itemId: number, timestamp: number): TimelineEvent => ({ type: 'ITEM_PURCHASED', participantId, itemId, timestamp })
+const buy = (participantId: number, itemId: number, timestamp: number): TimelineEvent => ({
+  type: 'ITEM_PURCHASED',
+  participantId,
+  itemId,
+  timestamp
+})
 const skill = (participantId: number, skillSlot: number, timestamp: number): TimelineEvent => ({
   type: 'SKILL_LEVEL_UP',
   participantId,

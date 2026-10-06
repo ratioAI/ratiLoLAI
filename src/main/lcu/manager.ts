@@ -16,7 +16,8 @@ import type {
 import { QUEUE_IDS, statsModeOf } from '@shared/types'
 import { acceptDelayMs } from './acceptDelay'
 import { buildSummary, type CurvePoint, type GameSummary, type RawGame, type RawTimeline } from '@shared/summary'
-import { modeRecord, personalMayhemStats, type LcuHistory } from '../mayhem'
+import { modeResults, personalMayhemStats, type LcuHistory } from '../mayhem'
+import { mergeResults, type GameResults } from '../records'
 import { fetchAllGameData, parseLiveData } from '../live/liveClient'
 import {
   buildItemSet,
@@ -47,6 +48,12 @@ export interface LcuManagerDeps {
   }
   /** Gold/kill lead recorded from the live data, used when the client has no timeline. */
   liveCurve(): CurvePoint[]
+  /** Extra sources for the loading-screen win rates (our saved games, the Riot API). */
+  records?: {
+    local(puuids: string[], mode: 'mayhem' | 'aram'): Promise<Map<string, GameResults>>
+    riot(puuid: string, mode: 'mayhem' | 'aram'): Promise<GameResults | null>
+  }
+  log?(message: string): void
 }
 
 const POLL_MS = 3000
@@ -337,7 +344,29 @@ export class LcuManager {
     this.loadingState = { mode, players }
     this.deps.emit.loading(this.loadingState)
 
-    // names and records, three at a time so we don't hammer the client while the game is loading
+    // Win rates come from three sources, merged by game id so nothing is counted twice:
+    // 1. our own saved games (every game played with ratioAI, so premades add up over time)
+    // 2. the player's client match history (the client often returns little or nothing for others)
+    // 3. the Riot API for players that still have only a few games (needs an API key, rate limited)
+    const local =
+      (await this.deps.records
+        ?.local(
+          players.map((player) => player.puuid),
+          mode
+        )
+        .catch(() => null)) ?? new Map()
+    const fromClient = new Map<string, GameResults>()
+    const update = (player: LoadingPlayer, ...extra: (GameResults | null)[]): void => {
+      const record = mergeResults(local.get(player.puuid), fromClient.get(player.puuid), ...extra)
+      player.record = record.games ? record : null
+    }
+    const publish = (): void => {
+      if (this.loadingState?.players === players) this.deps.emit.loading({ mode, players: [...players] })
+    }
+    for (const player of players) update(player)
+    publish()
+
+    // names and client history, three at a time so we don't hammer the client while the game loads
     const pending = [...players]
     const worker = async (): Promise<void> => {
       for (let player = pending.shift(); player; player = pending.shift()) {
@@ -345,13 +374,34 @@ export class LcuManager {
         const history = await client
           .get<LcuHistory>(`/lol-match-history/v1/products/lol/${player.puuid}/matches?begIndex=0&endIndex=99`)
           .catch(() => null)
-        player.record = history ? modeRecord(history, player.puuid, mode) : null
-        player.loading = false
-        if (this.loadingState?.players === players) this.deps.emit.loading({ mode, players: [...players] })
+        if (history) fromClient.set(player.puuid, modeResults(history, player.puuid, mode))
+        update(player)
+        player.loading = !!this.deps.records && (player.record?.games ?? 0) < LcuManager.ENOUGH_GAMES
+        publish()
       }
     }
     await Promise.all([worker(), worker(), worker()])
+
+    // players with too few games: ask the Riot API, one after another (the rate limiter paces it)
+    for (const player of players) {
+      if (!player.loading) continue
+      const fromRiot = await this.deps.records!.riot(player.puuid, mode).catch(() => null)
+      update(player, fromRiot)
+      player.loading = false
+      publish()
+    }
+    this.deps.log?.(
+      `loading screen records: ${players
+        .map(
+          (player) =>
+            `${player.riotId.split('#')[0] || '?'} ${player.record ? `${player.record.wins}/${player.record.games}` : '–'} (saved ${local.get(player.puuid)?.size ?? 0}, client ${fromClient.get(player.puuid)?.size ?? '✗'})`
+        )
+        .join(', ')}`
+    )
   }
+
+  /** below this many games a player's record is filled up from the Riot API */
+  private static readonly ENOUGH_GAMES = 5
 
   private lastPhase = 'None'
 

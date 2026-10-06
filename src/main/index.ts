@@ -17,7 +17,7 @@ import type {
   MinimapState,
   AugmentOffer
 } from '@shared/types'
-import { PLATFORMS, QUEUE_IDS } from '@shared/types'
+import { GAME_MODES, PLATFORMS, QUEUE_IDS } from '@shared/types'
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { Crawler } from './crawler/crawler'
 import { StatsStore } from './crawler/statsStore'
@@ -36,7 +36,8 @@ import { cardRects, WINDOWS, type NameCandidate } from './scanner/detect'
 import { augmentTiersForChampion } from '@shared/mayhem'
 import { ProfileService } from './profile'
 import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
-import { RiotClient } from './riot/client'
+import { RiotClient, regionalOf } from './riot/client'
+import { resultsFromSummaries, type GameResults, type RecordMode } from './records'
 import { SettingsStore } from './settings'
 
 // The app used to be called "Rift Companion". Move its data (settings, encrypted API key, crawled
@@ -428,8 +429,52 @@ async function recordCurve(live: LiveGameState | null): Promise<void> {
   liveCurve.push({ t: live.gameTime, gold, kills })
 }
 
+/** Riot API matches already looked up (premades share most of their games, so this saves a lot of requests). */
+const riotMatchCache = new Map<string, { gameId: number; winners: Set<string>; players: Set<string> } | null>()
+
+/**
+ * A player's last few games in a mode from the Riot API, as gameId → won. Used on the loading screen
+ * for players whose client match history is empty. null without an API key.
+ */
+async function riotResults(puuid: string, mode: RecordMode): Promise<GameResults | null> {
+  if (!settings.getApiKey()) return null
+  const regional = regionalOf(settings.get().platform)
+  const queues = mode === 'mayhem' ? QUEUE_IDS.mayhem : [GAME_MODES.aram.queue]
+  let matchIds: string[] = []
+  for (const queue of queues) {
+    matchIds = await riot.matchIds(regional, puuid, { queue, count: RIOT_GAMES_PER_PLAYER })
+    if (matchIds.length) break
+  }
+  const results: GameResults = new Map()
+  for (const matchId of matchIds) {
+    if (!riotMatchCache.has(matchId)) {
+      const match = await riot.match(regional, matchId).catch(() => null)
+      riotMatchCache.set(
+        matchId,
+        match
+          ? {
+              gameId: match.info.gameId,
+              winners: new Set(match.info.participants.filter((participant) => participant.win).map((participant) => participant.puuid)),
+              players: new Set(match.info.participants.map((participant) => participant.puuid))
+            }
+          : null
+      )
+    }
+    const cached = riotMatchCache.get(matchId)
+    if (cached?.players.has(puuid)) results.set(cached.gameId, cached.winners.has(puuid))
+  }
+  return results
+}
+/** a dev key allows 100 requests per 2 minutes – 9 players × (1 + 8) stays below that */
+const RIOT_GAMES_PER_PLAYER = 8
+
 const lcu = new LcuManager({
   liveCurve: () => liveCurve,
+  records: {
+    local: async (puuids, mode) => resultsFromSummaries(await games.all(), puuids, mode),
+    riot: riotResults
+  },
+  log: (message) => diag.log(message),
   settings: () => settings.get(),
   staticData: () => ddragon.get(),
   build: async (championId, role, mode) => championBuild(await currentPatch(mode), championId, role, mode),

@@ -89,6 +89,7 @@ export interface ParticipantDTO {
 export interface MatchDTO {
   metadata: { matchId: string; participants: string[] }
   info: {
+    gameId: number
     gameCreation: number
     gameDuration: number
     gameVersion: string
