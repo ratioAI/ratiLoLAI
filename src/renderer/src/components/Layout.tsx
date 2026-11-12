@@ -161,15 +161,13 @@ export function Layout({ children }: { children: ReactNode }) {
   )
 }
 
-export function PageHeader({ title, subtitle, children }: { title: ReactNode; subtitle?: ReactNode; children?: ReactNode }) {
+/** Page title with the page's controls on the right. Deliberately no description line. */
+export function PageHeader({ title, children }: { title: ReactNode; children?: ReactNode }) {
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 className="font-display text-[28px] leading-tight font-extrabold tracking-tight">
-          <span className="iridescent-text">{title}</span>
-        </h1>
-        {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
-      </div>
+      <h1 className="font-display text-[28px] leading-tight font-extrabold tracking-tight">
+        <span className="iridescent-text">{title}</span>
+      </h1>
       {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
     </div>
   )

@@ -14,7 +14,8 @@ import {
   type AugmentList,
   type CherryAugment
 } from '@shared/mayhem'
-import { buildSummary, type GameSummary } from '@shared/summary'
+import { buildSummary, teamBlame, type GameSummary } from '@shared/summary'
+import { leaderboardFromSummaries } from '@shared/leaderboard'
 import type {
   ChampionRoleStats,
   ChampSelectState,
@@ -525,6 +526,8 @@ export function createMockApi(): RcApi {
     }
   }
 
+  // '#/games?demo-journey' plays the flight to the next galaxy (screenshots)
+  if (window.location.hash.includes('demo-journey')) setTimeout(() => emit('journey', { seed: 1_790_000_123_456 }), 300)
   const api: RcApi = {
     getStatic,
     getSettings: async () => settings,
@@ -601,11 +604,10 @@ export function createMockApi(): RcApi {
       log: ['web demo – no game running']
     }),
     overlayScanNow: async () => undefined,
-    listGames: async () => {
-      const summary = demoSummary()
-      const me = summary.players.find((player) => player.me)!
-      return [
-        {
+    listGames: async () =>
+      demoHistory().map((summary) => {
+        const me = summary.players.find((player) => player.me)!
+        return {
           gameId: summary.gameId,
           createdAt: summary.createdAt,
           duration: summary.duration,
@@ -614,11 +616,12 @@ export function createMockApi(): RcApi {
           win: summary.win,
           championId: me.championId,
           kda: [me.kills, me.deaths, me.assists] as [number, number, number],
-          blamedPremade: summary.players.filter((player) => player.ally).sort((a, b) => a.score - b.score)[0]?.riotId ?? null
+          blamedPremade: teamBlame(summary)?.riotId ?? null,
+          cosmos: summary.cosmos ?? summary.gameId
         }
-      ]
-    },
-    getGame: async () => demoSummary(),
+      }),
+    getGame: async (gameId) => demoHistory().find((summary) => summary.gameId === gameId) ?? demoHistory()[0],
+    getLeaderboard: async () => leaderboardFromSummaries(demoHistory()),
     // minimap timers only exist in the '#...demo-live' preview
     getMapTimers: async () =>
       window.location.hash.includes('demo-live')
@@ -792,8 +795,17 @@ export function createMockApi(): RcApi {
   return api
 }
 
-/** Made-up ARAM: Mayhem game for the post-game summary demo (a big early lead that gets thrown). */
-function demoSummary(): GameSummary {
+let history: GameSummary[] | null = null
+/** Made-up game history for the demo: the thrown game below plus older games with shuffled stats. */
+function demoHistory(): GameSummary[] {
+  history ??= Array.from({ length: 24 }, (_, index) => demoSummary(index))
+  return history
+}
+
+/** Made-up ARAM: Mayhem game for the post-game summary demo. Game 0 is a big early lead that gets thrown. */
+function demoSummary(index = 0): GameSummary {
+  const rand = rng(977 + index * 13)
+  const won = index > 0 && rand() < 0.55
   // [name, championId, is me, premade with me]
   const names: [string, number, boolean, boolean][] = [
     ['Axel Fungus', 412, true, false],
@@ -820,6 +832,17 @@ function demoSummary(): GameSummary {
     [3, 7, 19, 15200, 38000, 2100],
     [6, 7, 16, 22400, 21000, 0]
   ]
+  if (index > 0) {
+    // older games: deal the stat lines out differently within each team, and Toni joins the group now and then
+    for (const offset of [0, 5]) {
+      for (let i = 4; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1))
+        ;[stats[offset + i], stats[offset + j]] = [stats[offset + j], stats[offset + i]]
+      }
+    }
+    names[3][3] = index % 3 !== 0
+    names[2][3] = index % 4 !== 1
+  }
   const augments = [
     [1011, 2107, 1349],
     [1180, 2139, 1149],
@@ -833,8 +856,8 @@ function demoSummary(): GameSummary {
     [1054, 1325]
   ]
   const game = {
-    gameId: 7300000001,
-    gameCreation: Date.now() - 40 * 60_000,
+    gameId: 7300000001 - index,
+    gameCreation: Date.now() - (40 + index * 310) * 60_000,
     gameDuration: 19 * 60 + 12,
     queueId: 2400,
     gameMode: 'KIWI',
@@ -843,7 +866,7 @@ function demoSummary(): GameSummary {
       championId: champ,
       teamId: i < 5 ? 100 : 200,
       stats: {
-        win: i >= 5,
+        win: i < 5 === won,
         kills: stats[i][0],
         deaths: stats[i][1],
         assists: stats[i][2],
@@ -863,7 +886,8 @@ function demoSummary(): GameSummary {
     }))
   }
   // our gold lead per minute
-  const lead = [0, 300, 900, 1600, 2400, 3100, 3800, 4200, 3900, 3300, 2600, 1800, 900, 200, -700, -1500, -2300, -3200, -4100, -5000]
+  const thrown = [0, 300, 900, 1600, 2400, 3100, 3800, 4200, 3900, 3300, 2600, 1800, 900, 200, -700, -1500, -2300, -3200, -4100, -5000]
+  const lead = index === 0 ? thrown : thrown.map((gold, minute) => Math.round((won ? 1 : -1) * (minute * 260 + gold * (rand() - 0.5))))
   const timeline = {
     frames: lead.map((goldLead, minute) => ({
       timestamp: minute * 60_000,
@@ -887,5 +911,6 @@ function demoSummary(): GameSummary {
           : []
     }))
   }
-  return buildSummary(game, timeline, 'p0', new Set(['p1', 'p2']))
+  const premades = new Set(names.flatMap(([, , , premade], i) => (premade ? [`p${i}`] : [])))
+  return { ...buildSummary(game, timeline, 'p0', premades), cosmos: 1_790_000_000_000 - index * 7_654_321 }
 }

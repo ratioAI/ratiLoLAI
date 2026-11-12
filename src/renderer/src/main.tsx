@@ -22,6 +22,8 @@ const pages = {
   Live: () => import('./pages/Live').then((mod) => ({ default: mod.Live })),
   Games: () => import('./pages/Games').then((mod) => ({ default: mod.Games })),
   GameDetail: () => import('./pages/Games').then((mod) => ({ default: mod.GameDetail })),
+  Leaderboard: () => import('./pages/Leaderboard').then((mod) => ({ default: mod.Leaderboard })),
+  StarMap: () => import('./pages/StarMap').then((mod) => ({ default: mod.StarMap })),
   Profile: () => import('./pages/Profile').then((mod) => ({ default: mod.Profile })),
   Data: () => import('./pages/Data').then((mod) => ({ default: mod.Data })),
   Settings: () => import('./pages/Settings').then((mod) => ({ default: mod.Settings })),
@@ -34,6 +36,8 @@ const ChampionPage = lazy(pages.ChampionPage)
 const Live = lazy(pages.Live)
 const Games = lazy(pages.Games)
 const GameDetail = lazy(pages.GameDetail)
+const Leaderboard = lazy(pages.Leaderboard)
+const StarMap = lazy(pages.StarMap)
 const Profile = lazy(pages.Profile)
 const Data = lazy(pages.Data)
 const Settings = lazy(pages.Settings)
@@ -42,19 +46,25 @@ import { Overlay } from './pages/Overlay'
 import { TripBackground } from './components/TripBackground'
 import { CosmosBackground, JUMP_MS, cosmicSeed } from './components/CosmosBackground'
 import { JourneyCanvas } from './components/JourneyCanvas'
+import { galaxyOf } from '@shared/universe'
 import { api } from './lib/api'
 import { OverlayFrames } from './pages/OverlayFrames'
 import { OverlayMinimap } from './pages/OverlayMinimap'
 import { OverlayLoading } from './pages/OverlayLoading'
 
 /**
- * The galaxy we're currently in. Every accepted match picks a new one and the window flies there
- * through a wormhole; `journey` is set while that jump is running.
+ * The place in the universe we're currently at. Every accepted match picks a new one and the window
+ * flies there; `journey` is set while that jump is running.
  */
 function useCosmos(onArrive: () => void): { seed: number; journey: { from: number; to: number; key: number } | null } {
   const [seed, setSeed] = useState(() => {
     try {
-      return Number(localStorage.getItem('rc.cosmos')) || cosmicSeed(Date.now() >> 20)
+      const stored = Number(localStorage.getItem('rc.cosmos'))
+      if (stored) return stored
+      // first start: pick a home and remember it, so the star map knows where we are
+      const home = cosmicSeed(Date.now() >> 20)
+      localStorage.setItem('rc.cosmos', String(home))
+      return home
     } catch {
       return cosmicSeed(1)
     }
@@ -91,7 +101,7 @@ function useCosmos(onArrive: () => void): { seed: number; journey: { from: numbe
   return { seed, journey }
 }
 
-/** Full-window wormhole flight to the next galaxy. Fades out shortly before the jump ends. */
+/** Full-window flight to the next galaxy. Fades out shortly before the jump ends. */
 function JourneyOverlay({ journey }: { journey: { from: number; to: number; key: number } }) {
   const [leaving, setLeaving] = useState(false)
   useEffect(() => {
@@ -105,6 +115,12 @@ function JourneyOverlay({ journey }: { journey: { from: number; to: number; key:
       aria-hidden
     >
       <JourneyCanvas key={journey.key} from={journey.from} to={journey.to} />
+      {/* where we're going, shown while crossing intergalactic space */}
+      <div className="journey-caption absolute inset-x-0 bottom-[9%] text-center">
+        <div className="text-[11px] font-semibold tracking-[0.35em] text-white/55 uppercase">Destination</div>
+        <div className="font-display text-3xl font-extrabold tracking-tight text-white/90">{galaxyOf(journey.to).name}</div>
+        <div className="text-xs tracking-widest text-white/45">{galaxyOf(journey.to).designation}</div>
+      </div>
     </div>
   )
 }
@@ -166,6 +182,8 @@ function MainShell() {
           <Route path="/champion/:id/:role?" element={<ChampionPage />} />
           <Route path="/live" element={<Live />} />
           <Route path="/games" element={<Games />} />
+          <Route path="/games/leaderboard" element={<Leaderboard />} />
+          <Route path="/games/map" element={<StarMap />} />
           <Route path="/games/:id" element={<GameDetail />} />
           <Route path="/mayhem" element={<Mayhem />} />
           <Route path="/profile" element={<Profile />} />

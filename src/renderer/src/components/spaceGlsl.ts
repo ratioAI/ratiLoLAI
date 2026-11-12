@@ -55,11 +55,9 @@ vec3 stars(vec2 uv, float t){
 }
 
 // spiral galaxy in its own plane. q is in galaxy units (1 is roughly the visible disk).
-vec3 galaxyShape(vec2 q, float t, float seed){
-  float arms = floor(mix(2.0, 4.99, h11(seed + 26.0)));
-  float twist = mix(2.4, 5.2, h11(seed + 27.0));
-  vec3 armCol = neb(h11(seed + 28.0));
-  vec3 armIn = neb(h11(seed + 28.0) + 0.3);
+vec3 galaxyShapeP(vec2 q, float t, float arms, float twist, float hue, float seed){
+  vec3 armCol = neb(hue);
+  vec3 armIn = neb(hue + 0.3);
   float r = length(q);
   float a = atan(q.y, q.x);
   float wob = (fbm(q * 1.4 + seed * 0.7) - 0.5) * 1.6;
@@ -72,6 +70,9 @@ vec3 galaxyShape(vec2 q, float t, float seed){
   g += starLayer(q * 0.35, 90.0, 0.7, t, 9.0) * spiral * disk * 1.5;
   g *= 1.0 - dust * 0.75;
   return g * smoothstep(2.8, 1.3, r);
+}
+vec3 galaxyShape(vec2 q, float t, float seed){
+  return galaxyShapeP(q, t, floor(mix(2.0, 4.99, h11(seed + 26.0))), mix(2.4, 5.2, h11(seed + 27.0)), h11(seed + 28.0), seed);
 }
 
 // galaxy seen from outside (rare: a planet in the halo or in a satellite galaxy)
@@ -230,9 +231,4 @@ export function quadProgram(gl: WebGLRenderingContext, frag: string): WebGLProgr
   return program
 }
 
-/** Turns any value (game id, string, ...) into a shader seed. FNV-1a hash, scaled to a float. */
-export const cosmicSeed = (value: number | string): number => {
-  let hash = 2166136261
-  for (const char of String(value)) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619)
-  return ((hash >>> 0) % 100000) / 7.31
-}
+export { cosmicSeed } from '@shared/universe'

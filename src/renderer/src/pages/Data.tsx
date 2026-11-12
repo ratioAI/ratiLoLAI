@@ -35,10 +35,7 @@ export function Data() {
 
   return (
     <div className="page-enter mx-auto max-w-5xl p-8">
-      <PageHeader
-        title="Data & crawler"
-        subtitle="Collects ranked or ARAM matches through the official Riot API and computes tier lists, builds and matchups from them."
-      >
+      <PageHeader title="Data & crawler">
         {running ? (
           <button className="btn btn-ghost" onClick={() => api.crawlerStop()}>
             <Square size={15} /> Stop

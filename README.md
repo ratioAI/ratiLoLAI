@@ -38,6 +38,9 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. ra
 | 🖼️ **In-game overlay** | When the augment choice appears in ARAM: Mayhem, ratioAI **recognises the three offered cards on screen** (frame detection + OCR of the card titles with a bundled Tesseract model – no memory reading, no injection) and draws a **psychedelic, wobbling tier frame** around each card (a small WebGL shader: full colour flow for S+, purple/pink for S, blue for A … dull bronze for D) with a crest, a *Best pick* marker and a one-line note. Built to stay out of the game's way: screenshots only while an augment is pending **and** the choice can open (dead, game start, after respawn/shopping), a single low-fps screen stream instead of repeated full-screen grabs, three small overlay windows instead of one full-screen surface, the animation capped at 30 fps (15 fps or static selectable), the OCR engine loaded during champion select, and the overlay excluded from screen capture. The augment you click is remembered, so later choices are rated **with the augments you already own**: a card that completes a proven combo is lifted (and labelled *Completes combo*), one that gets you closer is lifted one tier, a known trap sinks to D. Rerolls are picked up within half a second and the frames vanish as soon as the selection is closed. An optional side panel lists all augment tiers for your champion; <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> makes it look for the cards right away; League must run in borderless or windowed mode. |
 | ⏱️ **Minimap timers** | Health relic respawns (the game only counts down the first spawn – ratioAI notices when a relic's green cross disappears from the minimap and counts down the 92.5 s) and inhibitor respawns, right on the minimap and on the Live page. |
 | 📊 **Game summaries** | After every game: victory/defeat, a win/loss curve (your team's gold lead over time with every kill), highlights (thrown leads, comebacks, most damage/deaths), an impact score per player, MVP – and who of you and your premades was most to blame for a loss. All ten players with items and their augments in tier frames. From the client's match history; saved under *Games*. |
+| 🗄️ **Game history** | Every finished game is kept in a local SQLite database (`games.db` in the app's data folder) – no limit, filter by wins and losses, open any old game again. Histories from older versions are imported on first start. |
+| 🏆 **Leaderboard** | *Games → Leaderboard*: two podiums showing who of you and your premades was MVP most often and who was the troll most often, plus a sortable table with games, win rate, MVP and troll rates and average impact. |
+| 🌌 **Universe & star map** | ratioAI ships with a fixed map of 640 galaxies in 3D. Every accepted match flies you from the planet of your last game to a new one – out of the galaxy, across intergalactic space with real perspective and parallax, down into the target galaxy and onto the planet. *Games → Star map* shows the same universe to turn and zoom, with the galaxies you played in, your route between them and the games played in each. |
 | 🌀 **Loading screen** | A panel over the loading screen with every player's recent win rate in ARAM: Mayhem / ARAM (from the client's match history); <kbd>Space</kbd> shows / hides it, it disappears when the game starts. |
 | ✨ **ARAM: Mayhem** | Augment tips per champion (top combos, strong picks, *traps*), proven multi-augment combinations and the most picked augments per rarity – shown in champion select, **in game** next to the scoreboard and on a dedicated page. Items & runes come from ARAM data, and your **own** Mayhem history (augments you picked, win rate) is read from the League client. |
 | 👤 **Profiles** | op.gg-style player lookup: ranks, mastery, last 15 games with KDA, CS/min, items, runes and champion stats. |
@@ -93,7 +96,7 @@ Requires Node.js 20+.
 
 ### 3. Crawl some games
 
-Open **Daten**, pick *Ranked Solo/Duo* or *ARAM* and hit **Crawler starten**. The crawler fetches the apex leagues of your region(s), downloads recent ranked games including their timelines and aggregates them. With a development/personal key (100 requests / 2 min) you get roughly **20–25 matches per minute**; a few thousand matches already give a very usable tier list. Progress is stored continuously – just let it run in the background.
+Open **Data**, pick *Ranked Solo/Duo* or *ARAM* and hit **Start crawler**. The crawler fetches the apex leagues of your region(s), downloads recent ranked games including their timelines and aggregates them. With a development/personal key (100 requests / 2 min) you get roughly **20–25 matches per minute**; a few thousand matches already give a very usable tier list. Progress is stored continuously – just let it run in the background.
 
 ### Updates
 
@@ -113,10 +116,11 @@ flowchart LR
     Crawler --> Agg[Aggregator] --> Store[(JSON stats<br/>per patch)]
     LCU[LCU manager<br/>HTTPS + WAMP websocket] --> Import[Rune / item-set / spell import]
     Live[Live Client Data poller]
+    LCU --> Games[(Game history<br/>SQLite)]
     DD[Data Dragon cache]
   end
   subgraph Renderer["Renderer (React 19 + Tailwind 4)"]
-    UI[Tier list · Builds · Live · Profile · Settings]
+    UI[Tier list · Builds · Live · Games · Profile · Settings]
   end
   RL -->|HTTPS| Riot[(Riot API)]
   LCU -->|127.0.0.1| Client[League Client]
@@ -133,10 +137,12 @@ src/
 │  ├─ lcu/            League client discovery, websocket events, champ select, import payloads
 │  ├─ live/           Live Client Data API (in-game)
 │  ├─ ddragon.ts      static data download + cache
+│  ├─ games.ts        game history database (SQLite) + MVP / troll leaderboard
 │  └─ profile.ts      summoner profiles & live-game scouting
 ├─ preload/           contextBridge – exposes a typed `window.rc` API
 ├─ renderer/          React UI (also builds as a standalone web demo)
-└─ shared/            types, tier/build analysis, static-data parsing (pure & tested)
+└─ shared/            types, tier/build analysis, static-data parsing, the universe catalogue
+                      and flight path (pure & tested)
 test/                 Vitest unit + integration tests (crawler against a fake Riot API)
 ```
 
@@ -152,7 +158,7 @@ test/                 Vitest unit + integration tests (crawler against a fake Ri
 
 ```bash
 npm run dev         # Electron + Vite with hot reload
-npm test            # Vitest (109 tests)
+npm test            # Vitest (129 tests)
 npm run typecheck   # strict TypeScript for main + renderer
 npm run build:web   # standalone web demo in ./dist-web (synthetic data)
 ```

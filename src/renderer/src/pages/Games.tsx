@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Crown, History, Info, Skull, Sparkles } from 'lucide-react'
+import { Crown, History, Info, Orbit, Skull, Sparkles, Trophy } from 'lucide-react'
 import type { GameListEntry } from '@shared/types'
 import { explainImpact, teamBlame, type GameSummary, type SummaryPlayer } from '@shared/summary'
 import { augmentTiersForChampion } from '@shared/mayhem'
@@ -13,6 +13,7 @@ import { AugmentFrame } from '@/components/AugmentFrame'
 import { useMayhemData } from '@/components/mayhem'
 import { WinCurve } from '@/components/WinCurve'
 import { quips, ratioApproved } from '@shared/quips'
+import { cosmicSeed, galaxyOf } from '@shared/universe'
 
 const MODE: Record<string, string> = { KIWI: 'ARAM: Mayhem', ARAM: 'ARAM', CLASSIC: "Summoner's Rift" }
 const ago = (timestamp: number): string => {
@@ -20,24 +21,63 @@ const ago = (timestamp: number): string => {
   return minutes < 60 ? `${minutes} min ago` : minutes < 1440 ? `${Math.round(minutes / 60)} h ago` : `${Math.round(minutes / 1440)} d ago`
 }
 
-/** List of finished games with a summary. */
+type ResultFilter = 'all' | 'wins' | 'losses'
+const FILTERS: { key: ResultFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'wins', label: 'Wins' },
+  { key: 'losses', label: 'Losses' }
+]
+/** Rows rendered at first and added per click on "Show more"; the history itself has no limit. */
+const PAGE = 60
+
+/** The game history: every finished game, newest first, read from the game database. */
 export function Games() {
   const [list, setList] = useState<GameListEntry[] | null>(null)
+  const [filter, setFilter] = useState<ResultFilter>('all')
+  const [shown, setShown] = useState(PAGE)
   useEffect(() => {
     const load = () => void api.listGames().then(setList)
     load()
     return api.on('gameSummary', load)
   }, [])
+  const filtered = (list ?? []).filter((game) => filter === 'all' || game.win === (filter === 'wins'))
+  const wins = (list ?? []).filter((game) => game.win).length
   return (
     <div className="page-enter mx-auto max-w-6xl p-8">
-      <PageHeader title="Games" subtitle="Summary, gold curve and impact of every player – saved after each game" />
+      <PageHeader title="Games">
+        {!!list?.length && (
+          <span className="mr-1 text-sm text-muted tabular-nums">
+            {list.length} games · <span className="text-[#5fb4ff]">{wins}W</span> <span className="text-[#ff7a62]">{list.length - wins}L</span>
+          </span>
+        )}
+        <div className="flex rounded-xl border border-line bg-bg-2 p-1">
+          {FILTERS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => {
+                setFilter(key)
+                setShown(PAGE)
+              }}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${filter === key ? 'bg-panel-2 text-accent' : 'text-muted'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <Link to="/games/leaderboard" className="btn btn-ghost">
+          <Trophy size={15} /> Leaderboard
+        </Link>
+        <Link to="/games/map" className="btn btn-ghost">
+          <Orbit size={15} /> Star map
+        </Link>
+      </PageHeader>
       {!list?.length ? (
         <EmptyState icon={<History size={28} />} title="No games yet">
           Play a game with ratioAI running – its summary appears here as soon as the client has the results.
         </EmptyState>
       ) : (
         <div className="stagger space-y-2">
-          {list.map((game) => (
+          {filtered.slice(0, shown).map((game) => (
             <Link
               key={game.gameId}
               to={`/games/${game.gameId}`}
@@ -45,7 +85,7 @@ export function Games() {
               style={{ borderLeft: `3px solid ${game.win ? '#2f95dc' : '#e2553f'}` }}
             >
               <ChampIcon id={game.championId} size={40} tooltip={false} />
-              <span className={`w-20 font-display font-extrabold ${game.win ? 'text-[#5fb4ff]' : 'text-[#ff7a62]'}`}>
+              <span className={`w-24 font-display font-extrabold ${game.win ? 'text-[#5fb4ff]' : 'text-[#ff7a62]'}`}>
                 {game.win ? 'Victory' : 'Defeat'}
               </span>
               <span className="w-28 text-sm text-muted">{MODE[game.mode] ?? game.mode}</span>
@@ -58,9 +98,17 @@ export function Games() {
                   <Skull size={12} /> {game.blamedPremade.split('#')[0]}
                 </span>
               )}
-              <span className="ml-auto text-xs text-muted">{ago(game.createdAt)}</span>
+              <span className="ml-auto text-right text-xs text-muted">
+                {ago(game.createdAt)}
+                <span className="block text-[10px] opacity-70">{galaxyOf(cosmicSeed(game.cosmos)).name}</span>
+              </span>
             </Link>
           ))}
+          {filtered.length > shown && (
+            <button className="btn btn-ghost mx-auto mt-2 flex" onClick={() => setShown(shown + PAGE)}>
+              Show more ({filtered.length - shown})
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -264,7 +312,8 @@ export function GameDetail() {
           {summary.win ? 'Victory' : 'Defeat'}
         </h1>
         <span className="pb-1 text-sm text-muted">
-          {MODE[summary.mode] ?? summary.mode} · {duration(summary.duration)} · {new Date(summary.createdAt).toLocaleString()}
+          {MODE[summary.mode] ?? summary.mode} · {duration(summary.duration)} · {new Date(summary.createdAt).toLocaleString()} ·{' '}
+          {galaxyOf(cosmicSeed(summary.cosmos ?? summary.gameId)).name}
         </span>
         <Link to="/games" className="btn btn-ghost ml-auto">
           All games

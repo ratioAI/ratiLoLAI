@@ -40,7 +40,7 @@ export function Profile() {
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-8">
-      <PageHeader title="Player profile" subtitle="Rank, match history and champion stats – like op.gg, just without ads">
+      <PageHeader title="Player profile">
         <form onSubmit={search} className="flex gap-2">
           <input className="input w-64" placeholder="Name#TAG" value={riotId} onChange={(event) => setRiotId(event.target.value)} />
           <select className="input" value={platform} onChange={(event) => setPlatform(event.target.value as Platform)}>

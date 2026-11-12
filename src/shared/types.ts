@@ -340,6 +340,24 @@ export interface GameListEntry {
   championId: number
   kda: [number, number, number]
   blamedPremade: string | null
+  /** seed of the place in the universe where the game was played (see shared/universe.ts) */
+  cosmos: number
+}
+
+/** One row of the MVP / troll leaderboard: you or one of your premades, over all saved games. */
+export interface LeaderboardEntry {
+  puuid: string
+  riotId: string
+  me: boolean
+  /** their most played champion in those games */
+  championId: number
+  games: number
+  wins: number
+  /** games as the best player of your team */
+  mvps: number
+  /** games as the worst player of your team */
+  trolls: number
+  avgScore: number
 }
 
 export type AcceptDelay = 'instant' | 'human' | 'slow'
@@ -616,6 +634,7 @@ export interface RcApi {
   getMapTimers(): Promise<MinimapState | null>
   listGames(): Promise<GameListEntry[]>
   getGame(gameId: number): Promise<GameSummary | null>
+  getLeaderboard(): Promise<LeaderboardEntry[]>
   setOwnedAugments(ids: number[]): Promise<void>
   overlayTestScan(): Promise<ScanTestResult>
   openDiagnosticsFolder(): Promise<void>

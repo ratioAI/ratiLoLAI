@@ -52,6 +52,8 @@ export interface GameSummary {
   /** lowest impact of your whole team ("most to blame" in a loss, "biggest troll" in a win) */
   blame: string | null
   highlights: string[]
+  /** seed of the place in the universe where the game was played; missing in games saved before 1.0 */
+  cosmos?: number
 }
 
 // --- raw League client shapes (only the fields we use) ------------------------------

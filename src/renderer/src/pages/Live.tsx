@@ -40,12 +40,14 @@ export function Live() {
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-8">
-      <PageHeader
-        title="Live"
-        subtitle={
-          champSelect?.active ? 'Champion select in progress' : live?.active ? `In game · ${duration(live.gameTime)}` : 'No active game'
-        }
-      >
+      <PageHeader title="Live">
+        {/* the state of the client, as a badge instead of a description line */}
+        {(champSelect?.active || live?.active) && (
+          <span className="flex items-center gap-2 rounded-full border border-line bg-bg-2 px-3 py-1 text-xs font-semibold text-muted">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-win" />
+            {champSelect?.active ? 'Champion select' : `In game · ${duration(live!.gameTime)}`}
+          </span>
+        )}
         {me && (
           <button className="btn btn-ghost" onClick={scoutMe} disabled={busy}>
             {busy ? <Loader2 size={15} className="animate-spin" /> : <Eye size={15} />} Load ranks of current game

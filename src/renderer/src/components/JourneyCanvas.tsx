@@ -1,22 +1,34 @@
 import { useEffect, useRef } from 'react'
-import { SPACE_LIB, quadProgram } from './spaceGlsl'
+import { FLIGHT_S, JOURNEY_S, flightPlan, routeDust } from '@shared/journey'
+import { length, neighbourhoodStars, sub } from '@shared/universe'
+import { SPACE_LIB, VERT } from './spaceGlsl'
+import { UniverseGl, createProgram } from './universeGl'
 
 /** Duration of the flight from one planet to the next. */
-export const JOURNEY_MS = 12_000
+export const JOURNEY_MS = JOURNEY_S * 1000
 
 /*
- * The flight to the next game as one continuous camera move. Timeline in seconds (phases overlap):
+ * The flight to the next game: one continuous camera move through the universe catalogue
+ * (shared/universe.ts), from the planet of the last game to the planet of the next one.
  *
- *   0    to 2.4   take-off. The old planet's horizon drops away and its sky recedes.
- *   1.2  to 8.8   intergalactic space. Galaxies stream past on the sides, the target galaxy sits
- *                 straight ahead and grows from a speck until it fills the view.
- *   7.4  to 10    into the galaxy, aiming at a star in one of its arms. Stars rush past, the star
- *                 turns into a sun and its planets and orbits show up.
+ * Space itself is real 3D: every galaxy of the catalogue sits at its position, the camera follows
+ * the route of shared/journey.ts, and what passes by does so with true perspective and parallax.
+ * The two ends of the trip, where a planet fills the view, are painted over that by a second pass
+ * (PLANET_FRAG below), which also makes the flight start and end on exactly the picture
+ * CosmosBackground shows while you are standing on the planet.
+ *
+ * Timeline in seconds (phases overlap):
+ *
+ *   0    to 2.4   take-off. The old planet's horizon drops away, the stars of its galaxy appear.
+ *   2    to 4.5   up and out of the galaxy's disk, the galaxy shrinks behind and below.
+ *   4    to 8     intergalactic space at full speed, the target galaxy dead ahead and growing,
+ *                 other galaxies of the catalogue drifting past.
+ *   7.5  to 10    down over the target's disk and into one of its arms. Its stars rush past, the
+ *                 one we aim for turns into a sun and its planets and orbits show up.
  *   9    to 10.7  the camera turns towards one planet and closes in.
- *   10.7 to 12    landing. The planet becomes the horizon and its night sky fades in, ending on
- *                 the same view CosmosBackground shows afterwards.
+ *   10.7 to 12    landing. The planet becomes the horizon and its night sky fades in.
  */
-const FRAG = `${SPACE_LIB}
+const PLANET_FRAG = `${SPACE_LIB}
 uniform vec2 u_res;
 uniform float u_time;
 uniform float u_T;
@@ -24,72 +36,6 @@ uniform float u_from;
 uniform float u_to;
 
 float ease(float x){ x = clamp(x, 0.0, 1.0); return x * x * (3.0 - 2.0 * x); }
-
-// distance flown through intergalactic space (smoothstep: speed up, then brake)
-float camTravel(float T){
-  float x = clamp((T - 1.0) / 7.5, 0.0, 1.0);
-  return 26.0 * x * x * (3.0 - 2.0 * x);
-}
-float camSpeed(float T){
-  float x = clamp((T - 1.0) / 7.5, 0.0, 1.0);
-  return 26.0 * 6.0 * x * (1.0 - x) / 7.5;
-}
-
-// galaxies at random depths in front of the camera, kept off the centre and stretched at high speed
-vec3 galaxyField(vec2 p, float camZ, float speed, float t, float seed){
-  vec3 c = vec3(0.0);
-  for (int i = 0; i < 26; i++) {
-    float fi = float(i);
-    float ha = h11(seed + fi * 3.17);
-    vec2 off = vec2(cos(ha * 6.2832), sin(ha * 6.2832)) * mix(0.9, 2.2, h11(seed + fi * 5.71));   // stay away from the centre
-    float dz = mod(h11(seed + fi * 7.33) * 18.0 - camZ, 18.0) + 0.25;
-    vec2 cpos = off / dz;
-    float size = mix(0.1, 0.3, h11(seed + fi * 9.13)) / dz;
-    float smear = 1.0 + speed * 0.25 / dz;
-    if (length(p - cpos) > size * 3.0 * smear) continue;   // skip pixels far from this galaxy
-    float fade = smoothstep(18.0, 11.0, dz) * smoothstep(0.25, 0.8, dz);
-    vec2 rad = normalize(cpos + 1e-4);
-    vec2 tan2 = vec2(-rad.y, rad.x);
-    vec2 d = p - cpos;
-    vec2 q = rad * dot(d, rad) / smear + tan2 * dot(d, tan2);   // stretch along the direction of motion
-    float ang = h11(seed + fi * 11.0) * 6.28;
-    float tilt = mix(0.3, 1.0, h11(seed + fi * 13.0));
-    if (size > 0.09) {
-      vec2 g = rot(ang) * q;
-      g.y /= tilt;
-      c += galaxyShape(g / (size * 0.8), t, seed + fi) * fade;
-    } else {
-      c += farGalaxy(q + cpos, cpos, size, ang, tilt, seed + fi) * fade * 1.3;
-    }
-  }
-  return c;
-}
-
-// the point we fly towards: a star on one of the target galaxy's spiral arms
-vec2 aimPoint(float seed){
-  float twist = mix(2.4, 5.2, h11(seed + 27.0));
-  float r = 0.55;
-  float a = twist * log(r + 0.06);
-  return vec2(cos(a), sin(a)) * r;
-}
-
-vec3 targetGalaxy(vec2 p, float gs, float t, float seed){
-  vec2 q = rot(h11(seed + 31.0) * 6.28) * p;
-  q.y /= mix(0.45, 0.85, h11(seed + 32.0));
-  return galaxyShape(q / gs + aimPoint(seed), t, seed);
-}
-
-// three star layers zooming past, each one looping and fading in and out
-vec3 starRush(vec2 p, float T, float t){
-  vec3 c = vec3(0.0);
-  for (int i = 0; i < 3; i++) {
-    float fi = float(i);
-    float ph = T * 0.5 + fi / 3.0;
-    float s = fract(ph);
-    c += starLayer(p / exp2(s * 3.0) + fi * 7.1, 45.0, 0.84, t, 40.0 + fi + floor(ph) * 3.0) * sin(3.14159 * s) * 1.3;
-  }
-  return c;
-}
 
 vec3 sunGlow(vec2 d, float R){
   float r = length(d);
@@ -115,66 +61,49 @@ vec4 planetDisk(vec2 p, vec2 c, float R, vec2 sunDir, float seed, float night, o
   return vec4(col, cover);
 }
 
+// Layers are composited front to back into a premultiplied colour: "cover" paints over what is
+// below (and over the 3D scene), "glow" is added on top.
+vec3 g_col = vec3(0.0);
+float g_alpha = 0.0;
+void cover(vec3 c, float a){ g_col = g_col * (1.0 - a) + c * a; g_alpha = g_alpha * (1.0 - a) + a; }
+
 void main(){
   vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
   float T = u_T;
   float t = u_time;
-  vec3 col = vec3(0.0);
+  vec3 glow = vec3(0.0);
 
   // ---- take-off from the old planet
   float aHome = 1.0 - smoothstep(1.0, 2.4, T);
   if (aHome > 0.0) {
     g_seed = u_from;
     float e = ease(T / 2.2);
-    col += planetView(p * (1.0 + e * 1.6), t, u_from, e * 0.9) * aHome;
+    cover(planetView(p * (1.0 + e * 1.6), t, u_from, e * 0.9), aHome);
   }
 
-  // ---- target solar system, in screen space around its sun
+  // ---- target solar system, in screen space around its sun (the star the camera flies at)
   float S = 0.05 * exp(max(T - 8.2, 0.0) * 1.3);                    // grows as we approach
   float a2 = h11(u_to + 41.0) * 6.28;
-  float r2 = 1.6;
-  vec2 target = vec2(cos(a2), sin(a2) * 0.3) * r2 * S;               // target planet position relative to the sun
+  vec2 target = vec2(cos(a2), sin(a2) * 0.3) * 1.6 * S;              // target planet relative to the sun
   float pan = ease((T - 9.0) / 1.4);
-  vec2 focus = target * pan;                                         // camera pans over to the planet
-  vec2 pw = p + focus;
-
-  // ---- intergalactic space
-  float aField = smoothstep(1.2, 2.4, T) * (1.0 - smoothstep(7.6, 8.8, T));
-  if (aField > 0.0) {
-    g_seed = u_to + 77.0;
-    vec3 bg = starLayer(p * 0.6, 40.0, 0.975, t, 3.0) * 0.45;
-    col += (bg + galaxyField(p, camTravel(T), camSpeed(T), t, u_to + 5.0)) * aField;
-  }
-
-  // ---- target galaxy straight ahead, growing until we're inside it
-  float aGal = smoothstep(1.4, 3.0, T) * (1.0 - smoothstep(9.4, 10.4, T));
-  if (aGal > 0.0) {
-    g_seed = u_to;
-    float gs = 0.03 * exp(0.55 * (T - 1.0)) * exp(max(T - 8.0, 0.0));
-    col += targetGalaxy(pw, gs, t, u_to) * aGal;
-  }
-
-  // ---- inside the galaxy: star rush, the sun, its planets and orbits
-  float aIn = smoothstep(7.4, 8.4, T) * (1.0 - smoothstep(11.0, 11.8, T));
+  vec2 sunPos = -target * pan;                                       // camera pans over to the planet
   float L = ease((T - 10.7) / 1.3);                                  // landing progress
-  vec2 sunPos = -focus;
+  float aIn = smoothstep(7.4, 8.4, T) * (1.0 - smoothstep(11.0, 11.8, T));
   if (aIn > 0.0) {
-    g_seed = u_to + 3.0;
-    col += starRush(pw, T, t) * aIn * (1.0 - smoothstep(9.6, 10.6, T));
     float sr = min(0.003 * exp(max(T - 7.8, 0.0) * 1.5), 0.06);
-    col += sunGlow(p - sunPos, sr) * smoothstep(7.6, 8.4, T) * (1.0 - L);
-    float aSys = smoothstep(8.4, 9.2, T) * (1.0 - L);
+    glow += sunGlow(p - sunPos, sr) * smoothstep(7.6, 8.4, T) * (1.0 - L) * aIn;
+    float aSys = smoothstep(8.4, 9.2, T) * (1.0 - L) * aIn;
     for (int i = 0; i < 5; i++) {
       float fi = float(i);
       float ri = (0.55 + fi * 0.52) * S;
       vec2 d = p - sunPos;
       float orbit = abs(length(vec2(d.x, d.y / 0.3)) - ri);
-      col += neb(0.1 + fi * 0.2) * exp(-orbit / 0.0018) * 0.18 * aSys;
+      glow += neb(0.1 + fi * 0.2) * exp(-orbit / 0.0018) * 0.18 * aSys;
       if (i == 2) continue;                                          // the target planet is drawn separately below
       float ai = h11(u_to + 50.0 + fi) * 6.28;
       vec2 pp = sunPos + vec2(cos(ai), sin(ai) * 0.3) * ri;
       float pr = 0.004 + 0.002 * h11(u_to + 60.0 + fi);
-      col += neb(h11(u_to + 70.0 + fi)) * smoothstep(pr, pr * 0.6, length(p - pp)) * 1.4 * aSys;
+      glow += neb(h11(u_to + 70.0 + fi)) * smoothstep(pr, pr * 0.6, length(p - pp)) * 1.4 * aSys;
     }
   }
 
@@ -188,18 +117,29 @@ void main(){
     vec4 disk = planetDisk(p, pc, R, sunDir, u_to, L, rim);
     float a = smoothstep(8.4, 9.2, T);
     g_seed = u_to;
-    if (L > 0.0) col = mix(col, sky(p, t, u_to), L * (1.0 - disk.a)); // fade in its night sky above the horizon
-    col = mix(col, disk.rgb, disk.a * a) + rim * a;
+    if (L > 0.0) {                                                   // its night sky fades in above the horizon
+      float aSky = L * (1.0 - disk.a);
+      cover(sky(p, t, u_to), aSky);
+      glow *= 1.0 - aSky;
+    }
+    cover(disk.rgb, disk.a * a);
+    glow = glow * (1.0 - disk.a * a) + rim * a;
   }
 
   // ---- arrived: cross-fade to the regular view from the new planet
   float fin = smoothstep(11.3, 12.0, T);
   if (fin > 0.0) {
     g_seed = u_to;
-    col = mix(col, planetView(p, t, u_to, 0.0), fin);
+    cover(planetView(p, t, u_to, 0.0), fin);
+    glow *= 1.0 - fin;
   }
-  gl_FragColor = vec4(finish(col, p), 1.0);
+  vec3 covered = g_alpha > 0.0 ? finish(g_col / g_alpha, p) * g_alpha : vec3(0.0);
+  gl_FragColor = vec4(covered + finish(glow, p), g_alpha);
 }`
+
+const STARS_PER_GALAXY = 36_000
+const STARS_NEARBY = 4500
+const DUST_GRAINS = 2600
 
 /**
  * Plays the flight once, filling its parent. Renders every frame while running, then holds the
@@ -212,30 +152,68 @@ export function JourneyCanvas({ from, to, className = 'h-full w-full' }: { from:
     if (!canvas) return
     const gl = canvas.getContext('webgl', { antialias: false, alpha: false, powerPreference: 'high-performance' })
     if (!gl) return
-    const program = quadProgram(gl, FRAG)
-    if (!program) return
-    const uniform = (name: string) => gl.getUniformLocation(program, name)
-    const [uRes, uTime, uT, uFrom, uTo] = ['u_res', 'u_time', 'u_T', 'u_from', 'u_to'].map(uniform)
-    const SCALE = Math.min(1, (window.devicePixelRatio || 1) * 0.5)
+    const universe = UniverseGl.create(gl)
+    const planets = createProgram(gl, VERT, PLANET_FRAG)
+    if (!universe || !planets) return
+
+    const plan = flightPlan(from, to)
+    const starsFrom = universe.createStars(plan.from, STARS_PER_GALAXY)
+    const starsTo = plan.to.id === plan.from.id ? starsFrom : universe.createStars(plan.to, STARS_PER_GALAXY)
+    // the dense stellar neighbourhoods of the two planets
+    const nearFrom = universe.createStars(plan.from, neighbourhoodStars(from, STARS_NEARBY))
+    const nearTo = universe.createStars(plan.to, neighbourhoodStars(to, STARS_NEARBY))
+    const dust = routeDust(plan, DUST_GRAINS)
+    const dustBuffer = universe.createBuffer(dust.data)
+    const quad = universe.createBuffer(new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]))
+
+    // three quarters of the device resolution: single stars stay crisp, the planet passes stay cheap
+    const SCALE = Math.min(1, (window.devicePixelRatio || 1) * 0.75)
     const resize = () => {
       canvas.width = Math.max(64, Math.round(canvas.clientWidth * SCALE))
       canvas.height = Math.max(64, Math.round(canvas.clientHeight * SCALE))
-      gl.viewport(0, 0, canvas.width, canvas.height)
     }
     resize()
+    const smooth = (edge0: number, edge1: number, x: number) => {
+      const s = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
+      return s * s * (3 - 2 * s)
+    }
+    /** How visible a galaxy's single stars are: only from close up, from afar the disk does the job. */
+    const starAlpha = (galaxy: typeof plan.from, eye: [number, number, number]) =>
+      smooth(7 * galaxy.radius, 2.5 * galaxy.radius, length(sub(eye, galaxy.pos)))
+
     const start = performance.now()
     let rafId = 0
     const frame = (now: number) => {
       // dev helper: set window.__journeyT to freeze the flight at that second (for screenshots)
       const frozen = (window as { __journeyT?: number }).__journeyT
       const T = frozen ?? Math.min(JOURNEY_MS, now - start) / 1000
-      gl.uniform2f(uRes, canvas.width, canvas.height)
-      gl.uniform1f(uTime, now / 1000)
-      gl.uniform1f(uT, T)
-      gl.uniform1f(uFrom, from)
-      gl.uniform1f(uTo, to)
-      gl.drawArrays(gl.TRIANGLES, 0, 6)
-      if (T * 1000 < JOURNEY_MS) rafId = requestAnimationFrame(frame)
+      const time = now / 1000
+      const pose = plan.cameraAt(T)
+      universe.begin(pose)
+      // before 1 s the old planet still covers everything, after 11.9 s the new one does
+      if (T > 0.95 && T < 11.95) {
+        const pointScale = Math.max(1, canvas.height / 720)
+        universe.drawGalaxies(time)
+        universe.drawStars(starsFrom, starAlpha(plan.from, pose.eye), pointScale)
+        if (starsTo !== starsFrom) universe.drawStars(starsTo, starAlpha(plan.to, pose.eye), pointScale)
+        // only on the way out and on the way in, so a hop within one galaxy doesn't draw both at once
+        if (T < FLIGHT_S / 2) universe.drawStars(nearFrom, starAlpha(plan.from, pose.eye), pointScale)
+        else universe.drawStars(nearTo, starAlpha(plan.to, pose.eye), pointScale)
+        universe.drawStreaks(dustBuffer, DUST_GRAINS, plan.cameraAt(T - 0.03), dust.range, 0.55 * Math.pow(pose.speed, 1.5))
+      }
+      // planets on top
+      if (T < 2.4 || T > 7.4) {
+        gl.useProgram(planets.program)
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+        universe.bindQuad(planets, quad)
+        gl.uniform2f(planets.uniform('u_res'), canvas.width, canvas.height)
+        gl.uniform1f(planets.uniform('u_time'), time)
+        gl.uniform1f(planets.uniform('u_T'), T)
+        gl.uniform1f(planets.uniform('u_from'), from)
+        gl.uniform1f(planets.uniform('u_to'), to)
+        gl.drawArrays(gl.TRIANGLES, 0, 6)
+      }
+      if (T * 1000 < JOURNEY_MS || frozen !== undefined) rafId = requestAnimationFrame(frame)
     }
     rafId = requestAnimationFrame(frame)
     window.addEventListener('resize', resize)

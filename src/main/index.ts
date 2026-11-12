@@ -37,7 +37,7 @@ import { augmentTiersForChampion } from '@shared/mayhem'
 import { ProfileService } from './profile'
 import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
 import { RiotClient, regionalOf } from './riot/client'
-import { resultsFromSummaries, type GameResults, type RecordMode } from './records'
+import type { GameResults, RecordMode } from './records'
 import { SettingsStore } from './settings'
 
 // The app used to be called "Rift Companion". Move its data (settings, encrypted API key, crawled
@@ -406,7 +406,12 @@ const crawler = new Crawler(
 )
 
 // --- Post-game summaries ---
-const games = new GameStore(join(userData, 'games'))
+const games = new GameStore(join(userData, 'games.db'))
+// history from before 1.0 was one JSON file per game
+void games
+  .importLegacy(join(userData, 'games'))
+  .then((imported) => imported && diag.log(`imported ${imported} games from the old history into games.db`))
+  .catch((error) => diag.log(`importing the old game history failed: ${String(error)}`))
 /** Gold and kill lead sampled every 15 s from the live data, used as a fallback curve for the summary. */
 let liveCurve: CurvePoint[] = []
 let liveCurveAt = -1
@@ -503,7 +508,7 @@ const AUTO_CRAWL_EVERY_MS = 6 * 3600_000
 const lcu = new LcuManager({
   liveCurve: () => liveCurve,
   records: {
-    local: async (puuids, mode) => resultsFromSummaries(await games.all(), puuids, mode),
+    local: async (puuids, mode) => games.results(puuids, mode),
     riot: riotResults
   },
   log: (message) => diag.log(message),
@@ -534,7 +539,14 @@ const lcu = new LcuManager({
     },
     summary: (summary) => {
       diag.log(`game summary ready: ${summary.gameId} (${summary.win ? 'win' : 'loss'}, curve from ${summary.curveSource})`)
-      void games.save(summary).then(() => emit('gameSummary', summary))
+      // remember where in the universe this game was played (the galaxy we flew to when it was accepted)
+      const saved = { ...summary, cosmos: cosmosSeed }
+      try {
+        games.save(saved)
+      } catch (error) {
+        diag.log(`saving game ${summary.gameId} failed: ${String(error)}`)
+      }
+      emit('gameSummary', saved)
     }
   }
 })
@@ -663,6 +675,7 @@ function registerIpc(): void {
   handle('getMapTimers', () => minimapState)
   handle('listGames', () => games.list())
   handle('getGame', (id: number) => games.get(Number(id)))
+  handle('getLeaderboard', () => games.leaderboard())
   handle('setOwnedAugments', (ids: number[]) => setOwned(Array.isArray(ids) ? ids.filter((id) => Number.isInteger(id)) : []))
   handle('overlayScanNow', () => {
     diag.log('scan requested from the overlay')
@@ -849,6 +862,8 @@ void app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+app.on('will-quit', () => games.close())
 
 app.on('window-all-closed', () => {
   scanner.stop()

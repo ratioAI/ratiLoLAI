@@ -96,14 +96,7 @@ export function TierList() {
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-8">
-      <PageHeader
-        title="Tier list"
-        subtitle={
-          aram
-            ? `ARAM (Howling Abyss) · patch ${patch ?? '–'} · also the build source for ARAM: Mayhem`
-            : `Ranked Solo/Duo · Master+ · patch ${patch ?? '–'} · based on your crawled matches`
-        }
-      >
+      <PageHeader title="Tier list">
         <input className="input w-56" placeholder="Search champion …" value={query} onChange={(event) => setQuery(event.target.value)} />
       </PageHeader>
 

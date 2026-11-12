@@ -31,7 +31,7 @@ export function Mayhem() {
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-8">
-      <PageHeader title="ARAM: Mayhem" subtitle="Augment tiers per champion, most picked augments and your own Mayhem stats" />
+      <PageHeader title="ARAM: Mayhem" />
 
       <div className="panel mb-5 flex gap-3 border-gold/30 p-4 text-sm text-muted">
         <Info size={18} className="mt-0.5 shrink-0 text-gold" />

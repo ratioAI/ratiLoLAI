@@ -38,7 +38,7 @@ export function Champions() {
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-8">
-      <PageHeader title="Champions" subtitle={`${champions.length} champions · click for builds, runes & matchups`}>
+      <PageHeader title="Champions">
         <input
           autoFocus
           className="input w-64"
