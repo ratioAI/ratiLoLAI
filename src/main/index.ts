@@ -298,7 +298,7 @@ function updateOverlay(live: LiveGameState | null): void {
     }
     // small "augment ready" pill while the choice can be open (dead or at the start of the game)
     const schedule = scanner.schedule
-    hintOpen = overlaySettings.cardFrames && schedule.pending && (dead || live!.gameTime < WINDOWS.gameStart)
+    hintOpen = overlaySettings.cardFrames && schedule.pending && !schedule.opening && (dead || live!.gameTime < WINDOWS.gameStart)
   } else {
     if (inMayhem) diag.log('left the Mayhem game')
     inMayhem = false

@@ -201,7 +201,7 @@ export class AugmentScanner {
       const state = await this.look()
       void this.maybeSnapshot(state.visible)
       if (state.visible) this.knownMisses = 0
-      else if (this.schedule.pending && ++this.knownMisses === 6 && screen.getAllDisplays().length > 1) {
+      else if (this.schedule.pending && !this.schedule.opening && ++this.knownMisses === 6 && screen.getAllDisplays().length > 1) {
         this.log('no cards on the remembered screen – watching all screens')
         this.reschedule()
       }
@@ -306,7 +306,7 @@ export class AugmentScanner {
    * can be diagnosed from the log folder.
    */
   private async maybeSnapshot(visible: boolean): Promise<void> {
-    if (visible || !this.schedule.pending || !this.snapshotDir) {
+    if (visible || !this.schedule.pending || this.schedule.opening || !this.snapshotDir) {
       this.missStreak = 0
       return
     }

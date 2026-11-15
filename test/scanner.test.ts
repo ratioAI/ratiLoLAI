@@ -211,6 +211,29 @@ describe('AugmentSchedule', () => {
     expect(s.interval(later + 61_000)).not.toBeNull()
   })
 
+  it('treats the opening sequence as "no cards expected yet", but still looks', () => {
+    const s = new AugmentSchedule()
+    s.update(tick(3, false, 4), T) // sequence running
+    expect(s.opening).toBe(true)
+    expect(s.pending).toBe(true)
+    expect(s.interval(T)).toBe(1000) // still watching, in case the cards come early
+    s.update(tick(3, false, WINDOWS.intro + 1), T)
+    expect(s.opening).toBe(false) // by now a miss counts as a miss
+    // cards that show up during the sequence end it at once
+    const early = new AugmentSchedule()
+    early.update(tick(3, false, 6), T)
+    early.observe(true)
+    expect(early.opening).toBe(false)
+    // a later game time below the threshold can't bring it back once the first choice was handled
+    early.observe(false)
+    early.observe(false)
+    expect(early.opening).toBe(false)
+    // the opening window still covers a slow first pick
+    const slow = new AugmentSchedule()
+    slow.update(tick(3, false, 105), T)
+    expect(slow.interval(T)).not.toBeNull()
+  })
+
   it('keeps looking after the selection was closed without a pick (regression)', () => {
     const s = new AugmentSchedule()
     s.update(tick(1, false, 10), T)

@@ -230,15 +230,20 @@ export interface PlayerTick {
   itemsKey: string
 }
 
-/** How long we assume the player is probably in the fountain, in ms (gameStart is in game seconds). */
-export const WINDOWS = { respawn: 12_000, shopping: 15_000, manual: 20_000, gameStart: 100 }
+/**
+ * How long we assume the player is probably in the fountain, in ms. `intro` and `gameStart` are in
+ * game seconds: since the November 2026 update a game opens with a sequence, and the first augment
+ * choice only appears at about 0:10. `intro` leaves 2 s on top for the cards to fade in; `gameStart`
+ * is the end of the opening window (the old 100 s plus the 10 s the sequence takes).
+ */
+export const WINDOWS = { respawn: 12_000, shopping: 15_000, manual: 20_000, intro: 12, gameStart: 110 }
 
 /**
  * Decides when the screen is worth looking at. The augment choice only opens while dead or in the
  * fountain, so outside of those moments we don't take a screenshot at all.
  */
 export class AugmentSchedule {
-  // We look while dead, during the first 100 s (spawn and level-1 augment), for a while after
+  // We look while dead, during the first 110 s (opening sequence, spawn and first augment), for a while after
   // respawning, after an inventory change (shopping only works in the fountain), after the overlay
   // hotkey, and while the cards are on screen.
   //
@@ -276,6 +281,15 @@ export class AugmentSchedule {
   /** An augment level was reached whose cards haven't been seen yet. */
   get pending(): boolean {
     return this.level > 0 && this.earned > this.handled
+  }
+
+  /**
+   * The opening sequence is still running, so the first choice isn't expected on screen yet. We
+   * keep looking anyway (it costs a small preview and catches the cards whenever they do appear),
+   * but not finding them now means nothing: no hint, no fallback to other screens, no snapshot.
+   */
+  get opening(): boolean {
+    return !this.seen && this.handled === 0 && this.gameTime < WINDOWS.intro
   }
 
   /** True while the choice can actually be open (dead, fountain, cards on screen). */
