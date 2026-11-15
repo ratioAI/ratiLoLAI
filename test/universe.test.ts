@@ -92,7 +92,7 @@ describe('flight plan', () => {
         previous = pose
       }
     }
-  })
+  }, 30_000) // heavy: ~40 flights sampled every 20 ms; the Windows release runner needs >5 s
 
   it('keeps the target dead ahead from mid-flight on', () => {
     // a pair of places in two galaxies far apart
