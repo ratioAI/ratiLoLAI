@@ -47,7 +47,8 @@ export function Games() {
       <PageHeader title="Games">
         {!!list?.length && (
           <span className="mr-1 text-sm text-muted tabular-nums">
-            {list.length} games · <span className="text-[#5fb4ff]">{wins}W</span> <span className="text-[#ff7a62]">{list.length - wins}L</span>
+            {list.length} games · <span className="text-[#5fb4ff]">{wins}W</span>{' '}
+            <span className="text-[#ff7a62]">{list.length - wins}L</span>
           </span>
         )}
         <div className="flex rounded-xl border border-line bg-bg-2 p-1">
@@ -242,7 +243,7 @@ function VerdictCard({ kind, p, s }: { kind: 'mvp' | 'blame'; p: SummaryPlayer; 
         </div>
       </div>
       {/* Explanation popover, opens on hover or keyboard focus */}
-      <div className="pointer-events-none absolute top-full right-0 z-30 mt-2 w-[390px] translate-y-1 rounded-xl border border-white/15 bg-[#120b24]/97 p-3 text-xs opacity-0 shadow-2xl backdrop-blur transition duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus:translate-y-0 group-focus:opacity-100">
+      <div className="pointer-events-none absolute top-full right-0 z-30 mt-2 w-[390px] translate-y-1 rounded-xl border border-white/20 bg-[#120b24] p-3 text-xs opacity-0 shadow-[0_18px_50px_-10px_rgb(0_0_0/0.85)] transition duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus:translate-y-0 group-focus:opacity-100">
         <div className="mb-2 font-semibold text-text">
           {mvp ? 'Why MVP' : s.win ? 'Why biggest troll' : 'Why most to blame'} – compared with an even share of your team of{' '}
           {s.players.filter((player) => player.ally).length}
@@ -326,7 +327,8 @@ export function GameDetail() {
           <WinCurve curve={summary.curve} kills={summary.kills} duration={summary.duration} height={150} />
           {summary.curveSource === 'live' && <p className="mt-1 text-[11px] text-muted">Estimated from item values during the game.</p>}
         </div>
-        <div className="flex flex-col gap-3">
+        {/* z-index: the staggered player rows below are their own layers, the popovers must open above them */}
+        <div className="relative z-20 flex flex-col gap-3">
           {mvp && <VerdictCard kind="mvp" p={mvp} s={summary} />}
           {blame && <VerdictCard kind="blame" p={blame} s={summary} />}
         </div>

@@ -1,20 +1,51 @@
 import { describe, expect, it } from 'vitest'
-import { quips, ratioApproved } from '../src/shared/quips'
+import { MAX_QUIP, quips, ratioApproved } from '../src/shared/quips'
 import type { GameSummary, SummaryPlayer } from '../src/shared/summary'
 
 const pl = (id: string, ally: boolean, k: number, d: number, a: number, dmg: number, score: number): SummaryPlayer => ({
-  puuid: id, riotId: `${id}#EUW`, championId: 1, ally, me: id === 'a1', premade: false, kills: k, deaths: d, assists: a,
-  damage: dmg, tanked: 30000, support: 1000, gold: 0, level: 18, items: [], augments: [], score
+  puuid: id,
+  riotId: `${id}#EUW`,
+  championId: 1,
+  ally,
+  me: id === 'a1',
+  premade: false,
+  kills: k,
+  deaths: d,
+  assists: a,
+  damage: dmg,
+  tanked: 30000,
+  support: 1000,
+  gold: 0,
+  level: 18,
+  items: [],
+  augments: [],
+  score
 })
 
 const game = (win: boolean): GameSummary => ({
-  gameId: 42, createdAt: 0, duration: 1800, queueId: 2400, mode: 'KIWI', win, curve: [], curveSource: 'none', kills: [], highlights: [],
-  mvp: 'a5', blame: 'a3',
+  gameId: 42,
+  createdAt: 0,
+  duration: 1800,
+  queueId: 2400,
+  mode: 'KIWI',
+  win,
+  curve: [],
+  curveSource: 'none',
+  kills: [],
+  highlights: [],
+  mvp: 'a5',
+  blame: 'a3',
   players: [
-    pl('a1', true, 27, 19, 48, 57000, 47), pl('a2', true, 23, 30, 45, 72000, 44), pl('a3', true, 16, 30, 47, 41000, 40),
-    pl('a4', true, 21, 27, 55, 64000, 45), pl('a5', true, 48, 18, 59, 184000, 70),
-    pl('e1', false, 10, 24, 42, 164000, 47), pl('e2', false, 39, 32, 32, 219000, 52), pl('e3', false, 2, 17, 35, 74000, 42),
-    pl('e4', false, 41, 32, 31, 149000, 48), pl('e5', false, 32, 31, 19, 155000, 45)
+    pl('a1', true, 27, 19, 48, 57000, 47),
+    pl('a2', true, 23, 30, 45, 72000, 44),
+    pl('a3', true, 16, 30, 47, 41000, 40),
+    pl('a4', true, 21, 27, 55, 64000, 45),
+    pl('a5', true, 48, 18, 59, 184000, 70),
+    pl('e1', false, 10, 24, 42, 164000, 47),
+    pl('e2', false, 39, 32, 32, 219000, 52),
+    pl('e3', false, 2, 17, 35, 74000, 42),
+    pl('e4', false, 41, 32, 31, 149000, 48),
+    pl('e5', false, 32, 31, 19, 155000, 45)
   ]
 })
 
@@ -53,5 +84,43 @@ describe('player quips – traits', () => {
     expect(ratioApproved(['S', undefined])).toBe(false)
     const q = quips(g, { a4: ['D', 'B', 'A'] })
     expect(q.a4).toMatch(/Augment/)
+  })
+})
+
+describe('player quips – variety and length', () => {
+  // a small deterministic PRNG so the random games are the same on every run
+  let seed = 7
+  const rnd = (max: number) => {
+    seed = (Math.imul(seed, 1103515245) + 12345) >>> 0
+    return seed % max
+  }
+  const tiers = ['S+', 'S', 'A', 'B', 'C', 'D'] as const
+  const randomGame = (id: number): GameSummary => {
+    const g = game(rnd(2) === 0)
+    g.gameId = id
+    g.players = g.players.map((player) => ({
+      ...pl(player.puuid, player.ally, rnd(50), rnd(32), rnd(60), 5000 + rnd(220000), 20 + rnd(60)),
+      puuid: `${player.puuid}-${id}`,
+      tanked: rnd(150000),
+      support: rnd(40000)
+    }))
+    return g
+  }
+
+  it('keeps every line short and never repeats a line within one game', () => {
+    const seen = new Set<string>()
+    for (let id = 0; id < 400; id++) {
+      const g = randomGame(id)
+      const augTiers = Object.fromEntries(g.players.map((player) => [player.puuid, [0, 1, 2].map(() => tiers[rnd(6)])]))
+      const lines = Object.values(quips(g, augTiers))
+      expect(new Set(lines).size).toBe(lines.length)
+      for (const line of lines) {
+        expect(line.length, line).toBeLessThanOrEqual(MAX_QUIP)
+        expect(line).not.toMatch(/undefined|NaN/)
+        seen.add(line)
+      }
+    }
+    // plenty of different lines across many games
+    expect(seen.size).toBeGreaterThan(150)
   })
 })
