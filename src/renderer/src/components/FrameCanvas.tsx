@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Tier } from '@shared/types'
+import { freshCanvas } from '@/lib/glCanvas'
 
 export interface FrameSpec {
   rect: { x: number; y: number; width: number; height: number }
@@ -96,17 +97,18 @@ const FPS = { smooth: 30, low: 15, off: 0 } as const
  * rate. Everything else in the overlay is static, so the window only repaints when this canvas does.
  */
 export function FrameCanvas({ frames, animation }: { frames: FrameSpec[]; animation: keyof typeof FPS }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const hostRef = useRef<HTMLDivElement>(null)
   const framesRef = useRef(frames)
   framesRef.current = frames
   // with animation off we only draw once, so a change in the cards has to restart the effect
   const staticKey = animation === 'off' ? JSON.stringify(frames) : ''
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const host = hostRef.current
+    if (!host) return
+    const canvas = freshCanvas(host)
     const gl = canvas.getContext('webgl', { premultipliedAlpha: true, antialias: false, alpha: true, powerPreference: 'low-power' })
-    if (!gl) return
+    if (!gl) return () => canvas.remove()
     const compile = (type: number, source: string): WebGLShader => {
       const shader = gl.createShader(type)!
       gl.shaderSource(shader, source)
@@ -117,7 +119,7 @@ export function FrameCanvas({ frames, animation }: { frames: FrameSpec[]; animat
     gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT))
     gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG))
     gl.linkProgram(program)
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return () => canvas.remove()
     gl.useProgram(program)
     // two triangles covering the whole viewport
     const quadBuffer = gl.createBuffer()
@@ -187,8 +189,10 @@ export function FrameCanvas({ frames, animation }: { frames: FrameSpec[]; animat
       cancelAnimationFrame(rafId)
       window.removeEventListener('resize', resize)
       gl.getExtension('WEBGL_lose_context')?.loseContext()
+      canvas.remove()
     }
   }, [animation, staticKey])
 
-  return <canvas key={`${animation}:${staticKey}`} ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+  // the effect puts a new canvas in here every time it runs (see freshCanvas)
+  return <div ref={hostRef} className="pointer-events-none absolute inset-0 h-full w-full" />
 }

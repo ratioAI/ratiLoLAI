@@ -1,7 +1,7 @@
 import { BrowserWindow, globalShortcut, ipcMain, screen, type Rectangle } from 'electron'
 import type { AugmentOffer, RcEvents } from '@shared/types'
 
-type Part = 'panel' | 'frames' | 'minimap' | 'loading'
+type Part = 'frames' | 'minimap' | 'loading'
 
 /** false means the overlays also show up in screen shares and recordings (Discord, OBS) */
 let hideFromCapture = true
@@ -103,12 +103,10 @@ class OverlayWindow {
 
 /** Margin (DIP) around the minimap inside the minimap window, for labels that stick out. */
 export const MINIMAP_MARGIN = 36
-const PANEL_WIDTH = 350
 /** Space around the cards for the crest above them and the glow. */
 const FRAME_PAD = { top: 100, side: 60, bottom: 52 }
 
 export class OverlayManager {
-  readonly panel: OverlayWindow
   readonly frames: OverlayWindow
   readonly minimap: OverlayWindow
   readonly loading: OverlayWindow
@@ -122,7 +120,6 @@ export class OverlayManager {
     load: (win: BrowserWindow, hash: string) => void,
     private readonly onToggle: () => void
   ) {
-    this.panel = new OverlayWindow('panel', preload, load, '/overlay/panel')
     this.frames = new OverlayWindow('frames', preload, load, '/overlay/frames')
     this.minimap = new OverlayWindow('minimap', preload, load, `/overlay/minimap?m=${MINIMAP_MARGIN}`)
     this.loading = new OverlayWindow('loading', preload, load, '/overlay/loading')
@@ -139,33 +136,15 @@ export class OverlayManager {
   /** Moves the overlay onto the monitor the game runs on. */
   moveToDisplay(id: number): void {
     this.displayId = id
-    if (this.panel.visible) this.showPanel()
   }
 
   get currentDisplayId(): number {
     return this.display().id
   }
 
-  /** Creates the hidden windows early so they show up instantly later. */
+  /** Creates the hidden frames window early so it shows up instantly later. */
   prepare(): void {
-    this.panel.ensure(this.panelBounds())
     this.frames.ensure()
-  }
-
-  private panelBounds(): Rectangle {
-    const { bounds } = this.display()
-    const height = Math.round(bounds.height * 0.78)
-    return { x: bounds.x + bounds.width - PANEL_WIDTH - 6, y: bounds.y + Math.round(bounds.height * 0.12), width: PANEL_WIDTH, height }
-  }
-
-  showPanel(): void {
-    this.panel.setBounds(this.panelBounds())
-    this.panel.show()
-  }
-
-  hidePanel(): void {
-    if (this.previewTimer) return // keep a running preview visible
-    this.panel.hide()
   }
 
   /** Frames around the offered cards. The window only covers the cards plus crest and glow. */
@@ -221,7 +200,7 @@ export class OverlayManager {
   showLoading(displayId: number | null): void {
     const { bounds } = this.display(displayId)
     const width = Math.min(1040, bounds.width - 40)
-    const height = 330
+    const height = 340
     this.loading.setBounds({ x: Math.round(bounds.x + (bounds.width - width) / 2), y: bounds.y + 18, width, height })
     this.loading.show()
   }
@@ -250,25 +229,29 @@ export class OverlayManager {
     this.minimap.hide()
   }
 
-  /** Shows the panel and frames for a while without a running game, to check how they look. */
-  preview(offer: AugmentOffer | null, onReady: () => void, durationMs = 20_000): void {
+  /** Shows the card frames for a while without a running game, to check how they look. */
+  preview(offer: AugmentOffer, durationMs = 20_000): void {
     if (this.previewTimer) clearTimeout(this.previewTimer)
     this.previewTimer = null
-    this.showPanel()
-    onReady()
-    if (offer) this.showFrames(offer)
+    this.showFrames(offer)
     this.previewTimer = setTimeout(() => {
       this.previewTimer = null
-      this.panel.hide()
       this.hideFrames()
     }, durationMs)
+  }
+
+  /** Ends a running preview right away. */
+  endPreview(): void {
+    if (this.previewTimer) clearTimeout(this.previewTimer)
+    this.previewTimer = null
+    this.hideFrames()
   }
 
   /** Shows the overlays in screen shares and recordings (Discord, OBS) or keeps them out. */
   setVisibleInCapture(visible: boolean): void {
     if (hideFromCapture === !visible) return
     hideFromCapture = !visible
-    for (const overlay of [this.panel, this.frames, this.minimap, this.loading]) overlay.applyCapture()
+    for (const overlay of [this.frames, this.minimap, this.loading]) overlay.applyCapture()
   }
 
   setHotkey(accelerator: string): void {
@@ -284,16 +267,15 @@ export class OverlayManager {
 
   /** Sends an app-wide event to every overlay window that exists. */
   broadcast<K extends keyof RcEvents>(event: K, payload: RcEvents[K]): void {
-    for (const overlay of [this.panel, this.frames, this.minimap, this.loading]) overlay.sendIfOpen(event, payload)
+    for (const overlay of [this.frames, this.minimap, this.loading]) overlay.sendIfOpen(event, payload)
   }
 
   get anyVisible(): boolean {
-    return this.panel.visible || this.frames.visible || this.minimap.visible || this.loading.visible
+    return this.frames.visible || this.minimap.visible || this.loading.visible
   }
 
   destroy(): void {
     globalShortcut.unregisterAll()
-    this.panel.destroy()
     this.frames.destroy()
     this.minimap.destroy()
     this.loading.destroy()

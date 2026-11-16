@@ -17,6 +17,8 @@ import {
 import { buildSummary, teamBlame, type GameSummary } from '@shared/summary'
 import { leaderboardFromSummaries } from '@shared/leaderboard'
 import type {
+  AdminApi,
+  AdminMinimapSnapshot,
   ChampionRoleStats,
   ChampSelectState,
   ClientStatus,
@@ -396,6 +398,48 @@ function demoProfile(data: StaticData, riotId: string): ProfileData {
   }
 }
 
+/** Made-up ARAM: Mayhem champion select (demo, admin tool). */
+export function demoChampSelect(data: StaticData): ChampSelectState {
+  const byName = (id: string): number => Object.values(data.champions).find((champ) => champ.id === id)?.key ?? 1
+  const ally = (cellId: number, champ: string, role: Role, isLocal = false) => ({
+    cellId,
+    championId: byName(champ),
+    role,
+    isLocal,
+    team: 'ally' as const,
+    spell1Id: 4,
+    spell2Id: 14
+  })
+  const enemy = (cellId: number, champ: string) => ({
+    cellId,
+    championId: byName(champ),
+    role: null,
+    isLocal: false,
+    team: 'enemy' as const,
+    spell1Id: 0,
+    spell2Id: 0
+  })
+  // Mayhem has no assigned positions
+  const noRole = (seat: ReturnType<typeof ally>) => ({ ...seat, role: null })
+  return {
+    active: true,
+    queueId: 2400,
+    mode: 'mayhem',
+    myChampionId: byName('Lux'),
+    myRole: null,
+    locked: false,
+    allies: [
+      ally(0, 'Garen', 'TOP'),
+      ally(1, 'LeeSin', 'JUNGLE'),
+      ally(2, 'Lux', 'MIDDLE', true),
+      ally(3, 'Jinx', 'BOTTOM'),
+      ally(4, 'Thresh', 'UTILITY')
+    ].map(noRole),
+    enemies: [enemy(5, 'Darius'), enemy(6, 'Vi'), enemy(7, 'Syndra'), enemy(8, 'Kaisa'), enemy(9, 'Nautilus')],
+    bans: []
+  }
+}
+
 export function createMockApi(): RcApi {
   const listeners = new Map<string, Set<(payload: unknown) => void>>()
   const emit = <K extends keyof RcEvents>(event: K, payload: RcEvents[K]): void =>
@@ -449,7 +493,6 @@ export function createMockApi(): RcApi {
     overlay: {
       enabled: true,
       hotkey: 'Alt+Shift+A',
-      autoExpand: true,
       cardFrames: true,
       animation: 'smooth',
       loadingScreen: true,
@@ -484,47 +527,7 @@ export function createMockApi(): RcApi {
     summoner: { gameName: 'Demo Summoner', tagLine: 'EUW', puuid: 'demo', summonerLevel: 312, profileIconId: 5367, platform: 'euw1' }
   }
 
-  const champSelect = async (): Promise<ChampSelectState> => {
-    const data = await getStatic()
-    const byName = (id: string): number => Object.values(data.champions).find((champ) => champ.id === id)?.key ?? 1
-    const ally = (cellId: number, champ: string, role: Role, isLocal = false) => ({
-      cellId,
-      championId: byName(champ),
-      role,
-      isLocal,
-      team: 'ally' as const,
-      spell1Id: 4,
-      spell2Id: 14
-    })
-    const enemy = (cellId: number, champ: string) => ({
-      cellId,
-      championId: byName(champ),
-      role: null,
-      isLocal: false,
-      team: 'enemy' as const,
-      spell1Id: 0,
-      spell2Id: 0
-    })
-    // Mayhem has no assigned positions
-    const noRole = (seat: ReturnType<typeof ally>) => ({ ...seat, role: null })
-    return {
-      active: true,
-      queueId: 2400,
-      mode: 'mayhem',
-      myChampionId: byName('Lux'),
-      myRole: null,
-      locked: false,
-      allies: [
-        ally(0, 'Garen', 'TOP'),
-        ally(1, 'LeeSin', 'JUNGLE'),
-        ally(2, 'Lux', 'MIDDLE', true),
-        ally(3, 'Jinx', 'BOTTOM'),
-        ally(4, 'Thresh', 'UTILITY')
-      ].map(noRole),
-      enemies: [enemy(5, 'Darius'), enemy(6, 'Vi'), enemy(7, 'Syndra'), enemy(8, 'Kaisa'), enemy(9, 'Nautilus')],
-      bans: []
-    }
-  }
+  const champSelect = async (): Promise<ChampSelectState> => demoChampSelect(await getStatic())
 
   // '#/games?demo-journey' plays the flight to the next galaxy (screenshots)
   if (window.location.hash.includes('demo-journey')) setTimeout(() => emit('journey', { seed: 1_790_000_123_456 }), 300)
@@ -785,6 +788,8 @@ export function createMockApi(): RcApi {
       }
     },
     openExternal: async (url) => void window.open(url, '_blank'),
+    logDiag: (message) => console.info('[diag]', message),
+    admin: import.meta.env.DEV ? mockAdmin(emit) : undefined,
     on(event, callback) {
       const set = listeners.get(event) ?? new Set()
       set.add(callback as (payload: unknown) => void)
@@ -803,7 +808,7 @@ function demoHistory(): GameSummary[] {
 }
 
 /** Made-up ARAM: Mayhem game for the post-game summary demo. Game 0 is a big early lead that gets thrown. */
-function demoSummary(index = 0): GameSummary {
+export function demoSummary(index = 0): GameSummary {
   const rand = rng(977 + index * 13)
   const won = index > 0 && rand() < 0.55
   // [name, championId, is me, premade with me]
@@ -913,4 +918,64 @@ function demoSummary(index = 0): GameSummary {
   }
   const premades = new Set(names.flatMap(([, , , premade], i) => (premade ? [`p${i}`] : [])))
   return { ...buildSummary(game, timeline, 'p0', premades), cosmos: 1_790_000_000_000 - index * 7_654_321 }
+}
+
+/**
+ * The admin tool on the web demo's dev server: flights and app events work, everything that needs
+ * the desktop (overlay windows, screen capture, the game database) doesn't. The minimap snapshot is
+ * a picture served next to the page (admin-fixture.png), for working on the calibration view.
+ */
+function mockAdmin(emit: <K extends keyof RcEvents>(event: K, payload: RcEvents[K]) => void): AdminApi {
+  const desktopOnly = async (): Promise<never> => {
+    throw new Error('Only in the desktop app (npm run dev).')
+  }
+  const snapshot = async (): Promise<AdminMinimapSnapshot> => {
+    const base: AdminMinimapSnapshot = {
+      map: 12,
+      mapName: null,
+      inGame: false,
+      display: { id: 1, width: 1920, height: 1080, scaleFactor: 1 },
+      rect: { x: 0.8392, y: 0.7222, w: 0.1484, h: 0.2639 },
+      image: null,
+      pads: [
+        { id: 'order-inner', team: 'ORDER', kind: 'inner', pos: { x: 0.37, y: 0.692 }, seen: 'present' },
+        { id: 'order-outer', team: 'ORDER', kind: 'outer', pos: { x: 0.462, y: 0.594 }, seen: 'absent' },
+        { id: 'chaos-outer', team: 'CHAOS', kind: 'outer', pos: { x: 0.589, y: 0.472 }, seen: 'unclear' },
+        { id: 'chaos-inner', team: 'CHAOS', kind: 'inner', pos: { x: 0.686, y: 0.386 }, seen: 'present' }
+      ],
+      source: 'built-in',
+      patch: 0.065
+    }
+    try {
+      const bitmap = await createImageBitmap(await (await fetch('admin-fixture.png')).blob())
+      const canvas = document.createElement('canvas')
+      canvas.width = bitmap.width
+      canvas.height = bitmap.height
+      const context = canvas.getContext('2d')!
+      context.drawImage(bitmap, 0, 0)
+      const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height)
+      return { ...base, image: { width: pixels.width, height: pixels.height, data: new Uint8Array(pixels.data.buffer) } }
+    } catch {
+      return { ...base, error: 'Only in the desktop app (npm run dev).' }
+    }
+  }
+  return {
+    acceptMatch: async () => emit('journey', { seed: Date.now() }),
+    emit: async (event, payload) => emit(event, payload),
+    simStart: desktopOnly,
+    simAction: async () => null,
+    simState: async () => null,
+    simStop: async () => undefined,
+    showMinimapDemo: desktopOnly,
+    showFrames: desktopOnly,
+    showLoading: desktopOnly,
+    hideOverlays: async () => undefined,
+    saveTestGame: desktopOnly,
+    deleteTestGames: async () => 0,
+    log: async () => ['12:00:00.000 admin: web demo – the log is only kept by the desktop app'],
+    minimapSnapshot: snapshot,
+    classifyPads: async (pads) => pads.map(() => null),
+    measuredPads: async () => ({}),
+    savePads: async () => ({})
+  }
 }

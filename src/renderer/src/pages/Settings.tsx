@@ -147,11 +147,6 @@ export function Settings() {
           onChange={(value) => save({ overlay: { ...settings.overlay, loadingScreen: value } })}
         />
         <Toggle
-          label="Also show the tier list panel next to the cards"
-          value={settings.overlay.autoExpand}
-          onChange={(value) => save({ overlay: { ...settings.overlay, autoExpand: value } })}
-        />
-        <Toggle
           label="Frame the offered augment cards directly in the game (screen recognition)"
           value={settings.overlay.cardFrames}
           onChange={(value) => save({ overlay: { ...settings.overlay, cardFrames: value } })}

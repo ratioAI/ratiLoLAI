@@ -15,7 +15,21 @@ import {
   placeOf,
   sub
 } from '../src/shared/universe'
-import { FLIGHT_S, FLIGHT_VARIANTS, JOURNEY_S, flightPlan, pickVariant, type FlightVariant } from '../src/shared/journey'
+import {
+  FLIGHT_S,
+  FLIGHT_VARIANTS,
+  JOURNEY_S,
+  PLANET_OFFSET,
+  PLANET_RADIUS,
+  captionAt,
+  cinemaAt,
+  destPlanetAt,
+  flightPlan,
+  homePlanetAt,
+  pickVariant,
+  sunGlowAt,
+  type FlightVariant
+} from '../src/shared/journey'
 
 describe('universe catalogue', () => {
   it('is a fixed map: same galaxies every time, unique names, no overlaps', () => {
@@ -126,11 +140,14 @@ describe('flight plan', () => {
   ]
 
   for (const variant of FLIGHT_VARIANTS) {
-    it(`${variant}: starts at the old place, ends at the new one and never jumps`, () => {
+    it(`${variant}: starts at the old planet, ends at the new one beside its sun, and never jumps`, () => {
       for (const [from, to] of pairs) {
         const plan = flightPlan(from, to, variant)
         expect(length(sub(plan.cameraAt(0).eye, placeOf(from).pos))).toBeLessThan(1e-9)
-        expect(length(sub(plan.cameraAt(FLIGHT_S).eye, placeOf(to).pos))).toBeLessThan(1e-9)
+        expect(plan.home).toEqual(placeOf(from).pos)
+        expect(plan.sun).toEqual(placeOf(to).pos)
+        expect(length(sub(plan.cameraAt(FLIGHT_S).eye, plan.planet))).toBeLessThan(1e-9)
+        expect(length(sub(plan.planet, plan.sun))).toBeGreaterThan(0)
         expect(plan.cameraAt(JOURNEY_S).eye).toEqual(plan.cameraAt(FLIGHT_S).eye)
         // the only jump allowed: out of the far mouth of the wormhole
         const [jumpFrom, jumpTo] = plan.wormhole?.transit ?? [-1, -1]
@@ -145,21 +162,28 @@ describe('flight plan', () => {
             expect(dot(pose.forward, previous.forward)).toBeGreaterThan(0.99)
             expect(dot(pose.up, previous.up)).toBeGreaterThan(0.99)
           }
-          // inside the throat the camera holds still (the tunnel is painted around it)
+          // inside the throat the camera holds still (the passage is painted around it)
           if (t - 0.02 > jumpFrom && t < jumpTo) expect(length(sub(pose.eye, previous.eye))).toBeLessThan(1e-9)
           previous = pose
         }
       }
     }, 60_000) // heavy: ~27 flights sampled every 20 ms; the Windows release runner needs >5 s
 
-    it(`${variant}: keeps the target dead ahead for the last seconds`, () => {
+    it(`${variant}: looks back at the home planet first, and has the target planet dead ahead at the end`, () => {
       for (const [from, to] of pairs.slice(0, 12)) {
         const plan = flightPlan(from, to, variant)
-        const target = plan.cameraAt(FLIGHT_S).eye
-        for (const t of [12.8, 13.4, 14]) {
+        for (const t of [1, 2, 3]) {
           const pose = plan.cameraAt(t)
-          const toTarget = sub(target, pose.eye)
-          expect(dot(pose.forward, toTarget) / length(toTarget)).toBeGreaterThan(0.9)
+          const toHome = sub(plan.home, pose.eye)
+          expect(dot(pose.forward, toHome) / length(toHome)).toBeGreaterThan(0.999)
+        }
+        for (const t of [18, 19, 20, 21]) {
+          const pose = plan.cameraAt(t)
+          const toPlanet = sub(plan.planet, pose.eye)
+          expect(dot(pose.forward, toPlanet) / length(toPlanet)).toBeGreaterThan(0.999)
+          // and its sun is in the picture beside it, not behind us
+          const toSun = sub(plan.sun, pose.eye)
+          expect(dot(pose.forward, toSun) / length(toSun)).toBeGreaterThan(0.9)
         }
       }
     })
@@ -171,18 +195,23 @@ describe('flight plan', () => {
     const [enter, exit] = wormhole.transit
     expect(length(sub(plan.cameraAt(enter).eye, wormhole.entry)) / wormhole.entryRadius).toBeLessThan(1.2)
     expect(length(sub(plan.cameraAt(exit).eye, wormhole.exit)) / wormhole.exitRadius).toBeLessThan(1.2)
+    // the far side is painted from exactly where we come out
+    expect(plan.cameraAt(exit).eye).toEqual(wormhole.exitEye)
+    expect(dot(plan.cameraAt(exit).forward, wormhole.exitForward)).toBeGreaterThan(1 - 1e-9)
     // the turn is a rotation: it maps the view into the mouth onto the view out of the other one
     const R = wormhole.turn
     const apply = (v: number[]) => [0, 1, 2].map((i) => R[i] * v[0] + R[3 + i] * v[1] + R[6 + i] * v[2]) as [number, number, number]
-    const into = plan.cameraAt(enter + 0.1).forward
-    const out = plan.cameraAt(exit).forward
-    expect(dot(apply(into), out)).toBeGreaterThan(0.9999)
+    const into = plan.cameraAt(enter + 0.1)
+    const out = plan.cameraAt(exit)
+    expect(dot(apply(into.forward), out.forward)).toBeGreaterThan(0.9999)
+    // ... including the roll, so the first frame outside continues the last one inside
+    expect(dot(apply(plan.cameraAt(exit - 1e-6).up), out.up)).toBeGreaterThan(0.9999)
     expect(Math.abs(length(apply([0.3, -0.5, 0.8])) - Math.hypot(0.3, 0.5, 0.8))).toBeLessThan(1e-9)
   })
 
-  it('swings by the black hole just above its disk, never through it', () => {
+  it('swings by the black hole just above its disk, never through it and never into it', () => {
     for (const [from, to] of pairs) {
-      const plan = flightPlan(from, to, 'blackhole')
+      const plan = flightPlan(from, to, 'slingshot')
       const hole = plan.blackHole!
       let closest = Infinity
       for (let t = 0; t <= JOURNEY_S; t += 0.01) {
@@ -197,9 +226,56 @@ describe('flight plan', () => {
     }
   })
 
+  it('takes off from the plain night sky and lands on it', () => {
+    expect(homePlanetAt(0)).toMatchObject({ ground: true, pitch: 0, drop: 0 })
+    expect(destPlanetAt(JOURNEY_S)).toMatchObject({ ground: true, pitch: 0, drop: 0 })
+    expect(cinemaAt(0)).toBe(0)
+    expect(cinemaAt(JOURNEY_S)).toBe(0)
+    expect(captionAt(0)).toBe(0)
+    expect(captionAt(JOURNEY_S)).toBe(0)
+    expect(sunGlowAt(10)).toBe(0)
+  })
+
+  it('never runs backwards: we only ever leave the old planet and only ever come closer to the new one', () => {
+    let home = homePlanetAt(0)
+    let dest = destPlanetAt(0)
+    for (let t = 0.01; t <= JOURNEY_S; t += 0.01) {
+      const [h, d] = [homePlanetAt(t), destPlanetAt(t)]
+      // taking off: tipping down, rising, then the globe shrinking, without a jump
+      expect(h.pitch).toBeGreaterThanOrEqual(home.pitch)
+      expect(h.drop).toBeGreaterThanOrEqual(home.drop)
+      expect(h.pitch - home.pitch).toBeLessThan(0.05)
+      if (home.radius > 0) expect(h.radius).toBeLessThan(home.radius + 1e-12)
+      if (h.radius > 0 && home.radius > 0) expect(h.radius / home.radius).toBeGreaterThan(0.97)
+      expect(h.pinned).toBeLessThanOrEqual(home.pinned)
+      // once the painted sky is gone it does not come back (and the other way round when landing)
+      if (!home.ground) expect(h.ground).toBe(false)
+      if (dest.ground) expect(d.ground).toBe(true)
+      // landing: the globe growing, then tipping up and sinking, without a jump
+      expect(d.radius).toBeGreaterThanOrEqual(dest.radius)
+      if (d.radius > 0 && dest.radius > 0) expect(d.radius / dest.radius).toBeLessThan(1.03)
+      expect(d.pitch).toBeLessThanOrEqual(dest.pitch)
+      expect(dest.pitch - d.pitch).toBeLessThan(0.05)
+      expect(d.drop).toBeLessThanOrEqual(dest.drop)
+      expect(d.pinned).toBeGreaterThanOrEqual(dest.pinned)
+      expect(d.night).toBeGreaterThanOrEqual(dest.night)
+      home = h
+      dest = d
+    }
+    // the painted sky is swapped for the universe (and back) only while the planet fills the screen
+    for (let t = 0; t <= JOURNEY_S; t += 0.01) {
+      const [h, d] = [homePlanetAt(t), destPlanetAt(t)]
+      if (!h.ground && h.pitch < PLANET_OFFSET) expect(h.radius).toBeGreaterThan(PLANET_RADIUS * 0.4)
+      if (!h.ground && h.pinned < 1) expect(h.pitch).toBe(PLANET_OFFSET)
+      if (t > FLIGHT_S + 0.21) expect(d.radius).toBe(PLANET_RADIUS)
+      if (d.pitch < PLANET_OFFSET) expect(d.radius).toBeGreaterThan(PLANET_RADIUS * 0.45)
+      if (d.ground) expect(d.radius).toBe(PLANET_RADIUS)
+    }
+  })
+
   it('picks both kinds of flight, never the same three times in a row', () => {
     const recent: FlightVariant[] = []
-    const counts = { wormhole: 0, blackhole: 0 }
+    const counts = { wormhole: 0, slingshot: 0 }
     for (let i = 0; i < 400; i++) {
       const variant = pickVariant(cosmicSeed(1_790_000_000_000 + i * 60_000), recent)
       counts[variant]++
@@ -208,6 +284,6 @@ describe('flight plan', () => {
       recent.length = Math.min(recent.length, 2)
     }
     expect(counts.wormhole).toBeGreaterThan(120)
-    expect(counts.blackhole).toBeGreaterThan(120)
+    expect(counts.slingshot).toBeGreaterThan(120)
   })
 })

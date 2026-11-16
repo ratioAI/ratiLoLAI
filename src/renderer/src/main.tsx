@@ -42,22 +42,29 @@ const Profile = lazy(pages.Profile)
 const Data = lazy(pages.Data)
 const Settings = lazy(pages.Settings)
 const Mayhem = lazy(pages.Mayhem)
+// The admin tool only exists in `npm run dev`; builds leave the page out completely.
+const Admin = import.meta.env.DEV ? lazy(() => import('./pages/Admin').then((mod) => ({ default: mod.Admin }))) : null
 import { Overlay } from './pages/Overlay'
 import { TripBackground } from './components/TripBackground'
 import { CosmosBackground, cosmicSeed } from './components/CosmosBackground'
 import { JourneyCanvas } from './components/JourneyCanvas'
 import { prewarmFlightShaders } from './components/flightGl'
-import { FLIGHT_VARIANTS, pickVariant, type FlightVariant } from '@shared/journey'
+import { FLIGHT_S, FLIGHT_VARIANTS, captionAt, pickVariant, type FlightVariant } from '@shared/journey'
 import { galaxyKind, galaxyOf } from '@shared/universe'
 import { api } from './lib/api'
 import { OverlayFrames } from './pages/OverlayFrames'
 import { OverlayMinimap } from './pages/OverlayMinimap'
 import { OverlayLoading } from './pages/OverlayLoading'
+import { COSMOS_EVENT, type CosmosCommand } from './lib/cosmosControl'
 
 interface Journey {
   from: number
   to: number
   key: number
+  /** set by the admin tool, otherwise picked at random (nextVariant) */
+  variant?: FlightVariant
+  /** admin tool: don't switch to the Live tab at the end */
+  stay?: boolean
 }
 
 /**
@@ -79,23 +86,39 @@ function useCosmos(): { seed: number; journey: Journey | null; endJourney: () =>
   })
   const [journey, setJourney] = useState<Journey | null>(null)
   const currentSeed = useRef(seed)
-  useEffect(
-    () =>
-      api.on('journey', ({ seed: rawSeed }) => {
-        const nextSeed = cosmicSeed(rawSeed)
-        // a second accept while still flying (someone dodged) starts over from where we were heading.
-        // The sky behind the flight switches to the new planet only when it ends (endJourney), so the
-        // flight fades in over the very sky it starts from.
-        setJourney({ from: currentSeed.current, to: nextSeed, key: Date.now() })
-        currentSeed.current = nextSeed
-        try {
-          localStorage.setItem('rc.cosmos', String(nextSeed))
-        } catch {
-          /* private mode */
-        }
-      }),
-    []
+  const moveTo = useCallback((nextSeed: number) => {
+    currentSeed.current = nextSeed
+    try {
+      localStorage.setItem('rc.cosmos', String(nextSeed))
+    } catch {
+      /* private mode */
+    }
+  }, [])
+  const fly = useCallback(
+    (nextSeed: number, variant?: FlightVariant, stay?: boolean) => {
+      // a second accept while still flying (someone dodged) starts over from where we were heading.
+      // The sky behind the flight switches to the new planet only when it ends (endJourney), so the
+      // flight fades in over the very sky it starts from.
+      setJourney({ from: currentSeed.current, to: nextSeed, key: Date.now(), variant, stay })
+      moveTo(nextSeed)
+    },
+    [moveTo]
   )
+  useEffect(() => api.on('journey', ({ seed: rawSeed }) => fly(cosmicSeed(rawSeed))), [fly])
+  // the admin tool's flights and teleports (development builds only)
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const onCommand = (event: Event): void => {
+      const command = (event as CustomEvent<CosmosCommand>).detail
+      if (command.type === 'fly') fly(command.to, command.variant, command.stay)
+      else {
+        moveTo(command.to)
+        setSeed(command.to)
+      }
+    }
+    window.addEventListener(COSMOS_EVENT, onCommand)
+    return () => window.removeEventListener(COSMOS_EVENT, onCommand)
+  }, [fly, moveTo])
   const endJourney = useCallback(() => {
     setJourney(null)
     setSeed(currentSeed.current)
@@ -104,8 +127,8 @@ function useCosmos(): { seed: number; journey: Journey | null; endJourney: () =>
 }
 
 /**
- * Kind of the next flight: wormhole or black hole at random, never three times the same in a row.
- * '#...journey=wormhole' (or blackhole) in the URL forces one, for screenshots.
+ * Kind of the next flight: wormhole or slingshot at random, never three times the same in a row.
+ * '#...journey=wormhole' (or slingshot) in the URL forces one, for screenshots.
  */
 function nextVariant(seed: number): FlightVariant {
   const forced = FLIGHT_VARIANTS.find((variant) => window.location.hash.includes(`journey=${variant}`))
@@ -125,6 +148,8 @@ function nextVariant(seed: number): FlightVariant {
   return variant
 }
 
+const noop = (): void => undefined
+
 const smoothstep = (edge0: number, edge1: number, x: number): number => {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
   return t * t * (3 - 2 * t)
@@ -138,8 +163,10 @@ const smoothstep = (edge0: number, edge1: number, x: number): number => {
  */
 function JourneyOverlay({ journey, onArrive, onClose }: { journey: Journey; onArrive: () => void; onClose: () => void }) {
   const { live } = useApp()
-  const [variant] = useState(() => nextVariant(journey.to))
+  const [variant] = useState(() => journey.variant ?? nextVariant(journey.to))
   const [leaving, setLeaving] = useState(false)
+  // false while the shaders are being compiled (the film starts with its first frame)
+  const [ready, setReady] = useState(false)
   const leavingRef = useRef(false)
   const captionRef = useRef<HTMLDivElement>(null)
   const hintRef = useRef<HTMLDivElement>(null)
@@ -172,13 +199,15 @@ function JourneyOverlay({ journey, onArrive, onClose }: { journey: Journey; onAr
   }, [finish])
   // captions follow the film's own clock, so they stay in step when it waits
   const onFrame = useCallback((seconds: number) => {
-    const shown = smoothstep(10.9, 11.6, seconds) * (1 - smoothstep(13.3, 13.9, seconds))
+    const shown = captionAt(seconds)
     if (captionRef.current) {
       captionRef.current.style.opacity = String(shown)
       captionRef.current.style.transform = `translateY(${(1 - shown) * 8}px)`
     }
     if (hintRef.current)
-      hintRef.current.style.opacity = String(0.55 * smoothstep(1.2, 2.2, seconds) * (1 - smoothstep(13.8, 14.6, seconds)))
+      hintRef.current.style.opacity = String(
+        0.55 * smoothstep(2.4, 3.4, seconds) * (1 - smoothstep(FLIGHT_S - 1.6, FLIGHT_S - 0.8, seconds))
+      )
   }, [])
 
   const destination = galaxyOf(journey.to)
@@ -189,7 +218,21 @@ function JourneyOverlay({ journey, onArrive, onClose }: { journey: Journey; onAr
       onClick={finish}
       aria-hidden
     >
-      <JourneyCanvas from={journey.from} to={journey.to} variant={variant} onDone={finish} onFrame={onFrame} />
+      <JourneyCanvas
+        from={journey.from}
+        to={journey.to}
+        variant={variant}
+        onDone={finish}
+        onFrame={onFrame}
+        onReady={() => setReady(true)}
+      />
+      {/* while the GPU prepares the film: dim the app a little and say what's going on */}
+      <div
+        className="journey-preparing pointer-events-none absolute inset-0 flex items-end justify-center pb-[6%] transition-opacity duration-500"
+        style={{ opacity: ready ? 0 : 1 }}
+      >
+        <span className="text-[11px] font-semibold tracking-[0.35em] text-white/60 uppercase">Preparing the jump · click to skip</span>
+      </div>
       {/* where we're going, on the lower letterbox bar once the target is in sight */}
       <div
         ref={captionRef}
@@ -228,12 +271,11 @@ function Shell() {
   // without the flight we just go straight to the new game
   useEffect(() => {
     if (journey && !showFlight) {
-      arrive()
+      if (!journey.stay) arrive()
       endJourney()
     }
   }, [journey, showFlight, arrive, endJourney])
   const hash = window.location.hash
-  if (hash.startsWith('#/overlay/panel')) return <Overlay part="panel" />
   if (hash.startsWith('#/overlay/frames')) return <OverlayFrames />
   if (hash.startsWith('#/overlay/minimap')) return <OverlayMinimap />
   if (hash.startsWith('#/overlay/loading')) return <OverlayLoading />
@@ -246,7 +288,9 @@ function Shell() {
         <TripBackground mode={settings?.ui.background ?? 'animated'} inGame={!!live?.active} />
       )}
       <MainShell />
-      {journey && showFlight && <JourneyOverlay key={journey.key} journey={journey} onArrive={arrive} onClose={endJourney} />}
+      {journey && showFlight && (
+        <JourneyOverlay key={journey.key} journey={journey} onArrive={journey.stay ? noop : arrive} onClose={endJourney} />
+      )}
     </>
   )
 }
@@ -287,6 +331,7 @@ function MainShell() {
           <Route path="/profile" element={<Profile />} />
           <Route path="/data" element={<Data />} />
           <Route path="/settings" element={<Settings />} />
+          {Admin && <Route path="/admin" element={<Admin />} />}
         </Routes>
       </Suspense>
     </Layout>
@@ -297,7 +342,7 @@ if (!window.location.hash.startsWith('#/overlay')) {
   const prefetch = () => {
     Object.values(pages).forEach((load) => void load())
     // and compile the flight's shaders once, so the first flight starts without a pause
-    setTimeout(prewarmFlightShaders, 4000)
+    setTimeout(() => prewarmFlightShaders((message) => api.logDiag(message)), 4000)
   }
   if ('requestIdleCallback' in window) requestIdleCallback(prefetch, { timeout: 3000 })
   else setTimeout(prefetch, 1500)

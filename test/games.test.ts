@@ -56,6 +56,17 @@ const game = (gameId: number, win: boolean, scores: [number, number, number], ov
 }
 
 describe('GameStore', () => {
+  it('deletes only the test games of the admin tool (negative ids)', () => {
+    const store = new GameStore(':memory:')
+    store.save(game(1, true, [80, 60, 40]))
+    store.save(game(-5, false, [30, 60, 40]))
+    store.save(game(-6, true, [70, 60, 40]))
+    expect(store.deleteTestGames()).toBe(2)
+    expect(store.list().map((entry) => entry.gameId)).toEqual([1])
+    expect(store.leaderboard().find((entry) => entry.me)?.games).toBe(1)
+    expect(store.deleteTestGames()).toBe(0)
+  })
+
   it('keeps every game and lists the newest first', () => {
     const store = new GameStore(':memory:')
     for (let id = 1; id <= 150; id++) store.save(game(id, id % 2 === 0, [50, 60, 40]))

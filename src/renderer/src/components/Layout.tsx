@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Database, Gauge, History, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy } from 'lucide-react'
+import { Database, Gauge, History, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy, Wrench } from 'lucide-react'
 import type { GameMode, UpdateState } from '@shared/types'
 import type { GameSummary } from '@shared/summary'
 import { api } from '@/lib/api'
@@ -16,7 +16,9 @@ const NAV = [
   { to: '/games', label: 'Games', icon: History },
   { to: '/mayhem', label: 'Mayhem', icon: Sparkles },
   { to: '/profile', label: 'Profile', icon: Search },
-  { to: '/data', label: 'Data', icon: Database }
+  { to: '/data', label: 'Data', icon: Database },
+  // developer tools, only in `npm run dev`
+  ...(import.meta.env.DEV ? [{ to: '/admin', label: 'Admin', icon: Wrench }] : [])
 ]
 
 /** ratioAI logo: a mushroom cap with glowing spores inside a hexagon. */

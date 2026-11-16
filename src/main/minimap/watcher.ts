@@ -1,7 +1,30 @@
 import { screen } from 'electron'
 import type { LiveGameState, MinimapState, Settings } from '@shared/types'
 import type { CaptureService } from '../capture/captureService'
-import { inhibitorTimers, minimapRect, RELIC_PATCH, RelicTracker, RELICS, relicSeen } from './timers'
+import {
+  INHIBITOR_RESPAWN,
+  inhibitorTimers,
+  minimapRect,
+  observedInhibitorRespawns,
+  RELIC_PATCH,
+  relicPadsFor,
+  RelicTracker,
+  relicSeen,
+  type RelicPad,
+  type RelicSeen
+} from './timers'
+
+/** Respawn times learned in earlier games, kept per mode (classic ARAM and Mayhem may differ). */
+export interface LearnedTimers {
+  inhibitorRespawn(mode: 'aram' | 'mayhem'): number | undefined
+  setInhibitorRespawn(mode: 'aram' | 'mayhem', seconds: number): void
+}
+
+/** What the four (or more) relic pads look like right now, for the admin tool. */
+export interface RelicProbe {
+  map: number | null
+  pads: (RelicPad & { seen: RelicSeen | null })[]
+}
 
 /**
  * Keeps the minimap timers of an ARAM game up to date. Inhibitors come from the Live Client API event
@@ -20,13 +43,21 @@ export class MinimapWatcher {
   private loggedInhibitorEvents = 0
   private loggedMap: number | null | undefined = undefined
   private relicsOn = true
+  private mode: 'aram' | 'mayhem' = 'aram'
+  private map: number | null = null
+  private lastSeen: (RelicSeen | null)[] = []
+  /** relic pads measured with the admin tool, by map number */
+  measuredPads: Record<string, RelicPad[]> = {}
+  /** admin tool: what the pads show in a simulated game, instead of looking at the screen */
+  seenOverride: ((pads: readonly RelicPad[], gameTime: number) => (RelicSeen | null)[]) | null = null
 
   constructor(
     private readonly settings: () => Settings['minimap'],
     private readonly gameDisplay: () => number | null,
     private readonly emit: (state: MinimapState | null) => void,
     private readonly capture: CaptureService | null = null,
-    private readonly log: (message: string) => void = () => undefined
+    private readonly log: (message: string) => void = () => undefined,
+    private readonly learned: LearnedTimers | null = null
   ) {
     this.relics = new RelicTracker(log)
   }
@@ -45,8 +76,15 @@ export class MinimapWatcher {
     return this.gameTime + (Date.now() - this.measuredAt) / 1000
   }
 
-  /** Called with every live-game update. `aram` means the game is played on the Howling Abyss. */
-  update(live: LiveGameState | null, aram: boolean): void {
+  /** Inhibitor respawn to assume: what this game showed, else what earlier games of this mode showed, else 4:10. */
+  private inhibitorRespawn(): number {
+    const seen = observedInhibitorRespawns(this.inhibitorEvents)
+    if (seen.length) return [...seen].sort((a, b) => a - b)[seen.length >> 1]
+    return this.learned?.inhibitorRespawn(this.mode) ?? INHIBITOR_RESPAWN
+  }
+
+  /** Called with every live-game update. `aram` means the game is played on an ARAM map, `mayhem` that it's ARAM: Mayhem. */
+  update(live: LiveGameState | null, aram: boolean, mayhem = false): void {
     const settings = this.settings()
     if (!live?.active || !aram || !settings.enabled || (!settings.inhibitors && !settings.relics)) {
       if (this.active) this.stop()
@@ -58,29 +96,40 @@ export class MinimapWatcher {
       this.loggedInhibitorEvents = 0
       this.log(`map timers on (inhibitors ${settings.inhibitors ? 'on' : 'off'}, relics ${settings.relics ? 'on' : 'off'})`)
     }
+    this.mode = mayhem ? 'mayhem' : 'aram'
     this.gameTime = live.gameTime
     this.measuredAt = Date.now()
     this.inhibitorEvents = live.inhibitorEvents ?? []
     if (this.inhibitorEvents.length > this.loggedInhibitorEvents) {
+      const before = observedInhibitorRespawns(this.inhibitorEvents.slice(0, this.loggedInhibitorEvents)).length
       for (const event of this.inhibitorEvents.slice(this.loggedInhibitorEvents))
         this.log(`inhibitor ${event.type}: ${event.inhibitor} at ${Math.round(event.time)} s`)
       this.loggedInhibitorEvents = this.inhibitorEvents.length
+      // a respawn we saw from start to end: remember how long it took for the next games of this mode
+      const durations = observedInhibitorRespawns(this.inhibitorEvents)
+      if (durations.length > before) {
+        const latest = durations[durations.length - 1]
+        this.log(`inhibitor respawn took ${Math.round(latest)} s (${this.mode})`)
+        this.learned?.setInhibitorRespawn(this.mode, latest)
+      }
     }
     this.relics.tick(live.gameTime)
 
-    // We only know the relic pad positions for the Howling Abyss (map 12). Other Mayhem maps
-    // (Butcher's Bridge, Koeshin's Crossing) put them elsewhere. Watching only starts shortly before
-    // the first relics spawn.
+    // Relic pads are only known where they were measured: the Howling Abyss (map 12) built in,
+    // other maps (Butcher's Bridge, Koeshin's Crossing) once measured with the admin tool.
+    this.map = live.mapNumber ?? null
+    const pads = relicPadsFor(live.mapNumber, this.measuredPads)
     if (live.mapNumber !== this.loggedMap) {
       this.loggedMap = live.mapNumber ?? null
       this.log(
-        `map ${live.mapNumber ?? '?'}${live.mapNumber != null && live.mapNumber !== 12 ? ' – relic timers off (pads unknown on this map)' : ''}`
+        `map ${live.mapNumber ?? '?'} (${live.mapName ?? '?'}, terrain ${live.mapTerrain ?? '?'}, ${this.mode})` +
+          (pads ? ` – ${pads.length} relic pads` : ' – relic timers off (pads unknown on this map)')
       )
     }
-    const knownMap = live.mapNumber == null || live.mapNumber === 12
-    this.relicsOn = knownMap
-    const watchRelics = settings.relics && knownMap && !!this.capture && live.gameTime > 95
-    this.capture?.demand('relics', watchRelics ? { displays: [this.display().id], fps: 1 } : null)
+    if (pads) this.relics.setPads(pads)
+    this.relicsOn = !!pads
+    const watchRelics = settings.relics && !!pads && (!!this.capture || !!this.seenOverride) && live.gameTime > 95
+    this.capture?.demand('relics', watchRelics && !this.seenOverride ? { displays: [this.display().id], fps: 1 } : null)
     if (watchRelics && !this.timer) this.timer = setInterval(() => void this.sample(), 1000)
     if (!watchRelics && this.timer) {
       clearInterval(this.timer)
@@ -89,37 +138,52 @@ export class MinimapWatcher {
     this.publish()
   }
 
+  /** Screen regions of the watched pads (fractions of the display) and their output size in pixels. */
+  private padRegions(display: Electron.Display, pads: readonly RelicPad[]) {
+    const minimap = minimapRect(display.size.width, display.size.height, this.settings().scale)
+    // square patch in physical pixels, at least 9 px
+    const patchPx = Math.max(9, Math.round(RELIC_PATCH * minimap.w * display.size.width * display.scaleFactor))
+    return pads.map((pad) => {
+      const w = RELIC_PATCH * minimap.w
+      const h = (RELIC_PATCH * minimap.w * display.size.width) / display.size.height
+      return {
+        x: minimap.x + pad.pos.x * minimap.w - w / 2,
+        y: minimap.y + pad.pos.y * minimap.h - h / 2,
+        w,
+        h,
+        outW: patchPx,
+        outH: patchPx
+      }
+    })
+  }
+
   private async sample(): Promise<void> {
-    if (this.sampling || !this.active || !this.capture) return
+    if (this.sampling || !this.active || (!this.capture && !this.seenOverride)) return
     this.sampling = true
     try {
-      const display = this.display()
-      const minimap = minimapRect(display.size.width, display.size.height, this.settings().scale)
-      // square patch in physical pixels, at least 9 px
-      const patchPx = Math.max(9, Math.round(RELIC_PATCH * minimap.w * display.size.width * display.scaleFactor))
-      const regions = RELICS.map((relic) => {
-        const w = (RELIC_PATCH * minimap.w * display.size.width) / display.size.width
-        const h = (RELIC_PATCH * minimap.w * display.size.width) / display.size.height
-        return {
-          x: minimap.x + relic.pos.x * minimap.w - w / 2,
-          y: minimap.y + relic.pos.y * minimap.h - h / 2,
-          w,
-          h,
-          outW: patchPx,
-          outH: patchPx
-        }
-      })
-      const frames = await this.capture.grab(display, regions)
-      if (!frames) return
-      const taken = this.relics.observe(
-        this.now(),
-        frames.map((frame) => relicSeen(frame))
-      )
+      if (this.seenOverride) this.lastSeen = this.seenOverride(this.relics.watched, this.now())
+      else {
+        const display = this.display()
+        const frames = await this.capture!.grab(display, this.padRegions(display, this.relics.watched))
+        if (!frames) return
+        this.lastSeen = frames.map((frame) => relicSeen(frame))
+      }
+      const taken = this.relics.observe(this.now(), this.lastSeen)
       if (taken.length) this.log(`relic taken: ${taken.join(', ')} at ${Math.round(this.now())} s`)
       this.publish()
     } finally {
       this.sampling = false
     }
+  }
+
+  /** What the watched pads look like at the last sample (admin tool). */
+  probe(): RelicProbe {
+    return { map: this.map, pads: this.relics.watched.map((pad, i) => ({ ...pad, seen: this.lastSeen[i] ?? null })) }
+  }
+
+  /** Sends the next state even if nothing changed (after the admin tool moved the game clock). */
+  resync(): void {
+    this.lastKey = ''
   }
 
   private publish(): void {
@@ -129,7 +193,7 @@ export class MinimapWatcher {
       gameTime: this.now(),
       measuredAt: Date.now(),
       rect: minimapRect(display.size.width, display.size.height, settings.scale),
-      inhibitors: settings.inhibitors ? inhibitorTimers(this.inhibitorEvents, this.now()) : [],
+      inhibitors: settings.inhibitors ? inhibitorTimers(this.inhibitorEvents, this.now(), this.inhibitorRespawn()) : [],
       relics: settings.relics && this.relicsOn ? this.relics.snapshot() : []
     }
     // The overlay counts down on its own, so only resend when something changed (or every 15 s to resync).
@@ -146,6 +210,7 @@ export class MinimapWatcher {
     this.timer = null
     this.capture?.demand('relics', null)
     this.relics.reset()
+    this.lastSeen = []
     this.lastKey = ''
     this.emit(null)
   }

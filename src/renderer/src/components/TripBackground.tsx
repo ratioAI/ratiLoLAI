@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { Settings } from '@shared/types'
 import { useIdleRef } from '@/lib/useIdle'
+import { freshCanvas, gpuName, isSoftwareGpu } from '@/lib/glCanvas'
 
 const VERT = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`
 
@@ -56,16 +57,17 @@ const FPS = { animated: 24, calm: 10, static: 0 } as const
  * "reduce motion".
  */
 export function TripBackground({ mode, inGame }: { mode: Settings['ui']['background']; inGame: boolean }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const hostRef = useRef<HTMLDivElement>(null)
   const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
   const effectiveMode: keyof typeof FPS = reducedMotion ? 'static' : inGame && mode === 'animated' ? 'calm' : mode
   const idleRef = useIdleRef(inGame)
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const host = hostRef.current
+    if (!host) return
+    const canvas = freshCanvas(host, 'trip-bg block h-full w-full')
     const gl = canvas.getContext('webgl', { antialias: false, alpha: false, powerPreference: 'low-power' })
-    if (!gl) return
+    if (!gl) return () => canvas.remove()
     const compile = (type: number, source: string): WebGLShader => {
       const shader = gl.createShader(type)!
       gl.shaderSource(shader, source)
@@ -76,7 +78,7 @@ export function TripBackground({ mode, inGame }: { mode: Settings['ui']['backgro
     gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT))
     gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG))
     gl.linkProgram(program)
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return () => canvas.remove()
     gl.useProgram(program)
     // two triangles covering the whole viewport
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer())
@@ -102,7 +104,8 @@ export function TripBackground({ mode, inGame }: { mode: Settings['ui']['backgro
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
     resize()
-    const fps = FPS[effectiveMode]
+    // without a GPU (software rendering) a still picture, the animation would eat the CPU
+    const fps = isSoftwareGpu(gpuName(gl)) ? 0 : FPS[effectiveMode]
     let rafId = 0
     let lastDraw = 0
     const startTime = performance.now()
@@ -125,13 +128,14 @@ export function TripBackground({ mode, inGame }: { mode: Settings['ui']['backgro
       cancelAnimationFrame(rafId)
       window.removeEventListener('resize', onResize)
       gl.getExtension('WEBGL_lose_context')?.loseContext()
+      canvas.remove()
     }
   }, [effectiveMode])
 
   return (
     <>
-      {/* new canvas per mode, a context we released with loseContext() can't be reused */}
-      <canvas key={effectiveMode} ref={canvasRef} aria-hidden className="trip-bg pointer-events-none fixed inset-0 -z-10 h-full w-full" />
+      {/* the effect puts a new canvas in here for every mode (see freshCanvas) */}
+      <div ref={hostRef} aria-hidden className="pointer-events-none fixed inset-0 -z-10 h-full w-full" />
       <div aria-hidden className="trip-grain pointer-events-none fixed inset-0 -z-10" />
     </>
   )

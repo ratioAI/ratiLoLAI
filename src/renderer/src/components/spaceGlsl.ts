@@ -472,8 +472,8 @@ vec3 sky(vec2 p, float t, float seed){
 
 // view from the planet's surface: sky over a dark horizon with two mountain ranges and a thin
 // atmosphere glow. drop > 0 lowers the horizon (used for take-off and landing).
-vec3 planetView(vec2 p, float t, float seed, float drop){
-  vec3 col = sky(p, t, seed);
+// planetGround draws the ground over a sky computed before (sky is by far the biggest function here).
+vec3 planetGround(vec3 col, vec2 p, float seed, float drop){
   vec2 pc = vec2(0.0, -3.42 - drop);
   vec3 atmo = neb(h11(seed + 12.0)) * 0.9;
   float ground = length(p - pc) - 3.0;
@@ -486,6 +486,7 @@ vec3 planetView(vec2 p, float t, float seed, float drop){
   col = mix(col, vec3(0.004, 0.003, 0.009), smoothstep(0.002, -0.002, nearR));
   return col;
 }
+vec3 planetView(vec2 p, float t, float seed, float drop){ return planetGround(sky(p, t, seed), p, seed, drop); }
 
 vec3 finish(vec3 col, vec2 p){
   col = 1.0 - exp(-col * 1.25);                               // soft tone mapping

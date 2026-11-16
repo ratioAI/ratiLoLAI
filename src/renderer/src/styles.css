@@ -315,20 +315,6 @@ html.overlay-mode #root {
   background: transparent !important;
   overflow: hidden;
 }
-.overlay-panel {
-  background: linear-gradient(180deg, rgba(12, 16, 24, 0.94), rgba(9, 12, 18, 0.9));
-  border: 1px solid rgba(200, 170, 110, 0.45);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.6),
-    0 18px 40px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 240, 200, 0.08);
-  border-radius: 14px;
-}
-.overlay-title {
-  font-family: 'Beaufort for LOL', 'Cinzel', Georgia, serif;
-  letter-spacing: 0.08em;
-  color: #f0e6d2;
-}
 
 /* ---- Frames drawn directly over the in-game augment cards ----
    The animated border + glow is a WebGL canvas (components/FrameCanvas.tsx); everything here is
@@ -457,28 +443,95 @@ html.overlay-mode #root {
   font-weight: 700;
 }
 
-/* ---- Minimap timers ---- */
-.mm-chip {
-  display: inline-block;
-  padding: 0 5px;
+/* ---- Minimap timers ----
+   Static on purpose (the window is re-rendered once a second): health relics get a ring that fills
+   up with the seconds left in the middle, inhibitors a pill in team colour with a progress bar. */
+.mm-relic {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 50% 38%, rgba(18, 30, 26, 0.92), rgba(5, 9, 10, 0.9) 70%);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.65),
+    0 2px 6px rgba(0, 0, 0, 0.75),
+    0 0 10px -3px color-mix(in srgb, var(--relic) 70%, transparent);
+}
+.mm-relic svg {
+  position: absolute;
+  inset: 0;
+}
+.mm-ring-track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 2.4;
+}
+.mm-ring {
+  fill: none;
+  stroke: var(--relic);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+.mm-relic-time {
+  position: relative;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: #eafff2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+.mm-relic.mm-soon {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.65),
+    0 2px 6px rgba(0, 0, 0, 0.75),
+    0 0 12px -1px var(--relic);
+}
+.mm-relic.mm-soon .mm-relic-time {
+  color: #ffffff;
+}
+
+.mm-inhib {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  padding: 1px 6px 3px 5px;
   border-radius: 6px;
   font-size: 11px;
   font-weight: 800;
-  line-height: 15px;
+  line-height: 14px;
   font-variant-numeric: tabular-nums;
-  color: #f0e6d2;
   white-space: nowrap;
-  background: rgba(6, 9, 14, 0.85);
-  border: 1px solid color-mix(in srgb, var(--team) 75%, transparent);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+  color: #f4f1ff;
+  background: linear-gradient(180deg, rgba(16, 18, 28, 0.94), rgba(7, 8, 13, 0.92));
+  border: 1px solid color-mix(in srgb, var(--team) 55%, transparent);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.75),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
-.mm-chip.mm-relic {
-  padding: 0 4px;
-  font-size: 10px;
-  line-height: 13px;
+.mm-inhib-icon {
+  fill: var(--team);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--team) 80%, transparent));
 }
-.mm-chip.mm-soon {
-  color: #ffd66b;
+.mm-inhib-time {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+.mm-inhib-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--team);
+  transform-origin: left center;
+}
+.mm-inhib.mm-soon {
+  border-color: var(--team);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.75),
+    0 0 10px -2px var(--team);
 }
 
 /* In the overlay windows nothing but the frame canvas may animate: a transparent window over the
@@ -730,6 +783,18 @@ html.overlay-mode .btn-primary {
 .journey-caption {
   text-shadow: 0 2px 18px rgb(0 0 0 / 0.9);
 }
+.journey-preparing {
+  background: radial-gradient(ellipse at 50% 60%, rgb(7 5 15 / 0.35), rgb(7 5 15 / 0.75));
+  backdrop-filter: blur(2px);
+}
+.journey-preparing span {
+  animation: journey-pulse 1.8s ease-in-out infinite;
+}
+@keyframes journey-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .podium-step {
     animation: none;
@@ -754,4 +819,163 @@ html.overlay-mode .btn-primary {
     transform: scale(2.6);
     opacity: 0;
   }
+}
+
+/* ---- Loading-screen panel ---- */
+.ld-panel {
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 24px 60px -12px rgba(0, 0, 0, 0.85),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+/* team colours bleed in from both sides, the middle stays dark */
+.ld-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(90, 169, 255, 0.16), transparent 32%, transparent 68%, rgba(255, 92, 108, 0.14)),
+    linear-gradient(180deg, rgba(6, 6, 14, 0.62), rgba(6, 6, 14, 0.8));
+}
+.ld-team {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.ld-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px 4px 4px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--team) 13%, rgba(10, 10, 20, 0.72)), rgba(10, 10, 20, 0.6));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.ld-row-enemy {
+  flex-direction: row-reverse;
+  padding: 4px 4px 4px 10px;
+  background: linear-gradient(270deg, color-mix(in srgb, var(--team) 13%, rgba(10, 10, 20, 0.72)), rgba(10, 10, 20, 0.6));
+}
+.ld-row-me {
+  border-color: rgba(255, 211, 107, 0.45);
+  box-shadow: 0 0 16px -6px rgba(255, 211, 107, 0.6);
+}
+.ld-champ {
+  border-radius: 9px;
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--team) 70%, transparent);
+}
+.ld-who {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+}
+.ld-row-enemy .ld-who {
+  align-items: flex-end;
+}
+.ld-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+.ld-name > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ld-row-enemy .ld-name {
+  flex-direction: row-reverse;
+}
+.ld-tag {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 15px;
+  text-transform: uppercase;
+  color: #8fd0ff;
+  background: rgba(143, 208, 255, 0.12);
+}
+.ld-tag-me {
+  color: #ffd36b;
+  background: rgba(255, 211, 107, 0.14);
+}
+.ld-split {
+  display: flex;
+  width: 100%;
+  height: 4px;
+  gap: 2px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.ld-row-enemy .ld-split {
+  flex-direction: row-reverse;
+}
+.ld-split-win {
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #3fd68b, #6dffb6);
+}
+.ld-split-loss {
+  border-radius: 9999px;
+  background: rgba(255, 107, 139, 0.55);
+}
+.ld-stat {
+  display: flex;
+  width: 70px;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1;
+}
+.ld-row-enemy .ld-stat {
+  align-items: flex-start;
+}
+.ld-rate {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.ld-rate small {
+  margin-left: 1px;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.75;
+}
+.ld-games {
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(241, 237, 251, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+.ld-none {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(241, 237, 251, 0.4);
+}
+.ld-avg {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.ld-vs {
+  font-family: var(--font-display, inherit);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: rgba(241, 237, 251, 0.35);
 }

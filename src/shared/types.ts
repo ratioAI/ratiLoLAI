@@ -270,10 +270,8 @@ export interface Settings {
   overlay: {
     /** show the in-game augment overlay in ARAM: Mayhem */
     enabled: boolean
-    /** Electron accelerator, e.g. "Alt+Shift+A" */
+    /** Electron accelerator, e.g. "Alt+Shift+A": look for the augment cards right now */
     hotkey: string
-    /** pop the panel open automatically at augment levels (3/7/11/15) */
-    autoExpand: boolean
     /** recognise the offered augment cards on screen and frame them by tier */
     cardFrames: boolean
     /** animated frames: 30 fps, 15 fps or static */
@@ -370,15 +368,19 @@ export interface MinimapState {
   rect: { x: number; y: number; w: number; h: number }
   /** minimap inside the overlay window (DIP), filled in by the main process */
   local?: { x: number; y: number; w: number; h: number }
-  inhibitors: { team: 'ORDER' | 'CHAOS'; respawnAt: number; pos: { x: number; y: number } }[]
+  /** `since` = when it was destroyed, for the progress ring */
+  inhibitors: { team: 'ORDER' | 'CHAOS'; respawnAt: number; since?: number; pos: { x: number; y: number } }[]
   relics: {
     id: string
     team: 'ORDER' | 'CHAOS'
-    kind: 'outer' | 'inner'
+    /** base = the extra relic between the nexus turrets (Mayhem, Cafe Cuties headliner) */
+    kind: 'outer' | 'inner' | 'base'
     pos: { x: number; y: number }
     /** up = seen on the minimap, spawn = comes back at `at`, unknown = up but not confirmed */
     state: 'up' | 'spawn' | 'unknown'
     at: number | null
+    /** when it was taken (game seconds), for the progress ring */
+    since?: number | null
   }[]
 }
 
@@ -467,14 +469,17 @@ export interface LiveGameState {
   gameMode: string
   /** 12 = Howling Abyss (other numbers: Butcher's Bridge, Koeshin's Crossing, …) */
   mapNumber?: number | null
+  /** as reported by the game, for diagnostics ("Map12", "Default", …) */
+  mapName?: string | null
+  mapTerrain?: string | null
   /** champion name of the local player (localized) */
   activeChampion: string | null
   /** Data Dragon id of the local player's champion (e.g. "MonkeyKing"), language independent */
   activeChampionKey?: string | null
   /** Riot IDs of the players you queued with (from the client lobby) */
   premades?: string[]
-  /** inhibitor kills / respawns from the event feed */
-  inhibitorEvents?: { type: 'killed' | 'respawned'; inhibitor: string; time: number }[]
+  /** inhibitor kills / respawns from the event feed ("soon" = the 15 s warning before a respawn) */
+  inhibitorEvents?: { type: 'killed' | 'soon' | 'respawned'; inhibitor: string; time: number }[]
   activePlayer: string | null
   players: LivePlayer[]
   events: { name: string; time: number; text: string }[]
@@ -642,7 +647,97 @@ export interface RcApi {
   lookupProfile(riotId: string, platform: Platform): Promise<ProfileData>
   scoutActiveGame(riotId: string, platform: Platform): Promise<ScoutResult | null>
   openExternal(url: string): Promise<void>
+  /** adds a line to overlay.log (the flight's GPU and timings, so a report shows what happened) */
+  logDiag(message: string): void
   on<K extends keyof RcEvents>(event: K, cb: (payload: RcEvents[K]) => void): () => void
+  /** developer tools, only there in `npm run dev` (never in the installer) */
+  admin?: AdminApi
+}
+
+// ---------------------------------------------------------------------------
+// Admin tool (development builds only)
+// ---------------------------------------------------------------------------
+
+/** A health relic pad as measured on a map's minimap (positions are fractions of the minimap). */
+export interface AdminRelicPad {
+  id: string
+  team: 'ORDER' | 'CHAOS'
+  kind: 'outer' | 'inner' | 'base'
+  pos: { x: number; y: number }
+}
+
+export type AdminRelicSeen = 'present' | 'absent' | 'unclear'
+
+/** Options of a simulated ARAM game (fed through the same code path as the real live data). */
+export interface AdminSimOptions {
+  mode: 'aram' | 'mayhem'
+  /** map number the game reports (12 = Howling Abyss) */
+  map: number
+  /** game time to start at, in seconds */
+  startAt: number
+  /** how long a destroyed inhibitor really stays down in the simulation (to test the learning) */
+  inhibitorRespawn: number
+}
+
+export type AdminSimAction =
+  | { type: 'inhibitor'; team: 'ORDER' | 'CHAOS'; event: 'killed' | 'soon' | 'respawned' }
+  | { type: 'relicTaken'; padId: string }
+  | { type: 'skip'; seconds: number }
+
+export interface AdminSimState {
+  options: AdminSimOptions
+  gameTime: number
+  /** inhibitor events sent so far */
+  inhibitorEvents: NonNullable<LiveGameState['inhibitorEvents']>
+  /** relic pads of the map and when each was last taken in the simulation */
+  pads: (AdminRelicPad & { takenAt: number | null })[]
+}
+
+export interface AdminMinimapSnapshot {
+  /** map the pads belong to: the running game's, else the Howling Abyss */
+  map: number
+  mapName: string | null
+  inGame: boolean
+  display: { id: number; width: number; height: number; scaleFactor: number }
+  /** minimap on the display, in fractions */
+  rect: { x: number; y: number; w: number; h: number }
+  /** the minimap at physical resolution (RGBA), null if the screen couldn't be captured */
+  image: { width: number; height: number; data: Uint8Array } | null
+  error?: string
+  /** pads in use on this map and what the relic detection sees there right now */
+  pads: (AdminRelicPad & { seen: AdminRelicSeen | null })[]
+  source: 'measured' | 'built-in' | 'none'
+  /** side of the square the detection looks at around a pad, as a fraction of the minimap */
+  patch: number
+}
+
+export interface AdminApi {
+  /** the same as accepting a match in the client: the app flies to the next galaxy */
+  acceptMatch(): Promise<void>
+  /** sends the champion select to the main window as if it came from the League client (null ends it) */
+  emit<K extends 'champSelect'>(event: K, payload: RcEvents[K]): Promise<void>
+  simStart(options: AdminSimOptions): Promise<AdminSimState>
+  simAction(action: AdminSimAction): Promise<AdminSimState | null>
+  simState(): Promise<AdminSimState | null>
+  simStop(): Promise<void>
+  /** example minimap timers on the game screen until hideOverlays ('pads' = every relic pad of `map`) */
+  showMinimapDemo(scenario: 'mixed' | 'soon' | 'pads', map?: number): Promise<void>
+  /** card frames of an augment choice for this champion until hideOverlays */
+  showFrames(championId: number): Promise<void>
+  showLoading(state: LoadingState): Promise<void>
+  /** ends every preview and puts the real overlays back */
+  hideOverlays(): Promise<void>
+  /** stores a made-up summary as a game with a negative id and opens it */
+  saveTestGame(summary: GameSummary): Promise<void>
+  /** removes every game with a negative id, returns how many */
+  deleteTestGames(): Promise<number>
+  log(lines: number): Promise<string[]>
+  minimapSnapshot(): Promise<AdminMinimapSnapshot>
+  /** what the relic detection sees at these pads in the last snapshot */
+  classifyPads(pads: AdminRelicPad[]): Promise<(AdminRelicSeen | null)[]>
+  measuredPads(): Promise<Record<string, AdminRelicPad[]>>
+  /** stores the pads of a map (null = back to the built-in ones), returns all measured pads */
+  savePads(map: number, pads: AdminRelicPad[] | null): Promise<Record<string, AdminRelicPad[]>>
 }
 
 /** Augment cards currently offered on screen (detected by screen recognition). */
@@ -700,10 +795,7 @@ export interface RcEvents {
   live: LiveGameState | null
   imported: ImportResult & { championId: number }
   statsUpdated: { patch: string; mode: GameMode }
-  overlayToggle: null
   augmentOffer: AugmentOffer | null
-  /** augment cards on screen (even when their titles could not be read) */
-  augmentCards: { visible: boolean }
   /** offer with card rects relative to the frames window (sent to that window only) */
   framesOffer: AugmentOffer | null
   augmentsOwned: number[]
@@ -715,6 +807,5 @@ export interface RcEvents {
   /** map timers for the main window (the minimap overlay gets its own copy with positions) */
   mapTimers: MinimapState | null
   minimap: MinimapState | null
-  overlayPreview: { championId: number }
   update: UpdateState
 }

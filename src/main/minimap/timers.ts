@@ -9,12 +9,18 @@
  */
 import type { MinimapState } from '@shared/types'
 
-/** 4:10, not 5:00 like on Summoner's Rift. Measured twice in ARAM: Mayhem (killed at 930 s, back at 1180 s). */
+/**
+ * First guess for an inhibitor respawn: 4:10, not 5:00 like on Summoner's Rift. Measured twice in
+ * ARAM: Mayhem (killed at 930 s, back at 1180 s). The game's own events correct it: the "respawning
+ * soon" warning pins a timer to the second, and every respawn seen teaches the real duration.
+ */
 export const INHIBITOR_RESPAWN = 250
+/** The announcer's "inhibitor respawning soon" comes this many seconds before the respawn. */
+export const INHIBITOR_WARNING = 15
 
 /** Inhibitor events as parsed from the Live Client Data API. */
 export interface InhibitorEvent {
-  type: 'killed' | 'respawned'
+  type: 'killed' | 'soon' | 'respawned'
   inhibitor: string
   time: number
 }
@@ -26,17 +32,40 @@ export function inhibitorTeam(name: string): 'ORDER' | 'CHAOS' | null {
   return null
 }
 
-/** Inhibitors that are currently down, with the game time they come back. */
-export function inhibitorTimers(events: InhibitorEvent[], gameTime: number): MinimapState['inhibitors'] {
-  // only the latest event per inhibitor matters
-  const latest = new Map<string, InhibitorEvent>()
-  for (const event of [...events].sort((a, b) => a.time - b.time)) latest.set(event.inhibitor, event)
+/** Respawn durations the events of a game show: kill to warning + 15 s, or kill to respawn. One per respawn. */
+export function observedInhibitorRespawns(events: InhibitorEvent[]): number[] {
+  const killedAt = new Map<string, number>()
+  const durations: number[] = []
+  for (const event of [...events].sort((a, b) => a.time - b.time)) {
+    if (event.type === 'killed') {
+      killedAt.set(event.inhibitor, event.time)
+      continue
+    }
+    const killed = killedAt.get(event.inhibitor)
+    if (killed === undefined) continue
+    durations.push(event.type === 'soon' ? event.time + INHIBITOR_WARNING - killed : event.time - killed)
+    killedAt.delete(event.inhibitor)
+  }
+  // anything outside 1 to 10 minutes is a mixed-up event, not a respawn
+  return durations.filter((duration) => duration > 60 && duration < 600)
+}
+
+/** Inhibitors that are currently down, with the game time they come back. `respawn` is the duration to assume. */
+export function inhibitorTimers(events: InhibitorEvent[], gameTime: number, respawn = INHIBITOR_RESPAWN): MinimapState['inhibitors'] {
+  const down = new Map<string, { killed: number; soon: number | null }>()
+  for (const event of [...events].sort((a, b) => a.time - b.time)) {
+    if (event.type === 'killed') down.set(event.inhibitor, { killed: event.time, soon: null })
+    else if (event.type === 'soon') {
+      const state = down.get(event.inhibitor)
+      if (state) state.soon = event.time
+    } else down.delete(event.inhibitor)
+  }
   const timers: MinimapState['inhibitors'] = []
-  for (const event of latest.values()) {
-    const team = inhibitorTeam(event.inhibitor)
-    if (!team || event.type !== 'killed') continue
-    const respawnAt = event.time + INHIBITOR_RESPAWN
-    if (respawnAt > gameTime) timers.push({ team, respawnAt, pos: INHIBITOR_POS[team] })
+  for (const [inhibitor, state] of down) {
+    const team = inhibitorTeam(inhibitor)
+    if (!team) continue
+    const respawnAt = state.soon !== null ? state.soon + INHIBITOR_WARNING : state.killed + respawn
+    if (respawnAt > gameTime) timers.push({ team, respawnAt, since: state.killed, pos: INHIBITOR_POS[team] })
   }
   return timers
 }
@@ -62,16 +91,45 @@ export function minimapRect(width: number, height: number, scale = 1): { x: numb
 /** Game time in seconds (League wiki): outer 1:45, inner 2:30. Back 90 s after the beam, which comes 2.5 s after pickup. */
 export const RELIC_TIMES = { outer: 105, inner: 150, respawn: 92.5 }
 
+export interface RelicPad {
+  id: string
+  team: 'ORDER' | 'CHAOS'
+  /** base = the extra relic between the nexus turrets (ARAM: Mayhem with the Cafe Cuties headliner) */
+  kind: 'outer' | 'inner' | 'base'
+  /** fraction of the minimap */
+  pos: { x: number; y: number }
+}
+
 /**
  * Relic pads from the blue base (ORDER, bottom left) to the red one, as fractions of the minimap.
  * Measured where the game draws the first-spawn countdown and the green cross.
  */
-export const RELICS = [
+export const RELICS: readonly RelicPad[] = [
   { id: 'order-inner', team: 'ORDER', kind: 'inner', pos: { x: 0.37, y: 0.692 } },
   { id: 'order-outer', team: 'ORDER', kind: 'outer', pos: { x: 0.462, y: 0.594 } },
   { id: 'chaos-outer', team: 'CHAOS', kind: 'outer', pos: { x: 0.589, y: 0.472 } },
   { id: 'chaos-inner', team: 'CHAOS', kind: 'inner', pos: { x: 0.686, y: 0.386 } }
-] as const
+]
+
+/**
+ * Known relic pads per map number. Only the Howling Abyss (12) is measured so far; pads for other
+ * maps (Butcher's Bridge, Koeshin's Crossing) and the Cafe Cuties base relics can be measured with
+ * the admin tool, which stores them in minimap-pads.json until they are added here.
+ */
+export const RELIC_PADS: Readonly<Record<number, readonly RelicPad[]>> = { 12: RELICS }
+
+/** Pads to watch on a map: measured ones first, then the built-in ones; null if none are known. */
+export function relicPadsFor(
+  map: number | null | undefined,
+  measured: Readonly<Record<string, readonly RelicPad[]>> = {}
+): readonly RelicPad[] | null {
+  // an unknown map number is almost always the Howling Abyss (older clients don't report it)
+  const key = map ?? 12
+  return measured[String(key)] ?? RELIC_PADS[key] ?? null
+}
+
+/** First spawn of a pad in game seconds, or null where it isn't known (the base relics). */
+export const firstSpawn = (pad: RelicPad): number | null => (pad.kind === 'base' ? null : RELIC_TIMES[pad.kind])
 
 /** Pad sample size as a fraction of the minimap side. */
 export const RELIC_PATCH = 0.065
@@ -122,23 +180,31 @@ export class RelicTracker {
   private tracks: RelicTrack[] = []
   private lastGameTime = 0
   private respawnSamples: number[] = []
+  private pads: readonly RelicPad[] = RELICS
 
   constructor(private readonly log: (message: string) => void = () => undefined) {
+    this.reset()
+  }
+
+  /** Pads being watched (they differ per map). Changing them starts over. */
+  get watched(): readonly RelicPad[] {
+    return this.pads
+  }
+
+  setPads(pads: readonly RelicPad[]): void {
+    if (pads === this.pads) return
+    this.pads = pads
     this.reset()
   }
 
   reset(): void {
     this.lastGameTime = 0
     this.respawnSamples = []
-    this.tracks = RELICS.map((relic) => ({
-      phase: 'spawn',
-      at: RELIC_TIMES[relic.kind],
-      verified: false,
-      absentSince: null,
-      absentCount: 0,
-      presentCount: 0,
-      takenAt: null
-    }))
+    // pads without a known first spawn start as "up, not yet seen"
+    this.tracks = this.pads.map((pad) => {
+      const at = firstSpawn(pad)
+      return { phase: at === null ? 'up' : 'spawn', at, verified: false, absentSince: null, absentCount: 0, presentCount: 0, takenAt: null }
+    })
   }
 
   /** Respawn time in use: the median of learned samples once there are two, otherwise 92.5 s. */
@@ -184,18 +250,18 @@ export class RelicTracker {
             track.takenAt = track.absentSince
             track.at = track.absentSince + this.respawnTime
             track.presentCount = 0
-            taken.push(RELICS[i].id)
+            taken.push(this.pads[i].id)
           }
         }
-      } else if (track.phase === 'spawn' && track.at !== null && gameTime > RELIC_TIMES[RELICS[i].kind]) {
+      } else if (track.phase === 'spawn' && track.at !== null && gameTime > (firstSpawn(this.pads[i]) ?? 0)) {
         track.presentCount = result === 'present' ? track.presentCount + 1 : 0
         if (track.presentCount >= 3) {
           const since = track.takenAt !== null ? gameTime - 2 - track.takenAt : 0
           if (since >= 20 && since <= 120) {
             // the relic is really back earlier or later than we assumed, so learn the actual respawn time
             this.respawnSamples.push(since)
-            this.log(`relic ${RELICS[i].id} back after ${Math.round(since)} s (respawn now ${Math.round(this.respawnTime)} s)`)
-          } else this.log(`relic ${RELICS[i].id} still there after ${Math.round(since)} s – not taken`)
+            this.log(`relic ${this.pads[i].id} back after ${Math.round(since)} s (respawn now ${Math.round(this.respawnTime)} s)`)
+          } else this.log(`relic ${this.pads[i].id} still there after ${Math.round(since)} s – not taken`)
           track.phase = 'up'
           track.at = null
           track.verified = true
@@ -209,7 +275,7 @@ export class RelicTracker {
   }
 
   snapshot(): MinimapState['relics'] {
-    return RELICS.map((relic, i) => {
+    return this.pads.map((relic, i) => {
       const track = this.tracks[i]
       return {
         id: relic.id,
@@ -217,7 +283,8 @@ export class RelicTracker {
         kind: relic.kind,
         pos: relic.pos,
         state: track.phase === 'spawn' ? 'spawn' : track.verified ? 'up' : 'unknown',
-        at: track.phase === 'spawn' ? track.at : null
+        at: track.phase === 'spawn' ? track.at : null,
+        since: track.phase === 'spawn' ? track.takenAt : null
       }
     })
   }

@@ -49,10 +49,11 @@ interface RawLive {
       VictimName?: string
       DragonType?: string
       InhibKilled?: string
+      InhibRespawningSoon?: string
       InhibRespawned?: string
     }[]
   }
-  gameData?: { gameTime: number; gameMode: string; mapNumber?: number; mapName?: string }
+  gameData?: { gameTime: number; gameMode: string; mapNumber?: number; mapName?: string; mapTerrain?: string }
 }
 
 function describe(event: { EventName: string; KillerName?: string; VictimName?: string; DragonType?: string }): string {
@@ -69,6 +70,10 @@ function describe(event: { EventName: string; KillerName?: string; VictimName?: 
       return `Turret destroyed (${event.KillerName ?? '?'})`
     case 'InhibKilled':
       return `Inhibitor destroyed (${event.KillerName ?? '?'})`
+    case 'InhibRespawningSoon':
+      return 'Inhibitor respawning soon'
+    case 'InhibRespawned':
+      return 'Inhibitor respawned'
     case 'FirstBlood':
       return 'First Blood!'
     case 'GameStart':
@@ -105,18 +110,23 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
     .reverse()
     .map((event) => ({ name: event.EventName, time: event.EventTime, text: describe(event) }))
   type InhibEvent = NonNullable<LiveGameState['inhibitorEvents']>[number]
+  // "respawning soon" comes 15 s before the respawn (that's when the announcer calls it)
   const inhibitorEvents = (data.events?.Events ?? []).flatMap((event): InhibEvent[] =>
     event.EventName === 'InhibKilled' && event.InhibKilled
       ? [{ type: 'killed', inhibitor: event.InhibKilled, time: event.EventTime }]
-      : event.EventName === 'InhibRespawned' && event.InhibRespawned
-        ? [{ type: 'respawned', inhibitor: event.InhibRespawned, time: event.EventTime }]
-        : []
+      : event.EventName === 'InhibRespawningSoon' && event.InhibRespawningSoon
+        ? [{ type: 'soon', inhibitor: event.InhibRespawningSoon, time: event.EventTime }]
+        : event.EventName === 'InhibRespawned' && event.InhibRespawned
+          ? [{ type: 'respawned', inhibitor: event.InhibRespawned, time: event.EventTime }]
+          : []
   )
   return {
     active: true,
     gameTime: data.gameData.gameTime,
     gameMode: data.gameData.gameMode,
     mapNumber: data.gameData.mapNumber ?? null,
+    mapName: data.gameData.mapName ?? null,
+    mapTerrain: data.gameData.mapTerrain ?? null,
     activePlayer: data.activePlayer?.riotId ?? data.activePlayer?.summonerName ?? null,
     activeChampion:
       players.find((player) => player.riotId && player.riotId === (data.activePlayer?.riotId ?? data.activePlayer?.summonerName))

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { INHIBITOR_RESPAWN, inhibitorTeam, inhibitorTimers, minimapRect } from '../src/main/minimap/timers'
+import {
+  INHIBITOR_RESPAWN,
+  INHIBITOR_WARNING,
+  RELIC_PADS,
+  inhibitorTeam,
+  inhibitorTimers,
+  minimapRect,
+  observedInhibitorRespawns,
+  relicPadsFor
+} from '../src/main/minimap/timers'
 import { parseLiveData } from '../src/main/live/liveClient'
 
 describe('inhibitor timers', () => {
@@ -25,6 +34,39 @@ describe('inhibitor timers', () => {
     expect(inhibitorTimers(events, 600 + INHIBITOR_RESPAWN + 1)).toHaveLength(0)
     // killed again after respawning
     expect(inhibitorTimers([...events, { type: 'killed', inhibitor: 'Barracks_T1_L1', time: 650 }], 700)).toHaveLength(2)
+  })
+})
+
+describe('inhibitor timers learn from the game', () => {
+  const kill = (inhibitor: string, time: number) => ({ type: 'killed' as const, inhibitor, time })
+  it('pins a timer to the 15 s warning', () => {
+    const events = [kill('Barracks_T2_L1', 600), { type: 'soon' as const, inhibitor: 'Barracks_T2_L1', time: 826 }]
+    expect(inhibitorTimers(events, 830)[0].respawnAt).toBe(826 + INHIBITOR_WARNING)
+    // without the warning the assumed duration counts
+    expect(inhibitorTimers([kill('Barracks_T2_L1', 600)], 700, 240)[0].respawnAt).toBe(840)
+  })
+  it('measures respawns from kill to warning or to respawn, once each', () => {
+    const events = [
+      kill('Barracks_T1_L1', 100),
+      { type: 'soon' as const, inhibitor: 'Barracks_T1_L1', time: 325 },
+      { type: 'respawned' as const, inhibitor: 'Barracks_T1_L1', time: 340 },
+      kill('Barracks_T2_L1', 500),
+      { type: 'respawned' as const, inhibitor: 'Barracks_T2_L1', time: 750 },
+      // a respawn without a kill before it is ignored
+      { type: 'respawned' as const, inhibitor: 'Barracks_T2_C1', time: 900 }
+    ]
+    expect(observedInhibitorRespawns(events)).toEqual([240, 250])
+    expect(observedInhibitorRespawns([kill('X_T1_', 10), { type: 'respawned', inhibitor: 'X_T1_', time: 12 }])).toEqual([])
+  })
+})
+
+describe('relic pads per map', () => {
+  it('knows the Howling Abyss and prefers measured pads', () => {
+    expect(relicPadsFor(12)).toBe(RELIC_PADS[12])
+    expect(relicPadsFor(null)).toBe(RELIC_PADS[12])
+    expect(relicPadsFor(14)).toBeNull()
+    const measured = { '14': [{ id: 'order-outer', team: 'ORDER' as const, kind: 'outer' as const, pos: { x: 0.4, y: 0.6 } }] }
+    expect(relicPadsFor(14, measured)).toBe(measured['14'])
   })
 })
 
@@ -154,5 +196,22 @@ describe('health relics on the minimap (real captures)', () => {
     expect(t.respawnTime).toBeCloseTo(40, 0)
     take(320)
     expect(t.snapshot()[1].at).toBeCloseTo(321 + 40, 0)
+  })
+})
+
+describe('base relics (Cafe Cuties)', () => {
+  it('start unconfirmed, are confirmed by sight and timed once taken', () => {
+    const t = new RelicTracker()
+    t.setPads([{ id: 'order-base', team: 'ORDER', kind: 'base', pos: { x: 0.2, y: 0.8 } }])
+    t.tick(30)
+    expect(t.snapshot()[0]).toMatchObject({ kind: 'base', state: 'unknown', at: null })
+    // nothing there: never confirmed, so it can't be "taken" (a game without that headliner)
+    for (let s = 31; s < 40; s++) expect(t.observe(s, ['absent'])).toEqual([])
+    t.observe(40, ['present'])
+    expect(t.snapshot()[0].state).toBe('up')
+    let taken: string[] = []
+    for (let s = 41; s <= 44; s++) taken = t.observe(s, ['absent'])
+    expect(taken).toEqual(['order-base'])
+    expect(t.snapshot()[0]).toMatchObject({ state: 'spawn', at: 41 + 92.5 })
   })
 })

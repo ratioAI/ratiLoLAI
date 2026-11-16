@@ -21,6 +21,7 @@ import { useApp } from '@/lib/store'
 import { ChampIcon } from '@/components/icons'
 import { PageHeader } from '@/components/Layout'
 import { UniverseGl, projectPoint, type Camera, type StarCloud } from '@/components/universeGl'
+import { freshCanvas } from '@/lib/glCanvas'
 
 interface Visit {
   galaxy: Galaxy
@@ -55,7 +56,7 @@ export function StarMap() {
   const { live, settings } = useApp()
   const [games, setGames] = useState<GameListEntry[]>([])
   const [selected, setSelected] = useState<Galaxy | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const hostRef = useRef<HTMLDivElement>(null)
   const markerRefs = useRef(new Map<number, HTMLDivElement>())
   const here = useMemo(currentGalaxy, [])
   // view state lives in a ref: it changes every frame while dragging and must not re-render React
@@ -107,11 +108,12 @@ export function StarMap() {
   }
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const host = hostRef.current
+    if (!host) return
+    const canvas = freshCanvas(host, 'block h-full w-full cursor-grab touch-none active:cursor-grabbing')
     const gl = canvas.getContext('webgl', { antialias: false, alpha: false, powerPreference: 'low-power' })
     const universe = gl && UniverseGl.create(gl)
-    if (!gl || !universe) return
+    if (!gl || !universe) return () => canvas.remove()
     let cloud: StarCloud | null = null
     const state = view.current
 
@@ -246,6 +248,7 @@ export function StarMap() {
       canvas.removeEventListener('wheel', wheel)
       window.removeEventListener('resize', resize)
       gl.getExtension('WEBGL_lose_context')?.loseContext()
+      canvas.remove()
     }
     // the canvas is set up once; everything that changes is read from refs
   }, [])
@@ -272,7 +275,8 @@ export function StarMap() {
       </PageHeader>
       <div className="flex min-h-0 flex-1 gap-4">
         <div className="relative min-w-0 flex-1 overflow-hidden rounded-2xl border border-line bg-black">
-          <canvas ref={canvasRef} className="h-full w-full cursor-grab touch-none active:cursor-grabbing" />
+          {/* the canvas is created by the effect (see freshCanvas) */}
+          <div ref={hostRef} className="h-full w-full" />
           {/* markers follow their galaxy; the frame loop moves them */}
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
             {marked.map((galaxy) => {

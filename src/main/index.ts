@@ -27,6 +27,7 @@ import { MayhemService } from './mayhem'
 import { OverlayManager } from './overlay'
 import { MinimapWatcher } from './minimap/watcher'
 import { INHIBITOR_POS, minimapRect, RELICS } from './minimap/timers'
+import { LearnedTimersFile, readMeasuredPads } from './minimap/store'
 import { AugmentScanner, type ScanState } from './scanner/scanner'
 import { DiagLog } from './diag'
 import { GameStore } from './games'
@@ -71,7 +72,7 @@ let mainWindow: BrowserWindow | null = null
  * Events the overlay windows listen to. Everything else only goes to the main window.
  * 'loading' and 'framesOffer' are sent to their own window directly since the data is window specific.
  */
-const OVERLAY_EVENTS = new Set<keyof RcEvents>(['live', 'overlayToggle', 'augmentCards', 'overlayPreview', 'augmentsOwned', 'minimap'])
+const OVERLAY_EVENTS = new Set<keyof RcEvents>(['live', 'augmentsOwned', 'minimap'])
 
 /**
  * Sends an event to the windows that use it: the main window gets everything, the overlay windows
@@ -115,16 +116,14 @@ function loadRenderer(browserWindow: BrowserWindow, hash = ''): void {
 
 // --- In-game overlay ---
 //
-// Small transparent windows instead of one full-screen one: the tier panel (right edge), the
-// animated card frames (only over the cards) and the minimap timers. They are only shown when
-// needed: panel and frames while the augment choice can be open, the timers during ARAM games.
+// Small transparent windows instead of one full-screen one: the animated card frames (only over
+// the cards), the minimap timers and the loading-screen panel. They are only shown when needed:
+// the frames while the augment choice is open, the timers during ARAM games.
 
 const diag = new DiagLog(join(userData, 'logs', 'overlay.log'))
 const capture = new CaptureService(join(__dirname, '../preload/index.js'), join(__dirname, '../renderer'), (message) => diag.log(message))
 let inGame = false
 let inMayhem = false
-let manualOpen = false
-let hintOpen = false
 let cards: ScanState = { visible: false, offer: null, displayId: null }
 /** JSON of the offer the frames currently show, to skip redundant updates */
 let shownOffer = ''
@@ -132,22 +131,14 @@ let minimapState: MinimapState | null = null
 let lastTick = { level: 0, dead: false, gameMode: null as string | null }
 
 const overlay = new OverlayManager(join(__dirname, '../preload/index.js'), loadRenderer, () => {
-  // hotkey: scan for the cards right away, and toggle the tier list panel if it is enabled
-  if (settings.get().overlay.autoExpand) manualOpen = !manualOpen
-  diag.log(`hotkey → scan now${manualOpen ? ', panel open' : ''} (inGame=${inGame}, mayhem=${inMayhem})`)
+  // hotkey: look for the cards right away
+  diag.log(`hotkey → scan now (inGame=${inGame}, mayhem=${inMayhem})`)
   if (scanner.running) scanner.lookNow(WINDOWS.manual)
   refreshOverlay()
-  void overlay.panel.send('overlayToggle', null)
 })
 
 function refreshOverlay(): void {
   const current = settings.get()
-  // the tier list panel is opt-in ("Also show the tier list panel" in the settings)
-  const panel =
-    current.overlay.enabled && current.overlay.autoExpand && ((inGame && manualOpen) || (inMayhem && (cards.visible || hintOpen)))
-  if (panel) overlay.showPanel()
-  else overlay.hidePanel()
-
   const offer = current.overlay.enabled && current.overlay.cardFrames && inMayhem ? cards.offer : null
   const key = offer ? JSON.stringify(offer) : ''
   if (key !== shownOffer) {
@@ -182,11 +173,8 @@ const scanner = new AugmentScanner(
   join(userData, 'ocr'),
   () => candidates,
   (state) => {
-    const wasVisible = cards.visible
     cards = state
     if (state.displayId !== null) overlay.moveToDisplay(state.displayId)
-    if (wasVisible && !state.visible) manualOpen = false // augment picked, close the overlay
-    void overlay.panel.send('augmentCards', { visible: state.visible })
     refreshOverlay()
   },
   (message) => diag.log(message),
@@ -215,7 +203,8 @@ scanner.onPicked = (id) => {
 }
 scanner.onUnpicked = (id) => setOwned(owned.filter((ownedId) => ownedId !== id))
 
-// inhibitor timers on the minimap (ARAM); the game shows health relic timers itself
+// health relic and inhibitor respawn timers on the minimap (ARAM, ARAM: Mayhem)
+const minimapPadsFile = join(userData, 'minimap-pads.json')
 const minimap = new MinimapWatcher(
   () => settings.get().minimap,
   () => gameDisplay.get(),
@@ -225,8 +214,10 @@ const minimap = new MinimapWatcher(
     refreshOverlay()
   },
   capture,
-  (message) => diag.log(message)
+  (message) => diag.log(message),
+  new LearnedTimersFile(join(userData, 'learned-timers.json'))
 )
+minimap.measuredPads = readMeasuredPads(minimapPadsFile)
 
 // --- Loading screen panel (Mayhem/ARAM win rates of all players, Space toggles it) ---
 let loadingHidden = false
@@ -272,7 +263,7 @@ function updateOverlay(live: LiveGameState | null): void {
     diag.log(`game detected: gameMode=${live!.gameMode} queue=${queueId ?? '?'} → mayhem=${nowMayhem}`)
     lastTick.gameMode = live!.gameMode
   }
-  minimap.update(live, aram)
+  minimap.update(live, aram, nowMayhem)
   // the game clock went backwards, so this is a new game: forget the last game's augments
   if (inGame) {
     if (live!.gameTime + 5 < ownedGameTime && owned.length) setOwned([])
@@ -296,20 +287,13 @@ function updateOverlay(live: LiveGameState | null): void {
       }
       scanner.update({ level, dead, gameTime: live!.gameTime, itemsKey: (me?.items ?? []).join(',') })
     }
-    // small "augment ready" pill while the choice can be open (dead or at the start of the game)
-    const schedule = scanner.schedule
-    hintOpen = overlaySettings.cardFrames && schedule.pending && !schedule.opening && (dead || live!.gameTime < WINDOWS.gameStart)
   } else {
     if (inMayhem) diag.log('left the Mayhem game')
     inMayhem = false
-    hintOpen = false
     cards = { visible: false, offer: null, displayId: null }
     if (scanner.running) scanner.stop()
   }
-  if (!inGame) {
-    manualOpen = false
-    lastTick = { level: 0, dead: false, gameMode: null }
-  }
+  if (!inGame) lastTick = { level: 0, dead: false, gameMode: null }
   refreshOverlay()
 }
 
@@ -505,6 +489,12 @@ async function autoCrawl(): Promise<void> {
 const AUTO_CRAWL_FIRST_MS = 2 * 60_000
 const AUTO_CRAWL_EVERY_MS = 6 * 3600_000
 
+/** A match was accepted in the client: every window flies to the next galaxy. */
+function onMatchAccepted(): void {
+  cosmosSeed = Date.now()
+  emit('journey', { seed: cosmosSeed })
+}
+
 const lcu = new LcuManager({
   liveCurve: () => liveCurve,
   records: {
@@ -533,10 +523,7 @@ const lcu = new LcuManager({
       updateOverlay(live)
     },
     imported: (result) => emit('imported', result),
-    matchAccepted: () => {
-      cosmosSeed = Date.now()
-      emit('journey', { seed: cosmosSeed })
-    },
+    matchAccepted: onMatchAccepted,
     summary: (summary) => {
       diag.log(`game summary ready: ${summary.gameId} (${summary.win ? 'win' : 'loss'}, curve from ${summary.curveSource})`)
       // remember where in the universe this game was played (the galaxy we flew to when it was accepted)
@@ -558,7 +545,33 @@ function assertPlatform(platform: string): Platform {
 
 // --- IPC ---
 
+/** The screen the game runs on (or the main screen before the first game). */
+function gameScreen(): Electron.Display {
+  return screen.getAllDisplays().find((candidate) => candidate.id === (gameDisplay.get() ?? -1)) ?? screen.getPrimaryDisplay()
+}
+
+/** A made-up augment choice for a champion (best, roughly 30th percentile and worst augment), null without augment data. */
+async function previewOffer(championId: number): Promise<AugmentOffer | null> {
+  const display = gameScreen()
+  overlay.moveToDisplay(display.id)
+  try {
+    const [data, statics] = await Promise.all([mayhem.get(), ddragon.get()])
+    const tiers = augmentTiersForChampion(data, statics, championId)
+    const picks = [tiers[0], tiers[Math.floor(tiers.length * 0.3)], tiers[tiers.length - 1]].filter(Boolean)
+    const rects = cardRects(display.size.width, display.size.height)
+    return {
+      displayId: display.id,
+      championId,
+      cards: picks.map((tier, i) => ({ augmentId: tier.augment.id, text: tier.augment.nameEn, score: 1, rect: rects[i] }))
+    }
+  } catch {
+    return null
+  }
+}
+
 function registerIpc(): void {
+  // lines for overlay.log from the windows (e.g. how the flight went on this GPU)
+  ipcMain.on('rc:log', (_event, message: unknown) => diag.log(`window: ${String(message).slice(0, 400)}`))
   // errors are returned as values, the preload turns them back into exceptions
   const handle = <A extends unknown[], R>(channel: string, fn: (...args: A) => Promise<R> | R): void => {
     ipcMain.handle(channel, async (_event, ...args) => {
@@ -624,24 +637,9 @@ function registerIpc(): void {
   handle('getMayhemPersonal', () => lcu.personalMayhem())
   handle('overlayPreview', async (championId: number) => {
     // simulate an augment choice so the card frames can be checked without a game
-    const display = screen.getAllDisplays().find((candidate) => candidate.id === (gameDisplay.get() ?? -1)) ?? screen.getPrimaryDisplay()
-    overlay.moveToDisplay(display.id)
-    let offer: AugmentOffer | null = null
-    try {
-      const [data, statics] = await Promise.all([mayhem.get(), ddragon.get()])
-      const tiers = augmentTiersForChampion(data, statics, championId)
-      // best, roughly 30th percentile and worst augment as examples
-      const picks = [tiers[0], tiers[Math.floor(tiers.length * 0.3)], tiers[tiers.length - 1]].filter(Boolean)
-      const rects = cardRects(display.size.width, display.size.height)
-      offer = {
-        displayId: display.id,
-        championId,
-        cards: picks.map((tier, i) => ({ augmentId: tier.augment.id, text: tier.augment.nameEn, score: 1, rect: rects[i] }))
-      }
-    } catch {
-      // no data, so only the side panel is shown
-    }
-    overlay.preview(offer, () => void overlay.panel.send('overlayPreview', { championId }))
+    const display = gameScreen()
+    const offer = await previewOffer(championId)
+    if (offer) overlay.preview(offer)
     // example inhibitor timers at the configured minimap position
     if (!inGame) {
       const rect = minimapRect(display.size.width, display.size.height, settings.get().minimap.scale)
@@ -696,6 +694,37 @@ function registerIpc(): void {
     if (/^https:\/\//.test(url)) return shell.openExternal(url)
     return undefined
   })
+
+  // The admin tool only exists in `npm run dev`: in a build this branch and the module are left out.
+  if (import.meta.env.DEV && !app.isPackaged) {
+    void import('./admin').then(({ registerAdmin }) =>
+      registerAdmin({
+        handle,
+        emit,
+        acceptMatch: onMatchAccepted,
+        feedLive: (live) => {
+          emit('live', live)
+          updateOverlay(live)
+        },
+        realLive: () => lcu.getLive(),
+        restore: () => {
+          shownOffer = ''
+          refreshOverlay()
+          refreshLoading()
+        },
+        previewOffer,
+        gameDisplay: gameScreen,
+        minimapScale: () => settings.get().minimap.scale,
+        cosmosSeed: () => cosmosSeed,
+        overlay,
+        minimap,
+        capture,
+        games,
+        diag,
+        padsFile: minimapPadsFile
+      })
+    )
+  }
 }
 
 // --- Main window ---
@@ -720,6 +749,11 @@ function createWindow(): void {
     }
   })
   mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.webContents.on('render-process-gone', (_event, details) =>
+    diag.log(`main window crashed: ${details.reason} (exit code ${details.exitCode})`)
+  )
+  mainWindow.webContents.on('unresponsive', () => diag.log('main window not responding'))
+  mainWindow.webContents.on('responsive', () => diag.log('main window responding again'))
   // the hidden overlay windows would otherwise keep the app alive
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -743,7 +777,21 @@ app.on('second-instance', () => {
   }
 })
 
+// A crashed or hung GPU process makes Chromium fall back to software rendering, after which the
+// animated parts get very slow. Log it, so a report shows when and why that happened.
+app.on('child-process-gone', (_event, details) => {
+  if (details.type !== 'GPU') return
+  diag.log(`GPU process gone: ${details.reason} (exit code ${details.exitCode}) – WebGL now ${app.getGPUFeatureStatus().webgl}`)
+})
+
+// the GPU status is only known once the GPU process has reported in (right at start it always reads "disabled")
+app.once('gpu-info-update', () => {
+  const status = app.getGPUFeatureStatus()
+  diag.log(`GPU: WebGL ${status.webgl}, WebGL2 ${status.webgl2}, compositing ${status.gpu_compositing}`)
+})
+
 void app.whenReady().then(async () => {
+  diag.log(`app ${app.getVersion()} started`)
   setTimeout(() => void autoCrawl(), AUTO_CRAWL_FIRST_MS)
   setInterval(() => void autoCrawl(), AUTO_CRAWL_EVERY_MS)
   // Developer self-tests, run headless under xvfb and controlled through environment variables.
@@ -818,7 +866,6 @@ void app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 700))
     for (const [name, part] of [
       ['frames', overlay.frames],
-      ['panel', overlay.panel],
       ['minimap', overlay.minimap]
     ] as const) {
       if (part.win?.isVisible())

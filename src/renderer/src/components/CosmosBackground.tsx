@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { Settings } from '@shared/types'
 import { useIdleRef } from '@/lib/useIdle'
+import { freshCanvas, gpuName, isSoftwareGpu } from '@/lib/glCanvas'
 import { SPACE_LIB, galaxyUniforms, quadProgram } from './spaceGlsl'
 
 export { cosmicSeed } from './spaceGlsl'
@@ -14,7 +15,8 @@ export { cosmicSeed } from './spaceGlsl'
  * hole filling the sky), distant galaxies, and the planet's mountains and atmosphere. The sky
  * rotates very slowly.
  */
-const FRAG = `${SPACE_LIB}
+/** The night sky (exported for the shader test of the admin tool). */
+export const NIGHT_SKY_FRAG = `${SPACE_LIB}
 uniform vec2 u_res;
 uniform float u_time;
 uniform float u_seed;
@@ -46,7 +48,7 @@ export function CosmosBackground({
   inGame: boolean
   className?: string
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const hostRef = useRef<HTMLDivElement>(null)
   const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
   // during a game the animation drops to the calm frame rate
   const effectiveMode: keyof typeof FPS = reducedMotion ? 'static' : inGame && mode === 'animated' ? 'calm' : mode
@@ -59,12 +61,12 @@ export function CosmosBackground({
   useEffect(() => redrawRef.current?.(), [seed])
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const host = hostRef.current
+    if (!host) return
+    const canvas = freshCanvas(host)
     const gl = canvas.getContext('webgl', { antialias: false, alpha: false, powerPreference: 'low-power' })
-    if (!gl) return
-    const program = quadProgram(gl, FRAG)
-    if (!program) return
+    const program = gl && quadProgram(gl, NIGHT_SKY_FRAG)
+    if (!gl || !program) return () => canvas.remove()
     const uRes = gl.getUniformLocation(program, 'u_res')
     const uTime = gl.getUniformLocation(program, 'u_time')
     const uSeed = gl.getUniformLocation(program, 'u_seed')
@@ -89,7 +91,8 @@ export function CosmosBackground({
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
     resize()
-    const fps = FPS[effectiveMode]
+    // without a GPU (software rendering) a still picture, the animation would eat the CPU
+    const fps = isSoftwareGpu(gpuName(gl)) ? 0 : FPS[effectiveMode]
     let rafId = 0
     let lastDraw = 0
     const loop = (now: number) => {
@@ -113,9 +116,10 @@ export function CosmosBackground({
       redrawRef.current = null
       window.removeEventListener('resize', onResize)
       gl.getExtension('WEBGL_lose_context')?.loseContext()
+      canvas.remove()
     }
   }, [effectiveMode, idleRef])
 
-  // new canvas per mode, a context we released with loseContext() can't be reused
-  return <canvas key={effectiveMode} ref={canvasRef} aria-hidden className={className} />
+  // the effect puts a new canvas in here for every mode (see freshCanvas)
+  return <div ref={hostRef} aria-hidden className={className} />
 }

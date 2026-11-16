@@ -9,8 +9,9 @@ type Stored = Omit<Settings, 'hasApiKey'> & { apiKeyEnc?: string; apiKeyPlain?: 
  * Bump this to migrate stored settings.
  * 2: the UI switched to English, so game data defaults to en_US.
  * 3: only the card frames are on by default, the tier list panel is opt-in.
+ * 4: the tier list panel is gone (its setting is dropped).
  */
-const SCHEMA = 3
+const SCHEMA = 4
 
 export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
   platform: 'euw1',
@@ -27,7 +28,6 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
   overlay: {
     enabled: true,
     hotkey: 'Alt+Shift+A',
-    autoExpand: false,
     cardFrames: true,
     animation: 'smooth',
     loadingScreen: true,
@@ -77,7 +77,8 @@ export class SettingsStore {
       client: { ...DEFAULT_SETTINGS.client, ...loaded.client }
     }
     if ((loaded.schema ?? 1) < 2) this.data.language = 'en_US'
-    if ((loaded.schema ?? 1) < 3) this.data.overlay.autoExpand = false
+    // the tier list panel next to the cards was removed in 1.0.5
+    delete (this.data.overlay as Partial<Record<'autoExpand', unknown>>).autoExpand
     this.data.schema = SCHEMA
   }
 

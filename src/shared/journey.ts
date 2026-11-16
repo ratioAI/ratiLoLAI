@@ -2,39 +2,47 @@ import { add, cross, dot, extentOf, length, lerp, normalize, placeOf, prng, scal
 
 /*
  * The flight from the planet of the last game to the planet of the next one, as a camera path
- * through the universe catalogue. There are two kinds, picked at random:
+ * through the universe catalogue. A 24-second film in the first person, in two versions picked at
+ * random:
  *
- *   wormhole   up and across the home galaxy to a wormhole hanging above it. In its sphere you
- *              already see the target galaxy. Into the throat, through the tunnel, out of the
- *              other mouth high above the target galaxy, down into it.
- *   blackhole  out of the home galaxy towards a supermassive black hole between the galaxies, a
- *              close swing-by just above its accretion disk that bends the course towards the
- *              target, then on to the target galaxy and down into it.
+ *   wormhole   across the home galaxy to a wormhole hanging above it. In its sphere you already see
+ *              the other side. Into it, through the throat, out of the far mouth high above the
+ *              target galaxy.
+ *   slingshot  out of the home galaxy to a supermassive black hole between the galaxies, a close
+ *              swing-by just above its accretion disk that bends the course towards the target and
+ *              flings us on. We never fall in.
  *
- * Both start with the take-off from the old planet and end with the same arrival: into an arm (or
- * clump, or ring) of the target galaxy, its stars rushing past, the target star turning into a sun
- * with planets, landing. Timeline in seconds:
+ * Both begin and end the same way. Timeline in seconds:
  *
- *   0    to 2.4    take-off, the old planet's horizon drops away (painted by the flight shader)
- *   wormhole: 2 to 9.2 across the galaxy to the wormhole · 9.2 to 10.8 through the throat ·
- *             10.8 to 14.6 out above the target galaxy and down to the target star
- *   blackhole: 2 to 6.4 out towards the black hole · 6.4 to 10.6 swing-by · 10.6 to 14.6 on to
- *              the target galaxy and down to the target star
- *   14.6 to 16     landing, the new planet becomes the horizon and its night sky fades in
+ *    0   to  1.8   take-off: the ground drops away, the view tips down until the planet is all there is
+ *    1.3 to  6.3   looking back, the home planet shrinks to a dot among the stars of its galaxy;
+ *                  then the view swings round, weightless, to where we are going
+ *    wormhole:  to 10.2 across the galaxy to the wormhole · to 13.4 through the throat
+ *    slingshot: to  8.4 out to the black hole · to 14.2 the swing-by
+ *    then to 21.2  the target galaxy grows, down into it, its stars rush past, the target star
+ *                  becomes a sun, beside it the planet: a dot, a disk, all there is
+ *   20.9 to 24     landing: the view tips up again, the horizon comes down into the picture and the
+ *                  new night sky stands above it
+ *
+ * What keeps it clean:
+ *   - One picture at any time, never two blended over each other. The painted night sky of a
+ *     planet and the universe outside are swapped while the planet itself fills the screen.
+ *   - Nothing is shown twice and nothing runs backwards: the planets, the wormhole's far side and
+ *     everything else that comes closer only ever comes closer (see the tests).
+ *   - The first and the last frame are exactly the night sky the app shows while you stand on the
+ *     planet (CosmosBackground).
  *
  * Distances in space span many orders of magnitude (a star's neighbourhood, a galaxy, the gap
  * between galaxies), so every leg moves on a logarithmic schedule: fast where everything is far,
  * slow where something is close. Where two legs meet they have the same speed and direction.
  */
 
-/** Seconds from take-off until the camera has reached the target star. Landing on the planet follows. */
-export const FLIGHT_S = 14.6
+/** Seconds from take-off until the camera has reached the target planet. The landing follows. */
+export const FLIGHT_S = 21.2
 /** Whole flight including the landing. */
-export const JOURNEY_S = 16
-/** How much later the arrival happens than in the 12-second flight of 1.0 (the landing shader keeps its old timings). */
-export const ARRIVAL_SHIFT = FLIGHT_S - 10.7
+export const JOURNEY_S = 24
 
-export const FLIGHT_VARIANTS = ['wormhole', 'blackhole'] as const
+export const FLIGHT_VARIANTS = ['wormhole', 'slingshot'] as const
 export type FlightVariant = (typeof FLIGHT_VARIANTS)[number]
 
 export interface CameraPose {
@@ -58,6 +66,10 @@ export interface Wormhole {
   turn: number[]
   /** start and end of the passage through the throat, in seconds */
   transit: [number, number]
+  /** where the camera is when it comes out, and how it looks: the far side is painted from here */
+  exitEye: Vec3
+  exitForward: Vec3
+  exitUp: Vec3
 }
 
 export interface BlackHole {
@@ -83,6 +95,11 @@ export interface FlightPlan {
   /** straight distance between the two places, in world units */
   distance: number
   cameraAt(seconds: number): CameraPose
+  /** where the flight starts (the home planet, next to its star) and where it ends (the target planet) */
+  home: Vec3
+  planet: Vec3
+  /** the target planet's sun */
+  sun: Vec3
   wormhole?: Wormhole
   blackHole?: BlackHole
 }
@@ -236,28 +253,64 @@ function blend(a: Vec3, b: Vec3, t: number): Vec3 {
 const pairRandom = (fromSeed: number, toSeed: number): (() => number) =>
   prng(Math.abs(Math.round(fromSeed * 7.31)) * 31 + Math.abs(Math.round(toSeed * 7.31)) + 7)
 
+/** Looking back at the home planet at first, then round to `ahead` (the view the rest of the flight wants). */
+const LOOK_BACK_UNTIL = 3.1
+const LOOK_AHEAD_FROM = 6.3
+function lookingBack(t: number, eye: Vec3, home: Vec3, out: Vec3, ahead: Vec3): Vec3 {
+  if (t >= LOOK_AHEAD_FROM) return ahead
+  const back = aim(eye, home, scale(out, -1))
+  const s = smooth(LOOK_BACK_UNTIL, LOOK_AHEAD_FROM, t)
+  if (s <= 0) return back
+  // back and ahead are nearly opposite, so the turn goes round by a fixed side (a plain slerp
+  // between opposite directions would pick its way round anew every frame)
+  const side = perpendicular(out)
+  return normalize(add(add(scale(back, 1 - s), scale(ahead, s)), scale(side, 1.3 * Math.sin(Math.PI * s))))
+}
+
+/** A slow roll to and fro while we coast: nothing is "up" out here. None at the start and at the end. */
+function weightless(pose: { forward: Vec3; up: Vec3 }, t: number): Vec3 {
+  const roll = (0.17 * Math.sin(0.5 * t + 0.6) + 0.05 * Math.sin(1.3 * t)) * smooth(2.4, 5, t) * (1 - smooth(19.4, 21, t))
+  return rotate(pose.up, pose.forward, roll)
+}
+
+/** When the view starts to turn to the target planet and when it is dead ahead. */
+const AIM_AT_TARGET: [number, number] = [15.2, 17.4]
+
 /**
- * The arrival leg shared by both kinds: from `X` heading along `heading` down to the target star.
- * `start` is either the speed to start with (matching the leg before) or, after the wormhole, the
- * length scale to start from.
+ * The arrival leg shared by both kinds: from `X` heading along `heading` down to the target
+ * planet, which sits a little to the side of its star, so the sun ends up beside the planet in the
+ * picture and not behind it. `start` is either the speed to start with (matching the leg before)
+ * or, after the wormhole, the length scale to start from.
  */
-function arrivalLeg(t0: number, X: Vec3, heading: Vec3, start: { speed: number } | { scale: number }, B: Galaxy, P3: Vec3, nB: Vec3): Leg {
+function arrivalLeg(
+  t0: number,
+  X: Vec3,
+  heading: Vec3,
+  start: { speed: number } | { scale: number },
+  B: Galaxy,
+  star: Vec3,
+  nB: Vec3
+): { leg: Leg; planet: Vec3 } {
   const RB = sizeOf(B)
-  const span = length(sub(P3, X))
-  const back = normalize(add(scale(nB, 0.5), scale(inPlane(sub(X, P3), nB, scale(B.axisU, -1)), 0.87)))
+  const back = normalize(add(scale(nB, 0.5), scale(inPlane(sub(X, star), nB, scale(B.axisU, -1)), 0.87)))
+  // we arrive flying along -back; the sun is 20 degrees off that, ahead of the planet, so it is in the picture
+  const side = inPlane(nB, back, perpendicular(back))
+  const toSun = normalize(add(scale(back, -Math.cos(0.35)), scale(side, Math.sin(0.35))))
+  const planet = sub(star, scale(toSun, 0.004 * RB))
+  const span = length(sub(planet, X))
   // from far away the galaxy is approached in a wide sweep; from close by the handles stay short
   const handleIn = span > 8 * RB ? Math.min(14 * RB, Math.max(4 * RB, 0.35 * span)) : 0.45 * span
   const handleOut = span > 8 * RB ? Math.min(0.45 * span, Math.max(0.8 * RB, 0.3 * span)) : 0.3 * span
   const build = (s0: number) =>
-    bezierLeg(t0, FLIGHT_S, X, add(X, scale(heading, handleOut)), add(P3, scale(back, handleIn)), P3, s0, 0.0012 * RB)
-  return build('speed' in start ? scaleForSpeed(build, start.speed, 'start', span) : start.scale)
+    bezierLeg(t0, FLIGHT_S, X, add(X, scale(heading, handleOut)), add(planet, scale(back, handleIn)), planet, s0, 0.0012 * RB)
+  return { leg: build('speed' in start ? scaleForSpeed(build, start.speed, 'start', span) : start.scale), planet }
 }
 
 // ---------------------------------------------------------------------------------------------
 // wormhole
 
-const W_ENTER = 9.2
-const W_EXIT = 10.8
+const W_ENTER = 10.2
+const W_EXIT = 13.4
 
 function wormholePlan(fromSeed: number, toSeed: number): FlightPlan {
   const start = placeOf(fromSeed)
@@ -289,21 +342,22 @@ function wormholePlan(fromSeed: number, toSeed: number): FlightPlan {
   const fout = normalize(sub(add(B.pos, scale(radialB, 0.25 * RB)), W2))
   const X1 = add(W2, scale(fout, 1.15 * rhoB))
   // out of the mouth slowly enough to take in the view, then down into the galaxy
-  const arrival = arrivalLeg(W_EXIT, X1, fout, { scale: 1.2 * rhoB }, B, P3, nB)
+  const { leg: arrival, planet } = arrivalLeg(W_EXIT, X1, fout, { scale: 1.2 * rhoB }, B, P3, nB)
 
   const eyeAt = (t: number): Vec3 => (t < W_EXIT ? approach.at(Math.min(t, W_ENTER)) : arrival.at(t))
+  const arrive = tangentOf(arrival.at, FLIGHT_S, W_EXIT, FLIGHT_S)
   const forwardAt = (t: number): Vec3 => {
     if (t < W_ENTER) {
       const eye = approach.at(t)
-      return blend(tangentOf(approach.at, t, 0, W_ENTER), aim(eye, W1, fin), smooth(2.2, 5.0, t))
+      const ahead = blend(tangentOf(approach.at, t, 0, W_ENTER), aim(eye, W1, fin), smooth(4.6, 7.6, t))
+      return lookingBack(t, eye, P0, out, ahead)
     }
     if (t < W_EXIT) return fin
     const eye = arrival.at(t)
-    const arrive = tangentOf(arrival.at, FLIGHT_S, W_EXIT, FLIGHT_S)
     return blend(
-      blend(tangentOf(arrival.at, t, W_EXIT, FLIGHT_S), fout, 1 - smooth(W_EXIT, 11.6, t)),
-      aim(eye, P3, arrive),
-      smooth(11.0, 12.6, t)
+      blend(tangentOf(arrival.at, t, W_EXIT, FLIGHT_S), fout, 1 - smooth(W_EXIT, W_EXIT + 1.4, t)),
+      aim(eye, planet, arrive),
+      smooth(AIM_AT_TARGET[0], AIM_AT_TARGET[1], t)
     )
   }
 
@@ -324,25 +378,40 @@ function wormholePlan(fromSeed: number, toSeed: number): FlightPlan {
     from: A,
     to: B,
     distance: length(sub(P3, P0)),
-    wormhole: { entry: W1, exit: W2, entryRadius: rhoA, exitRadius: rhoB, turn, transit: [W_ENTER, W_EXIT] },
+    home: P0,
+    planet,
+    sun: P3,
+    wormhole: {
+      entry: W1,
+      exit: W2,
+      entryRadius: rhoA,
+      exitRadius: rhoB,
+      turn,
+      transit: [W_ENTER, W_EXIT],
+      exitEye: X1,
+      exitForward: fout,
+      exitUp: upOut
+    },
     cameraAt(seconds) {
       const t = Math.min(JOURNEY_S, Math.max(0, seconds))
+      const dive = 0.2 * bump(17.4, 19, 20.6, t)
       const fovY =
         t < W_ENTER
-          ? 0.95 + 0.22 * bump(3, 5.2, 7.4, t) + 0.25 * smooth(7.8, W_ENTER, t)
+          ? 0.95 + 0.2 * bump(4.6, 6.8, 8.8, t) + 0.25 * smooth(8.6, W_ENTER, t)
           : t < W_EXIT
             ? 1.2
-            : 1.2 - 0.25 * smooth(W_EXIT, 12.4, t) + 0.2 * bump(12.2, 13.2, 14.3, t)
-      const shake = t < W_ENTER ? 0.35 * smooth(8.2, W_ENTER, t) : t < W_EXIT ? 1 : 0.5 * (1 - smooth(W_EXIT, 11.6, t))
-      return { eye: eyeAt(t), forward: forwardAt(t), up: upAt(t), fovY, shake }
+            : 1.2 - 0.25 * smooth(W_EXIT + 0.3, W_EXIT + 2.6, t) + dive
+      const shake = t < W_ENTER ? 0.35 * smooth(9, W_ENTER, t) : t < W_EXIT ? 1 : 0.5 * (1 - smooth(W_EXIT, W_EXIT + 1, t))
+      const forward = forwardAt(t)
+      return { eye: eyeAt(t), forward, up: weightless({ forward, up: upAt(t) }, t), fovY, shake }
     }
   }
 }
 
 // ---------------------------------------------------------------------------------------------
-// black hole
+// slingshot around the black hole
 
-const B_FLYBY: [number, number] = [6.4, 10.6]
+const B_FLYBY: [number, number] = [8.4, 14.2]
 const DISK_INNER = 3
 const DISK_OUTER = 14
 const PERIAPSIS = 20
@@ -351,7 +420,7 @@ const FLYBY_EDGE = 110
 /** angle between the camera's path and the disk plane: just above it, for the classic view of the disk edge-on */
 const DISK_TILT = (10 * Math.PI) / 180
 
-function blackholePlan(fromSeed: number, toSeed: number): FlightPlan {
+function slingshotPlan(fromSeed: number, toSeed: number): FlightPlan {
   const start = placeOf(fromSeed)
   const end = placeOf(toSeed)
   const A = start.galaxy
@@ -431,42 +500,49 @@ function blackholePlan(fromSeed: number, toSeed: number): FlightPlan {
   const buildDeparture = (s1: number) =>
     bezierLeg(0, f0, P0, add(P0, scale(out, Math.min(3 * RA, 0.3 * span))), sub(H0, scale(tanIn, 0.3 * span)), H0, 0.0012 * RA, s1)
   const departure = buildDeparture(scaleForSpeed(buildDeparture, inSpeed, 'end', span))
-  const arrival = arrivalLeg(f1, H1, tanOut, { speed: outSpeed }, B, P3, nB)
+  const { leg: arrival, planet } = arrivalLeg(f1, H1, tanOut, { speed: outSpeed }, B, P3, nB)
 
   const eyeAt = (t: number): Vec3 => (t < f0 ? departure.at(t) : t < f1 ? flybyAt(t) : arrival.at(t))
   const arrive = tangentOf(arrival.at, FLIGHT_S, f1, FLIGHT_S)
   const travel = (t: number): Vec3 => (t < f1 ? tangentOf(flybyAt, t, f0, f1) : tangentOf(arrival.at, t, f1, FLIGHT_S))
   const forwardAt = (t: number): Vec3 => {
     const eye = eyeAt(t)
-    if (t < f0) return blend(tangentOf(departure.at, t, 0, f0), aim(eye, M, din), smooth(1.8, 4.8, t))
-    // eyes on the hole until it is beside us, then along the way we go, then on the target
-    const passing = blend(blend(aim(eye, M, e2), travel(t), 0.22), travel(t), smooth(8.7, 9.9, t))
-    return blend(passing, aim(eye, P3, arrive), smooth(10.2, 11.6, t))
+    if (t < f0) {
+      const ahead = blend(tangentOf(departure.at, t, 0, f0), aim(eye, M, din), smooth(4.6, 7.4, t))
+      return lookingBack(t, eye, P0, out, ahead)
+    }
+    // eyes on the hole until it is beside us, then slowly along the way we go, then on the target
+    const passing = blend(blend(aim(eye, M, e2), travel(t), 0.22), travel(t), smooth(11.2, 13.8, t))
+    return blend(passing, aim(eye, planet, arrive), smooth(AIM_AT_TARGET[0], AIM_AT_TARGET[1], t))
   }
   // roll so that the disk lies level in the picture, the way the film frames it
   const upAt = transportUps(forwardAt, nA, [], (t) => ({
     towards: normal,
-    amount: 0.035 * smooth(3.8, 5.2, t) * (1 - smooth(9.8, 10.8, t))
+    amount: 0.035 * smooth(5.6, 7.4, t) * (1 - smooth(13, 14.4, t))
   }))
 
   return {
-    variant: 'blackhole',
+    variant: 'slingshot',
+    home: P0,
+    planet,
+    sun: P3,
     from: A,
     to: B,
     distance: length(sub(P3, P0)),
     blackHole: { pos: M, rs, axisX, normal, axisZ, diskInner: DISK_INNER, diskOuter: DISK_OUTER, periapsis: PERIAPSIS, flyby: B_FLYBY },
     cameraAt(seconds) {
       const t = Math.min(JOURNEY_S, Math.max(0, seconds))
-      const fovY = 0.95 + 0.28 * bump(2.4, 4.4, 6.2, t) + 0.12 * bump(7, 8.6, 10.2, t) + 0.22 * bump(11, 12.2, 13.8, t)
-      const shake = 0.45 * bump(7.4, 8.5, 9.6, t)
-      return { eye: eyeAt(t), forward: forwardAt(t), up: upAt(t), fovY, shake }
+      const fovY = 0.95 + 0.24 * bump(4.6, 6.6, 8.6, t) + 0.14 * bump(9.6, 11.4, 13.4, t) + 0.2 * bump(17.4, 19, 20.6, t)
+      const shake = 0.45 * bump(10, 11.3, 12.6, t)
+      const forward = forwardAt(t)
+      return { eye: eyeAt(t), forward, up: weightless({ forward, up: upAt(t) }, t), fovY, shake }
     }
   }
 }
 
 /** The flight between two places. */
 export function flightPlan(fromSeed: number, toSeed: number, variant: FlightVariant = 'wormhole'): FlightPlan {
-  return variant === 'blackhole' ? blackholePlan(fromSeed, toSeed) : wormholePlan(fromSeed, toSeed)
+  return variant === 'slingshot' ? slingshotPlan(fromSeed, toSeed) : wormholePlan(fromSeed, toSeed)
 }
 
 /**
@@ -475,7 +551,92 @@ export function flightPlan(fromSeed: number, toSeed: number, variant: FlightVari
  */
 export function pickVariant(seed: number, recent: readonly FlightVariant[]): FlightVariant {
   const coin = prng(Math.abs(Math.round(seed * 7.31)) + 991)()
-  const variant: FlightVariant = coin < 0.5 ? 'wormhole' : 'blackhole'
-  if (recent.length >= 2 && recent[0] === variant && recent[1] === variant) return variant === 'wormhole' ? 'blackhole' : 'wormhole'
+  const variant: FlightVariant = coin < 0.5 ? 'wormhole' : 'slingshot'
+  if (recent.length >= 2 && recent[0] === variant && recent[1] === variant) return variant === 'wormhole' ? 'slingshot' : 'wormhole'
   return variant
+}
+
+// ---------------------------------------------------------------------------------------------
+// the two planets, as they are on screen
+
+/**
+ * A planet in the picture. On the ground it is the night sky's own view (planetGround in
+ * spaceGlsl.ts): the planet is a circle of radius 3 screen heights whose centre lies 3.42 below
+ * the middle of the screen. `pitch` moves that whole view up (we look down), `drop` lowers the
+ * horizon alone (we gain height). Once the circle covers the whole screen the painted sky is gone
+ * and the planet is drawn as a globe (`globe`): still the same circle, then with `radius`
+ * shrinking and its centre moving from the middle of the screen (`pinned` = 1) to where the planet
+ * really is in space (`pinned` = 0, the renderer projects it).
+ */
+export interface PlanetView {
+  /** the painted sky is still (or again) in the picture */
+  ground: boolean
+  /** screen heights the view is tipped down by; at PLANET_OFFSET the planet's centre is in the middle of the screen */
+  pitch: number
+  drop: number
+  /** radius of the globe in screen heights; 0 = not in the picture */
+  radius: number
+  pinned: number
+  /** 1 = we see its dark side only, 0 = lit by its sun */
+  night: number
+}
+
+export const PLANET_RADIUS = 3
+export const PLANET_OFFSET = 3.42
+/** Tipped down this far the planet covers the screen, whatever its shape (up to 32:9). */
+const COVERED_PITCH = 1.6
+/** How fast a planet shrinks behind us and grows ahead of us: a factor e every 1/GROWTH seconds. */
+const GROWTH = 1.5
+const LAUNCH_TURNED = 1.8
+/** The view starts to tip up when the target planet has grown to this radius (it covers the screen from about 1.3). */
+const LANDING_RADIUS = 1.5
+const LANDING_TURNS = FLIGHT_S + 0.2 - Math.log(PLANET_RADIUS / LANDING_RADIUS) / GROWTH
+const LANDING_TURNED = 22.9
+const LANDED = JOURNEY_S - 0.15
+
+/** The home planet: we stand on it, lift off, tip down until it is all we see, and leave it behind. */
+export function homePlanetAt(seconds: number): PlanetView {
+  const t = Math.max(0, seconds)
+  const pitch = PLANET_OFFSET * smooth(0.25, LAUNCH_TURNED, t)
+  const shrink = Math.exp(-GROWTH * Math.max(0, t - 1.3))
+  const radius = PLANET_RADIUS * shrink
+  return {
+    ground: pitch < COVERED_PITCH,
+    pitch,
+    drop: 0.08 * smooth(0, 0.9, t),
+    radius: radius > 0.0025 ? radius : 0,
+    pinned: 1 - smooth(LAUNCH_TURNED, LOOK_BACK_UNTIL + 0.3, t),
+    night: 1 - smooth(0.9, 1.9, t)
+  }
+}
+
+/** The target planet: a dot beside its sun, a globe, all we see; then we tip up and stand on it. */
+export function destPlanetAt(seconds: number): PlanetView {
+  const t = Math.min(JOURNEY_S, seconds)
+  const pitch = PLANET_OFFSET * (1 - smooth(LANDING_TURNS, LANDING_TURNED, t))
+  const radius = PLANET_RADIUS * Math.exp(-GROWTH * Math.max(0, FLIGHT_S + 0.2 - t))
+  return {
+    ground: pitch < COVERED_PITCH,
+    pitch,
+    drop: 0.08 * (1 - smooth(LANDING_TURNED - 0.9, LANDED, t)),
+    radius: radius > 0.0025 ? radius : 0,
+    pinned: smooth(AIM_AT_TARGET[1], FLIGHT_S - 1, t),
+    // lit while we come down over it; dark by the time the horizon comes into the picture
+    night: smooth(FLIGHT_S + 0.1, 22.1, t)
+  }
+}
+
+/** How bright the target planet's sun is in the picture (0 until we are inside its galaxy). */
+export function sunGlowAt(seconds: number): number {
+  return smooth(16.2, 17.6, seconds)
+}
+
+/** How strong the film look is (bloom, letterbox, grain): 0 on the first and last frames, 1 in between. */
+export function cinemaAt(seconds: number): number {
+  return smooth(0.4, 2, seconds) * (1 - smooth(JOURNEY_S - 1.8, JOURNEY_S - 0.6, seconds))
+}
+
+/** When the caption with the destination's name is on screen: from the target galaxy coming into view until we are in it. */
+export function captionAt(seconds: number): number {
+  return smooth(14.6, 15.4, seconds) * (1 - smooth(18.4, 19.1, seconds))
 }

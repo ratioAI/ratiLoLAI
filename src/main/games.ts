@@ -184,6 +184,12 @@ export class GameStore {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM games').get() as { n: number }).n
   }
 
+  /** Removes the made-up games of the admin tool (negative ids), returns how many there were. */
+  deleteTestGames(): number {
+    // game_players rows go with them (ON DELETE CASCADE)
+    return Number(this.db.prepare('DELETE FROM games WHERE game_id < 0').run().changes)
+  }
+
   /**
    * Win or loss per game for the given players in ARAM or ARAM: Mayhem, as gameId → won. Same
    * result as resultsFromSummaries (records.ts) over the whole history, without parsing it.

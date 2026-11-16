@@ -320,21 +320,43 @@ export interface Program {
   attrib: (name: string) => number
 }
 
-export function createProgram(gl: WebGLRenderingContext, vert: string, frag: string): Program | null {
-  const compile = (type: number, source: string): WebGLShader => {
+/** Vertex and fragment shader of every program UniverseGl uses, in the order of its `programs`. */
+export const UNIVERSE_SHADERS: readonly [string, string][] = [
+  [DISK_VERT, DISK_FRAG],
+  [HALO_VERT, HALO_FRAG],
+  [CORE_VERT, SOFT_POINT_FRAG],
+  [STARS_VERT, SOFT_POINT_FRAG],
+  [ROUTE_VERT, ROUTE_FRAG],
+  [BACKDROP_VERT, BACKDROP_FRAG]
+]
+
+/**
+ * Starts compiling and linking a program without waiting for the result. Asking for a compile or
+ * link status makes the page wait until the GPU driver is done, which can take seconds on Windows
+ * for the big flight shaders; finishProgram does that later, ideally once whenLinked says it's done.
+ */
+export function startProgram(gl: WebGLRenderingContext, vert: string, frag: string): WebGLProgram {
+  const program = gl.createProgram()!
+  for (const [type, source] of [
+    [gl.VERTEX_SHADER, vert],
+    [gl.FRAGMENT_SHADER, frag]
+  ] as const) {
     const shader = gl.createShader(type)!
     gl.shaderSource(shader, source)
     gl.compileShader(shader)
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS) && !gl.isContextLost())
-      console.warn('universe shader:', gl.getShaderInfoLog(shader))
-    return shader
+    gl.attachShader(program, shader)
   }
-  const program = gl.createProgram()!
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, vert))
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, frag))
   gl.linkProgram(program)
+  return program
+}
+
+/** Checks a started program (waits for it if it isn't done) and wraps it; null if it didn't link. */
+export function finishProgram(gl: WebGLRenderingContext, program: WebGLProgram): Program | null {
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    console.warn('universe shader:', gl.getProgramInfoLog(program))
+    if (!gl.isContextLost()) {
+      const log = [gl.getProgramInfoLog(program), ...(gl.getAttachedShaders(program) ?? []).map((shader) => gl.getShaderInfoLog(shader))]
+      console.warn('shader:', log.filter(Boolean).join('\n'))
+    }
     return null
   }
   const uniforms = new Map<string, WebGLUniformLocation | null>()
@@ -350,6 +372,30 @@ export function createProgram(gl: WebGLRenderingContext, vert: string, frag: str
       return attribs.get(name)!
     }
   }
+}
+
+export function createProgram(gl: WebGLRenderingContext, vert: string, frag: string): Program | null {
+  return finishProgram(gl, startProgram(gl, vert, frag))
+}
+
+/**
+ * Resolves once the GPU has finished the started programs, without blocking the page meanwhile
+ * (KHR_parallel_shader_compile; Chromium has it on Windows). True when done, false after `timeoutMs`
+ * or a lost context. Without the extension it resolves right away and finishProgram has to wait.
+ */
+export function whenLinked(gl: WebGLRenderingContext, programs: WebGLProgram[], timeoutMs: number): Promise<boolean> {
+  const parallel = gl.getExtension('KHR_parallel_shader_compile')
+  if (!parallel) return Promise.resolve(true)
+  const started = performance.now()
+  return new Promise((resolve) => {
+    const poll = (): void => {
+      if (gl.isContextLost()) return resolve(false)
+      if (programs.every((program) => gl.getProgramParameter(program, parallel.COMPLETION_STATUS_KHR) === true)) return resolve(true)
+      if (performance.now() - started > timeoutMs) return resolve(false)
+      setTimeout(poll, 50)
+    }
+    poll()
+  })
 }
 
 /** The stars of one galaxy, uploaded to the GPU. */
@@ -447,14 +493,14 @@ export class UniverseGl {
 
   /** Null when WebGL shaders can't be built on this machine. */
   static create(gl: WebGLRenderingContext): UniverseGl | null {
-    const programs = [
-      createProgram(gl, DISK_VERT, DISK_FRAG),
-      createProgram(gl, HALO_VERT, HALO_FRAG),
-      createProgram(gl, CORE_VERT, SOFT_POINT_FRAG),
-      createProgram(gl, STARS_VERT, SOFT_POINT_FRAG),
-      createProgram(gl, ROUTE_VERT, ROUTE_FRAG),
-      createProgram(gl, BACKDROP_VERT, BACKDROP_FRAG)
-    ]
+    return UniverseGl.fromPrograms(
+      gl,
+      UNIVERSE_SHADERS.map(([vert, frag]) => createProgram(gl, vert, frag))
+    )
+  }
+
+  /** From programs built from UNIVERSE_SHADERS (in that order), null if one of them failed. */
+  static fromPrograms(gl: WebGLRenderingContext, programs: (Program | null)[]): UniverseGl | null {
     if (programs.some((program) => !program)) return null
     return new UniverseGl(gl, programs as Program[])
   }

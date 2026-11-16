@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { RcApi, RcEvents } from '@shared/types'
+import type { AdminApi, RcApi, RcEvents } from '@shared/types'
 import type { CaptureBridge } from '@shared/capture'
 
 async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -8,7 +8,31 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
   return res.value as T
 }
 
+// developer tools, only in `npm run dev` (see main/admin.ts)
+const admin: AdminApi | undefined = import.meta.env.DEV
+  ? {
+      acceptMatch: () => call('admin:acceptMatch'),
+      emit: (event, payload) => call('admin:emit', event, payload),
+      simStart: (options) => call('admin:simStart', options),
+      simAction: (action) => call('admin:simAction', action),
+      simState: () => call('admin:simState'),
+      simStop: () => call('admin:simStop'),
+      showMinimapDemo: (scenario, map) => call('admin:showMinimapDemo', scenario, map),
+      showFrames: (championId) => call('admin:showFrames', championId),
+      showLoading: (state) => call('admin:showLoading', state),
+      hideOverlays: () => call('admin:hideOverlays'),
+      saveTestGame: (summary) => call('admin:saveTestGame', summary),
+      deleteTestGames: () => call('admin:deleteTestGames'),
+      log: (lines) => call('admin:log', lines),
+      minimapSnapshot: () => call('admin:minimapSnapshot'),
+      classifyPads: (pads) => call('admin:classifyPads', pads),
+      measuredPads: () => call('admin:measuredPads'),
+      savePads: (map, pads) => call('admin:savePads', map, pads)
+    }
+  : undefined
+
 const api: RcApi = {
+  admin,
   getStatic: () => call('getStatic'),
   getSettings: () => call('getSettings'),
   saveSettings: (patch) => call('saveSettings', patch),
@@ -43,6 +67,7 @@ const api: RcApi = {
   lookupProfile: (riotId, platform) => call('lookupProfile', riotId, platform),
   scoutActiveGame: (riotId, platform) => call('scoutActiveGame', riotId, platform),
   openExternal: (url) => call('openExternal', url),
+  logDiag: (message) => ipcRenderer.send('rc:log', String(message).slice(0, 400)),
   // all main -> renderer events share one channel, filtered by name here
   on<K extends keyof RcEvents>(event: K, callback: (payload: RcEvents[K]) => void) {
     const listener = (_event: unknown, name: string, payload: RcEvents[K]): void => {
