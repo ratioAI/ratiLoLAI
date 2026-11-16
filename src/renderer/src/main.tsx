@@ -1,4 +1,4 @@
-import { StrictMode, Suspense, lazy, useEffect, useRef, useState } from 'react'
+import { StrictMode, Suspense, lazy, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import '@fontsource/inter/400.css'
@@ -44,19 +44,27 @@ const Settings = lazy(pages.Settings)
 const Mayhem = lazy(pages.Mayhem)
 import { Overlay } from './pages/Overlay'
 import { TripBackground } from './components/TripBackground'
-import { CosmosBackground, JUMP_MS, cosmicSeed } from './components/CosmosBackground'
+import { CosmosBackground, cosmicSeed } from './components/CosmosBackground'
 import { JourneyCanvas } from './components/JourneyCanvas'
-import { galaxyOf } from '@shared/universe'
+import { prewarmFlightShaders } from './components/flightGl'
+import { FLIGHT_VARIANTS, pickVariant, type FlightVariant } from '@shared/journey'
+import { galaxyKind, galaxyOf } from '@shared/universe'
 import { api } from './lib/api'
 import { OverlayFrames } from './pages/OverlayFrames'
 import { OverlayMinimap } from './pages/OverlayMinimap'
 import { OverlayLoading } from './pages/OverlayLoading'
 
+interface Journey {
+  from: number
+  to: number
+  key: number
+}
+
 /**
  * The place in the universe we're currently at. Every accepted match picks a new one and the window
- * flies there; `journey` is set while that jump is running.
+ * flies there; `journey` is set from then until the flight has ended (see JourneyOverlay).
  */
-function useCosmos(onArrive: () => void): { seed: number; journey: { from: number; to: number; key: number } | null } {
+function useCosmos(): { seed: number; journey: Journey | null; endJourney: () => void } {
   const [seed, setSeed] = useState(() => {
     try {
       const stored = Number(localStorage.getItem('rc.cosmos'))
@@ -69,57 +77,137 @@ function useCosmos(onArrive: () => void): { seed: number; journey: { from: numbe
       return cosmicSeed(1)
     }
   })
-  const [journey, setJourney] = useState<{ from: number; to: number; key: number } | null>(null)
+  const [journey, setJourney] = useState<Journey | null>(null)
   const currentSeed = useRef(seed)
-  const arriveRef = useRef(onArrive)
-  arriveRef.current = onArrive
-  useEffect(() => {
-    let endTimer: ReturnType<typeof setTimeout> | undefined
-    let arriveTimer: ReturnType<typeof setTimeout> | undefined
-    const off = api.on('journey', ({ seed: rawSeed }) => {
-      const nextSeed = cosmicSeed(rawSeed)
-      setJourney({ from: currentSeed.current, to: nextSeed, key: Date.now() })
-      currentSeed.current = nextSeed
-      setSeed(nextSeed)
-      clearTimeout(endTimer)
-      clearTimeout(arriveTimer)
-      // switch to the Live tab while the overlay still covers the window, so we "land" in the new game
-      arriveTimer = setTimeout(() => arriveRef.current(), JUMP_MS * 0.6)
-      endTimer = setTimeout(() => setJourney(null), JUMP_MS + 900)
-      try {
-        localStorage.setItem('rc.cosmos', String(nextSeed))
-      } catch {
-        /* private mode */
-      }
-    })
-    return () => {
-      off()
-      clearTimeout(endTimer)
-      clearTimeout(arriveTimer)
-    }
+  useEffect(
+    () =>
+      api.on('journey', ({ seed: rawSeed }) => {
+        const nextSeed = cosmicSeed(rawSeed)
+        // a second accept while still flying (someone dodged) starts over from where we were heading.
+        // The sky behind the flight switches to the new planet only when it ends (endJourney), so the
+        // flight fades in over the very sky it starts from.
+        setJourney({ from: currentSeed.current, to: nextSeed, key: Date.now() })
+        currentSeed.current = nextSeed
+        try {
+          localStorage.setItem('rc.cosmos', String(nextSeed))
+        } catch {
+          /* private mode */
+        }
+      }),
+    []
+  )
+  const endJourney = useCallback(() => {
+    setJourney(null)
+    setSeed(currentSeed.current)
   }, [])
-  return { seed, journey }
+  return { seed, journey, endJourney }
 }
 
-/** Full-window flight to the next galaxy. Fades out shortly before the jump ends. */
-function JourneyOverlay({ journey }: { journey: { from: number; to: number; key: number } }) {
+/**
+ * Kind of the next flight: wormhole or black hole at random, never three times the same in a row.
+ * '#...journey=wormhole' (or blackhole) in the URL forces one, for screenshots.
+ */
+function nextVariant(seed: number): FlightVariant {
+  const forced = FLIGHT_VARIANTS.find((variant) => window.location.hash.includes(`journey=${variant}`))
+  let recent: FlightVariant[] = []
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem('rc.flights') ?? '[]')
+    if (Array.isArray(stored)) recent = stored.filter((entry): entry is FlightVariant => FLIGHT_VARIANTS.includes(entry))
+  } catch {
+    /* nothing stored */
+  }
+  const variant = forced ?? pickVariant(seed, recent)
+  try {
+    localStorage.setItem('rc.flights', JSON.stringify([variant, ...recent].slice(0, 2)))
+  } catch {
+    /* private mode */
+  }
+  return variant
+}
+
+const smoothstep = (edge0: number, edge1: number, x: number): number => {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
+  return t * t * (3 - 2 * t)
+}
+
+/**
+ * Full-window flight to the next galaxy. It plays to the end even if the window is hidden for a
+ * while (the film just waits), and ends early only when you skip it (click, Esc, Space, Enter) or
+ * when the game itself starts. At the end the app switches to the Live tab under the last frame,
+ * then the overlay fades out.
+ */
+function JourneyOverlay({ journey, onArrive, onClose }: { journey: Journey; onArrive: () => void; onClose: () => void }) {
+  const { live } = useApp()
+  const [variant] = useState(() => nextVariant(journey.to))
   const [leaving, setLeaving] = useState(false)
-  useEffect(() => {
-    const fadeTimer = setTimeout(() => setLeaving(true), JUMP_MS - 200)
-    return () => clearTimeout(fadeTimer)
+  const leavingRef = useRef(false)
+  const captionRef = useRef<HTMLDivElement>(null)
+  const hintRef = useRef<HTMLDivElement>(null)
+  const handlers = useRef({ onArrive, onClose })
+  handlers.current = { onArrive, onClose }
+
+  const finish = useCallback(() => {
+    if (leavingRef.current) return
+    leavingRef.current = true
+    handlers.current.onArrive()
+    setLeaving(true)
   }, [])
+  useEffect(() => {
+    if (!leaving) return
+    const timer = setTimeout(() => handlers.current.onClose(), 750)
+    return () => clearTimeout(timer)
+  }, [leaving])
+  // the game started before the film got to play (window hidden all through champ select)
+  useEffect(() => {
+    if (live?.active) finish()
+  }, [live?.active, finish])
+  useEffect(() => {
+    const key = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' && event.key !== ' ' && event.key !== 'Enter') return
+      event.preventDefault()
+      finish()
+    }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [finish])
+  // captions follow the film's own clock, so they stay in step when it waits
+  const onFrame = useCallback((seconds: number) => {
+    const shown = smoothstep(10.9, 11.6, seconds) * (1 - smoothstep(13.3, 13.9, seconds))
+    if (captionRef.current) {
+      captionRef.current.style.opacity = String(shown)
+      captionRef.current.style.transform = `translateY(${(1 - shown) * 8}px)`
+    }
+    if (hintRef.current)
+      hintRef.current.style.opacity = String(0.55 * smoothstep(1.2, 2.2, seconds) * (1 - smoothstep(13.8, 14.6, seconds)))
+  }, [])
+
+  const destination = galaxyOf(journey.to)
   return (
     <div
-      className="pointer-events-none fixed inset-0 z-[200] transition-opacity duration-700"
-      style={{ opacity: leaving ? 0 : 1, animation: 'fade 0.6s ease-out' }}
+      className="fixed inset-0 z-[200] cursor-pointer transition-opacity duration-700"
+      style={{ opacity: leaving ? 0 : 1, animation: 'fade 0.6s ease-out', WebkitAppRegion: 'no-drag' } as CSSProperties}
+      onClick={finish}
       aria-hidden
     >
-      <JourneyCanvas key={journey.key} from={journey.from} to={journey.to} />
-      {/* where we're going, shown while crossing intergalactic space */}
-      <div className="journey-caption absolute inset-x-0 bottom-[9%] text-center">
+      <JourneyCanvas from={journey.from} to={journey.to} variant={variant} onDone={finish} onFrame={onFrame} />
+      {/* where we're going, on the lower letterbox bar once the target is in sight */}
+      <div
+        ref={captionRef}
+        className="journey-caption pointer-events-none absolute inset-x-0 bottom-[2.5%] text-center"
+        style={{ opacity: 0 }}
+      >
         <div className="text-[11px] font-semibold tracking-[0.35em] text-white/55 uppercase">Destination</div>
-        <div className="font-display text-3xl font-extrabold tracking-tight text-white/90">{galaxyOf(journey.to).name}</div>
-        <div className="text-xs tracking-widest text-white/45">{galaxyOf(journey.to).designation}</div>
+        <div className="font-display text-3xl font-extrabold tracking-tight text-white/90">{destination.name}</div>
+        <div className="text-xs tracking-widest text-white/45">
+          {destination.designation} · {galaxyKind(destination)}
+        </div>
+      </div>
+      <div
+        ref={hintRef}
+        className="pointer-events-none absolute right-6 bottom-[2.5%] text-[10px] font-semibold tracking-[0.3em] text-white uppercase"
+        style={{ opacity: 0 }}
+      >
+        Click to skip
       </div>
     </div>
   )
@@ -129,11 +217,21 @@ function Shell() {
   const { settings, live } = useApp()
   const location = useLocation()
   const navigate = useNavigate()
+  const { seed, journey, endJourney } = useCosmos()
   // overlay windows get the event too, but only the main window should change tabs
-  const { seed, journey } = useCosmos(() => {
+  const arrive = useCallback(() => {
     if (!window.location.hash.startsWith('#/overlay')) navigate('/live')
-  })
+  }, [navigate])
   const background = settings?.ui.background ?? 'animated'
+  const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  const showFlight = background !== 'static' && !reducedMotion && !window.location.hash.startsWith('#/overlay')
+  // without the flight we just go straight to the new game
+  useEffect(() => {
+    if (journey && !showFlight) {
+      arrive()
+      endJourney()
+    }
+  }, [journey, showFlight, arrive, endJourney])
   const hash = window.location.hash
   if (hash.startsWith('#/overlay/panel')) return <Overlay part="panel" />
   if (hash.startsWith('#/overlay/frames')) return <OverlayFrames />
@@ -148,7 +246,7 @@ function Shell() {
         <TripBackground mode={settings?.ui.background ?? 'animated'} inGame={!!live?.active} />
       )}
       <MainShell />
-      {journey && background !== 'static' && <JourneyOverlay key={journey.key} journey={journey} />}
+      {journey && showFlight && <JourneyOverlay key={journey.key} journey={journey} onArrive={arrive} onClose={endJourney} />}
     </>
   )
 }
@@ -196,7 +294,11 @@ function MainShell() {
 }
 
 if (!window.location.hash.startsWith('#/overlay')) {
-  const prefetch = () => Object.values(pages).forEach((load) => void load())
+  const prefetch = () => {
+    Object.values(pages).forEach((load) => void load())
+    // and compile the flight's shaders once, so the first flight starts without a pause
+    setTimeout(prewarmFlightShaders, 4000)
+  }
   if ('requestIdleCallback' in window) requestIdleCallback(prefetch, { timeout: 3000 })
   else setTimeout(prefetch, 1500)
 }

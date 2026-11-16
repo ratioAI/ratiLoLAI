@@ -726,27 +726,9 @@ html.overlay-mode .btn-primary {
     opacity: 1;
   }
 }
-/* flight to the next galaxy: the destination name fades in mid-flight and out before landing */
+/* flight to the next galaxy: the destination caption (its fading is driven by the film's clock) */
 .journey-caption {
-  opacity: 0;
-  animation: journey-caption 12s linear both;
   text-shadow: 0 2px 18px rgb(0 0 0 / 0.9);
-}
-@keyframes journey-caption {
-  0%,
-  26% {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  36%,
-  70% {
-    opacity: 1;
-    transform: none;
-  }
-  80%,
-  100% {
-    opacity: 0;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .podium-step {
@@ -757,4 +739,19 @@ html.overlay-mode .btn-primary {
 /* star map: far-away markers keep their ring but drop the name */
 .map-far .map-label {
   display: none;
+}
+/* star map: a ring that keeps rippling out of "you are here" and the selected galaxy */
+.map-ping {
+  border: 1.5px solid;
+  animation: map-ping 2.4s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+}
+@keyframes map-ping {
+  from {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
 }

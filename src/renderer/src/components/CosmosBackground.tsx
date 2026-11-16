@@ -1,27 +1,31 @@
 import { useEffect, useRef } from 'react'
 import type { Settings } from '@shared/types'
 import { useIdleRef } from '@/lib/useIdle'
-import { SPACE_LIB, quadProgram } from './spaceGlsl'
+import { SPACE_LIB, galaxyUniforms, quadProgram } from './spaceGlsl'
 
 export { cosmicSeed } from './spaceGlsl'
-export { JOURNEY_MS as JUMP_MS } from './JourneyCanvas'
 
 /*
  * Night sky seen from the surface of a planet, looking up at its own galaxy.
  *
- * The seed decides everything: angle and curve of the galactic band, its colours, dust lanes and
- * nebulae, how close we are to the core (from a faint thin band up to the central black hole
- * filling the sky), distant galaxies, and the planet's mountains and atmosphere. The sky rotates
- * very slowly.
+ * The seed decides everything: the kind of galaxy we are in (a band of light in a spiral, a sky
+ * full of stars in an elliptical, ...), angle and curve of the galactic band, its colours, dust
+ * lanes and nebulae, how close we are to the core (from a faint thin band up to the central black
+ * hole filling the sky), distant galaxies, and the planet's mountains and atmosphere. The sky
+ * rotates very slowly.
  */
 const FRAG = `${SPACE_LIB}
 uniform vec2 u_res;
 uniform float u_time;
 uniform float u_seed;
+uniform vec4 u_gal;
+uniform vec4 u_gal2;
 
 void main(){
   vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;     // centred, y in [-0.5, 0.5]
   g_seed = u_seed;
+  g_gal = u_gal;
+  g_gal2 = u_gal2;
   gl_FragColor = vec4(finish(planetView(p, u_time, u_seed, 0.0), p), 1.0);
 }`
 
@@ -64,6 +68,9 @@ export function CosmosBackground({
     const uRes = gl.getUniformLocation(program, 'u_res')
     const uTime = gl.getUniformLocation(program, 'u_time')
     const uSeed = gl.getUniformLocation(program, 'u_seed')
+    const uGal = gl.getUniformLocation(program, 'u_gal')
+    const uGal2 = gl.getUniformLocation(program, 'u_gal2')
+    let galaxy = { seed: NaN, uniforms: galaxyUniforms(seedRef.current) }
 
     // half the device resolution: cheap enough, and the stars still look sharp
     const SCALE = Math.min(1, (window.devicePixelRatio || 1) * 0.5)
@@ -75,7 +82,10 @@ export function CosmosBackground({
     const draw = (now: number) => {
       gl.uniform2f(uRes, canvas.width, canvas.height)
       gl.uniform1f(uTime, now / 1000)
+      if (galaxy.seed !== seedRef.current) galaxy = { seed: seedRef.current, uniforms: galaxyUniforms(seedRef.current) }
       gl.uniform1f(uSeed, seedRef.current)
+      gl.uniform4fv(uGal, galaxy.uniforms[0])
+      gl.uniform4fv(uGal2, galaxy.uniforms[1])
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
     resize()

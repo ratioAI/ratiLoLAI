@@ -1,17 +1,19 @@
-import { STAR_STRIDE, UNIVERSE, cross, dot, galaxyStars, normalize, sub, type Galaxy, type Vec3 } from '@shared/universe'
+import { STAR_STRIDE, UNIVERSE, cross, dot, galaxyStars, normalize, sub, typeCode, type Galaxy, type Vec3 } from '@shared/universe'
 import { SPACE_LIB } from './spaceGlsl'
 
 /*
  * WebGL renderer for the universe catalogue (shared/universe.ts), used by the flight between two
  * games and by the star map. Everything is drawn in 3D with one perspective camera:
  *
- *   galaxies  a flat spiral disk per galaxy, oriented in space, so disks tilt as you pass them
+ *   backdrop  faint far-away galaxies and a hint of nebula behind everything, one full-screen pass
+ *   galaxies  per galaxy a disk in its own plane (spirals, bars, rings, ...) plus a camera-facing
+ *             ellipse: the whole galaxy for ellipticals, the thin streak of a disk seen edge-on
  *   cores     a glowing point per galaxy, keeps far galaxies visible when the disk is a few pixels
  *   stars     the individual stars of one galaxy, drawn when the camera is close to or inside it
- *   streaks   dust along the flight path, drawn as short lines from where each grain was a moment ago
- *   route     a line through a list of positions (the star map's path from game to game)
+ *   route     a line through a list of positions with light flowing along it (the star map's path)
  *
- * Nothing writes depth; all layers are added on top of each other.
+ * Nothing writes depth; all layers are added on top of each other. `begin` can target an offscreen
+ * framebuffer (the flight renders into textures and lenses them afterwards).
  */
 
 export interface Camera {
@@ -29,7 +31,7 @@ interface Basis {
   forward: Vec3
 }
 
-function basisOf(camera: Camera): Basis {
+export function basisOf(camera: Camera): Basis {
   const forward = normalize(camera.forward)
   const right = normalize(cross(forward, camera.up))
   return { eye: camera.eye, right, up: cross(right, forward), forward }
@@ -56,51 +58,113 @@ vec4 project(vec3 rel){
   float depth = dot(rel, u_forward);
   return vec4(dot(rel, u_right) * u_proj.x, dot(rel, u_up) * u_proj.y, depth - 0.0002, depth);
 }
+mat2 rot2(float a){ float c = cos(a); float s = sin(a); return mat2(c, -s, s, c); }
 `
+// u_vig is 0 when rendering into a texture that is composited later (no vignette, it would show seams)
 const TONE = `
 uniform vec2 u_res;
+uniform float u_vig;
 vec3 tone(vec3 col){
   vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
   col = 1.0 - exp(-col * 1.25);
-  return col * (0.75 + 0.25 * smoothstep(1.1, 0.2, length(p)));
+  return col * mix(1.0, 0.75 + 0.25 * smoothstep(1.1, 0.2, length(p)), u_vig);
 }
 `
 
-const GALAXY_VERT = `
+// shared by both galaxy passes
+const GALAXY_ATTRIBS = `
 attribute vec3 a_center;
 attribute vec3 a_u;
 attribute vec3 a_v;
 attribute vec2 a_corner;
 attribute vec4 a_par;
+attribute vec4 a_par2;
 attribute float a_rad;
 uniform vec3 u_eye;
-varying vec2 v_q;
+uniform float u_time;
+uniform float u_spin;     // 1 lets the galaxies turn (star map), 0 keeps them still (flight)
 varying vec4 v_par;
+varying vec4 v_par2;
+bool spheroid(){ return abs(a_par2.x - 2.0) < 0.5 || (abs(a_par2.x - 5.0) < 0.5 && a_par2.y < 0.5); }
+`
+
+const DISK_VERT = `
+${GALAXY_ATTRIBS}
+varying vec2 v_q;
 varying float v_alpha;
 ${CAMERA}
 void main(){
   vec3 rel = a_center - u_eye;
   float d = length(rel);
   float h = abs(dot(rel, cross(a_u, a_v)));                       // height of the camera above the disk
-  // a disk seen edge-on is a hard line, and from inside it there is no disk to see: fade both out
-  v_alpha = smoothstep(0.02, 0.14, h / d) * smoothstep(0.03, 0.3, h / a_rad);
-  v_q = a_corner * 1.7;
+  // a disk seen edge-on is a hard line (the halo pass draws the streak instead), and from inside
+  // it there is no disk to see: fade both out
+  v_alpha = spheroid() ? 0.0 : smoothstep(0.02, 0.14, h / d) * smoothstep(0.03, 0.3, h / a_rad);
+  if (v_alpha <= 0.001) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  // turning the texture coordinates turns the painted galaxy (same rotation as the stars get)
+  v_q = rot2(a_par2.w * u_time * u_spin) * (a_corner * 1.7);
   v_par = a_par;
+  v_par2 = a_par2;
   gl_Position = project(rel + (a_corner.x * a_u + a_corner.y * a_v) * a_rad * 1.7);
 }`
-const GALAXY_FRAG = `${SPACE_LIB}
+const DISK_FRAG = `${SPACE_LIB}
 varying vec2 v_q;
 varying vec4 v_par;
+varying vec4 v_par2;
 varying float v_alpha;
 uniform float u_time;
 uniform float u_gain;
 ${TONE}
 void main(){
   float r = length(v_q);
-  if (v_alpha <= 0.0 || r > 1.7) discard;
+  if (r > 1.7) discard;
   g_seed = v_par.w;
-  vec3 c = galaxyShapeP(v_q, u_time, v_par.x, v_par.y, v_par.z, v_par.w) * smoothstep(1.7, 1.15, r);
+  vec3 c = galaxyDisk(v_q, u_time, v_par, v_par2) * smoothstep(1.7, 1.15, r);
   gl_FragColor = vec4(tone(c * v_alpha * u_gain), 1.0);
+}`
+
+const HALO_VERT = `
+${GALAXY_ATTRIBS}
+varying vec2 v_b;
+varying float v_ratio;
+varying float v_edge;
+${CAMERA}
+void main(){
+  vec3 rel = a_center - u_eye;
+  float d = length(rel);
+  vec3 w = rel / d;
+  vec3 n = cross(a_u, a_v);
+  float c = abs(dot(n, w));
+  bool ball = spheroid();
+  // ellipticals: E0 to E7; dwarf spheroidals a little flattened; disks are thin
+  float q = abs(a_par2.x - 2.0) < 0.5 ? 1.0 - floor(a_par2.y * 7.0 + 0.5) / 10.0 : ball ? 0.75 : 0.1;
+  v_ratio = sqrt(c * c + q * q * (1.0 - c * c));
+  // disks only show up here when seen edge-on; up close the single stars take over
+  v_edge = (ball ? 1.0 : 1.0 - smoothstep(0.02, 0.14, c)) * smoothstep(0.8, 2.2, d / a_rad);
+  if (v_edge <= 0.001) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  vec3 pn = n - dot(n, w) * w;                                     // the normal as seen on screen = minor axis
+  vec3 minor = length(pn) > 1e-4 ? normalize(pn) : normalize(cross(w, a_u));
+  vec3 major = cross(minor, w);
+  v_b = a_corner * 1.7;
+  v_par = a_par;
+  v_par2 = a_par2;
+  gl_Position = project(rel + (a_corner.x * major + a_corner.y * minor) * a_rad * 1.7);
+}`
+const HALO_FRAG = `${SPACE_LIB}
+varying vec2 v_b;
+varying vec4 v_par;
+varying vec4 v_par2;
+varying float v_ratio;
+varying float v_edge;
+uniform float u_time;
+uniform float u_gain;
+${TONE}
+void main(){
+  float r = length(v_b);
+  if (r > 1.7) discard;
+  g_seed = v_par.w;
+  vec3 c = galaxyHalo(v_b, u_time, v_par, v_par2, v_ratio, 1.0) * smoothstep(1.7, 1.3, r);
+  gl_FragColor = vec4(tone(c * v_edge * u_gain), 1.0);
 }`
 
 const CORE_VERT = `
@@ -144,57 +208,94 @@ uniform float u_rad;
 uniform vec3 u_tint;
 uniform float u_alpha;
 uniform float u_dpr;
+uniform float u_turn;     // how far the galaxy has turned (star map)
+uniform float u_time;
 varying vec3 v_col;
 ${CAMERA}
 void main(){
-  vec3 rel = u_rel + u_rad * (a_local.x * u_gu + a_local.y * u_gv + a_local.z * u_gn);
+  vec2 xy = rot2(-u_turn) * a_local.xy;
+  vec3 rel = u_rel + u_rad * (xy.x * u_gu + xy.y * u_gv + a_local.z * u_gn);
   gl_Position = project(rel);
   float dn = length(rel) / u_rad;
   gl_PointSize = clamp(1.3 + 0.2 * (0.3 + a_mag) / dn, 1.3, 9.0) * u_dpr;
   float bright = clamp(0.2 + 0.035 * (0.25 + a_mag) / (dn * dn), 0.0, 1.7) * smoothstep(0.0015, 0.008, dn);
+  // the brighter stars twinkle a little
+  bright *= 1.0 - a_mag * 0.35 * (0.5 + 0.5 * sin(u_time * (1.3 + 4.0 * fract(a_local.x * 91.7)) + a_local.y * 300.0));
   vec3 c = mix(vec3(0.62, 0.76, 1.0), vec3(1.0, 0.84, 0.64), a_warm);
   v_col = mix(c, u_tint, 0.25 * (1.0 - a_warm)) * bright * u_alpha;
 }`
 
-const STREAK_VERT = `
-attribute vec3 a_pos;
-attribute float a_end;
-uniform vec3 u_eye;
-uniform vec3 u_eyePrev;
-uniform vec3 u_rightPrev;
-uniform vec3 u_upPrev;
-uniform vec3 u_forwardPrev;
-uniform float u_range;
-uniform float u_alpha;
-varying vec3 v_col;
-${CAMERA}
-void main(){
-  vec3 rel = a_pos - u_eye;
-  float d = length(rel);
-  if (a_end < 0.5) {
-    gl_Position = project(rel);
-  } else {
-    vec3 prev = a_pos - u_eyePrev;
-    float depth = dot(prev, u_forwardPrev);
-    gl_Position = vec4(dot(prev, u_rightPrev) * u_proj.x, dot(prev, u_upPrev) * u_proj.y, depth - 0.0002, depth);
-  }
-  float a = u_alpha * smoothstep(u_range, u_range * 0.25, d) * smoothstep(0.0, u_range * 0.04, d);
-  v_col = vec3(0.7, 0.82, 1.0) * a * (1.0 - a_end);                // the tail fades out
-}`
 const ROUTE_VERT = `
 attribute vec3 a_pos;
+attribute float a_t;
 uniform vec3 u_eye;
-uniform vec3 u_colour;
-varying vec3 v_col;
+varying float v_t;
 ${CAMERA}
 void main(){
   gl_Position = project(a_pos - u_eye);
-  v_col = u_colour;
+  v_t = a_t;
 }`
-const FLAT_FRAG = `
+// light pulses run along the route from the oldest game to the newest
+const ROUTE_FRAG = `
 precision highp float;
-varying vec3 v_col;
-void main(){ gl_FragColor = vec4(v_col, 1.0); }`
+varying float v_t;
+uniform vec3 u_colour;
+uniform float u_time;
+void main(){
+  float p = fract((v_t - u_time * 14.0) / 46.0);
+  float head = pow(p, 14.0) * 2.6 + pow(p, 3.0) * 0.5;
+  gl_FragColor = vec4(u_colour * (0.6 + head) + vec3(0.9, 0.95, 1.0) * pow(p, 40.0) * 0.8, 1.0);
+}`
+
+// Faint background: far galaxies too small to be more than a point, and a whisper of nebula. Its
+// stars sit on a sphere around the camera, so they turn with the view but never come closer.
+const BACKDROP_VERT = `attribute vec2 p; varying vec2 v_p; void main(){ v_p = p; gl_Position = vec4(p, 0.0, 1.0); }`
+const BACKDROP_FRAG = `
+precision highp float;
+varying vec2 v_p;
+uniform vec3 u_right;
+uniform vec3 u_up;
+uniform vec3 u_forward;
+uniform vec2 u_tan;
+uniform float u_time;
+uniform float u_gain;
+uniform float u_pix;      // angular size of a pixel
+float h31(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
+vec3 h33(vec3 p){ p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.xxy + p.yxx) * p.zyx); }
+float vnoise(vec3 p){
+  vec3 i = floor(p); vec3 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(h31(i), h31(i + vec3(1,0,0)), f.x), mix(h31(i + vec3(0,1,0)), h31(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(h31(i + vec3(0,0,1)), h31(i + vec3(1,0,1)), f.x), mix(h31(i + vec3(0,1,1)), h31(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+vec3 points(vec3 d, float scale, float keep, float salt){
+  vec3 g = d * scale + salt;
+  vec3 id = floor(g);
+  float b = h31(id);
+  if (b < keep) return vec3(0.0);
+  vec3 o = (h33(id + 7.1) - 0.5) * 0.7;
+  vec3 delta = fract(g) - 0.5 - o;
+  delta -= dot(delta, d) * d;
+  float px = u_pix * scale;
+  float a = smoothstep(px * 1.6, 0.0, length(delta)) * (0.35 + 0.65 * (b - keep) / (1.0 - keep));
+  float tw = 0.75 + 0.25 * sin(u_time * (0.4 + 2.0 * b) + b * 70.0);
+  return mix(vec3(0.7, 0.78, 1.0), vec3(1.0, 0.88, 0.75), h31(id + 3.3)) * a * tw;
+}
+vec3 nebPal(float h){
+  h = fract(h) * 4.0;
+  vec3 c = mix(vec3(0.30, 0.52, 1.00), vec3(0.62, 0.40, 1.00), smoothstep(0.0, 1.0, h));
+  c = mix(c, vec3(1.00, 0.42, 0.74), smoothstep(1.0, 2.0, h));
+  c = mix(c, vec3(0.22, 0.85, 0.92), smoothstep(2.0, 3.0, h));
+  return mix(c, vec3(0.30, 0.52, 1.00), smoothstep(3.0, 4.0, h));
+}
+void main(){
+  vec3 d = normalize(u_forward + v_p.x * u_tan.x * u_right + v_p.y * u_tan.y * u_up);
+  vec3 col = points(d, 150.0, 0.95, 0.0) * 0.3 + points(d, 320.0, 0.93, 17.0) * 0.16;
+  vec3 q = d * 2.2 + vec3(0.0, u_time * 0.004, 0.0);
+  float n = vnoise(q) * 0.5 + vnoise(q * 2.1) * 0.3 + vnoise(q * 4.3) * 0.2;
+  float m = vnoise(d * 1.3 - 4.0);
+  col += nebPal(m * 1.3 + 0.1) * smoothstep(0.45, 0.85, n) * 0.05;
+  gl_FragColor = vec4((1.0 - exp(-col * 1.25)) * u_gain, 1.0);
+}`
 
 /** The nebula palette of the shaders (see `neb` in spaceGlsl), for colours computed in JS. */
 export function nebula(hue: number): Vec3 {
@@ -224,7 +325,8 @@ export function createProgram(gl: WebGLRenderingContext, vert: string, frag: str
     const shader = gl.createShader(type)!
     gl.shaderSource(shader, source)
     gl.compileShader(shader)
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) console.warn('universe shader:', gl.getShaderInfoLog(shader))
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS) && !gl.isContextLost())
+      console.warn('universe shader:', gl.getShaderInfoLog(shader))
     return shader
   }
   const program = gl.createProgram()!
@@ -257,29 +359,43 @@ export interface StarCloud {
   count: number
 }
 
+/** Where `begin` draws to: the canvas (null) or an offscreen framebuffer of the given size. */
+export interface RenderTarget {
+  framebuffer: WebGLFramebuffer | null
+  width: number
+  height: number
+}
+
+const GALAXY_STRIDE = 20
+
 export class UniverseGl {
-  private readonly galaxyProgram: Program
+  private readonly diskProgram: Program
+  private readonly haloProgram: Program
   private readonly coreProgram: Program
   private readonly starProgram: Program
-  private readonly streakProgram: Program
   private readonly routeProgram: Program
+  private readonly backdropProgram: Program
   private readonly galaxyBuffer: WebGLBuffer
   private readonly coreBuffer: WebGLBuffer
   private readonly scratch: WebGLBuffer
+  readonly quad: WebGLBuffer
   private basis: Basis = { eye: [0, 0, 0], right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, -1] }
   private proj: [number, number] = [1, 1]
+  private tan: [number, number] = [1, 1]
+  private size: [number, number] = [1, 1]
   /** focal length in pixels: a length l at distance d covers l / d * focalPx pixels */
   private focalPx = 1
+  private vignette = 1
   private enabledAttribs: number[] = []
 
   private constructor(
     private readonly gl: WebGLRenderingContext,
     programs: Program[]
   ) {
-    ;[this.galaxyProgram, this.coreProgram, this.starProgram, this.streakProgram, this.routeProgram] = programs
-    // one quad (two triangles) per galaxy
+    ;[this.diskProgram, this.haloProgram, this.coreProgram, this.starProgram, this.routeProgram, this.backdropProgram] = programs
+    // one quad (two triangles) per galaxy, shared by the disk and the halo pass
     const corners = [-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]
-    const quads = new Float32Array(UNIVERSE.length * 6 * 16)
+    const quads = new Float32Array(UNIVERSE.length * 6 * GALAXY_STRIDE)
     const cores = new Float32Array(UNIVERSE.length * 7)
     UNIVERSE.forEach((galaxy, index) => {
       for (let vertex = 0; vertex < 6; vertex++) {
@@ -294,13 +410,28 @@ export class UniverseGl {
             galaxy.twist,
             galaxy.hue,
             galaxy.seed,
+            typeCode(galaxy.type),
+            galaxy.shape,
+            galaxy.shape2,
+            galaxy.spin,
             galaxy.radius
           ],
-          (index * 6 + vertex) * 16
+          (index * 6 + vertex) * GALAXY_STRIDE
         )
       }
       const tint = nebula(galaxy.hue)
-      cores.set([...galaxy.pos, 0.65 + 0.35 * tint[0], 0.57 + 0.3 * tint[1], 0.46 + 0.3 * tint[2], galaxy.radius], index * 7)
+      // old galaxies (ellipticals, lenticulars) glow warmer
+      const warm = galaxy.type === 'elliptical' || galaxy.type === 'lenticular' ? 0.6 : 0
+      cores.set(
+        [
+          ...galaxy.pos,
+          0.65 + 0.35 * (tint[0] + (1 - tint[0]) * warm),
+          0.57 + 0.3 * (tint[1] + (0.75 - tint[1]) * warm),
+          0.46 + 0.3 * (tint[2] + (0.45 - tint[2]) * warm),
+          galaxy.radius
+        ],
+        index * 7
+      )
     })
     this.galaxyBuffer = gl.createBuffer()!
     gl.bindBuffer(gl.ARRAY_BUFFER, this.galaxyBuffer)
@@ -309,30 +440,41 @@ export class UniverseGl {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.coreBuffer)
     gl.bufferData(gl.ARRAY_BUFFER, cores, gl.STATIC_DRAW)
     this.scratch = gl.createBuffer()!
+    this.quad = gl.createBuffer()!
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW)
   }
 
   /** Null when WebGL shaders can't be built on this machine. */
   static create(gl: WebGLRenderingContext): UniverseGl | null {
     const programs = [
-      createProgram(gl, GALAXY_VERT, GALAXY_FRAG),
+      createProgram(gl, DISK_VERT, DISK_FRAG),
+      createProgram(gl, HALO_VERT, HALO_FRAG),
       createProgram(gl, CORE_VERT, SOFT_POINT_FRAG),
       createProgram(gl, STARS_VERT, SOFT_POINT_FRAG),
-      createProgram(gl, STREAK_VERT, FLAT_FRAG),
-      createProgram(gl, ROUTE_VERT, FLAT_FRAG)
+      createProgram(gl, ROUTE_VERT, ROUTE_FRAG),
+      createProgram(gl, BACKDROP_VERT, BACKDROP_FRAG)
     ]
     if (programs.some((program) => !program)) return null
     return new UniverseGl(gl, programs as Program[])
   }
 
-  /** Clears the frame and sets the camera for the draw calls that follow. */
-  begin(camera: Camera): void {
+  /**
+   * Sets the camera and target for the draw calls that follow and clears the target. Offscreen
+   * targets get no vignette, since they are composited (and vignetted) later.
+   */
+  begin(camera: Camera, target: RenderTarget | null = null): void {
     const gl = this.gl
-    const width = gl.drawingBufferWidth
-    const height = gl.drawingBufferHeight
+    const width = target ? target.width : gl.drawingBufferWidth
+    const height = target ? target.height : gl.drawingBufferHeight
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.framebuffer : null)
     this.basis = basisOf(camera)
     const f = 1 / Math.tan(camera.fovY / 2)
     this.proj = [f / (width / height), f]
+    this.tan = [width / height / f, 1 / f]
+    this.size = [width, height]
     this.focalPx = (f * height) / 2
+    this.vignette = target ? 0 : 1
     gl.viewport(0, 0, width, height)
     gl.clearColor(0, 0, 0, 1)
     gl.clear(gl.COLOR_BUFFER_BIT)
@@ -362,11 +504,12 @@ export class UniverseGl {
     gl.uniform3fv(program.uniform('u_forward'), this.basis.forward)
     gl.uniform2fv(program.uniform('u_proj'), this.proj)
     gl.uniform3fv(program.uniform('u_eye'), this.basis.eye)
-    gl.uniform2f(program.uniform('u_res'), gl.drawingBufferWidth, gl.drawingBufferHeight)
+    gl.uniform2f(program.uniform('u_res'), this.size[0], this.size[1])
+    gl.uniform1f(program.uniform('u_vig'), this.vignette)
   }
 
   /** Binds a full-screen quad (x, y pairs) to the attribute `p` of a program of your own. */
-  bindQuad(program: Program, quad: WebGLBuffer): void {
+  bindQuad(program: Program, quad: WebGLBuffer = this.quad): void {
     const gl = this.gl
     gl.bindBuffer(gl.ARRAY_BUFFER, quad)
     for (const location of this.enabledAttribs) gl.disableVertexAttribArray(location)
@@ -376,20 +519,44 @@ export class UniverseGl {
     this.enabledAttribs = [location]
   }
 
-  /** All galaxies of the catalogue: their disks and core glows. */
-  drawGalaxies(time: number, gain = 1): void {
+  /** Far-away galaxies as faint points plus a trace of nebula, behind everything else. */
+  drawBackdrop(time: number, gain = 1): void {
     const gl = this.gl
-    this.use(this.galaxyProgram, this.galaxyBuffer, 16, [
+    const program = this.backdropProgram
+    gl.useProgram(program.program)
+    this.bindQuad(program)
+    gl.uniform3fv(program.uniform('u_right'), this.basis.right)
+    gl.uniform3fv(program.uniform('u_up'), this.basis.up)
+    gl.uniform3fv(program.uniform('u_forward'), this.basis.forward)
+    gl.uniform2fv(program.uniform('u_tan'), this.tan)
+    gl.uniform1f(program.uniform('u_time'), time)
+    gl.uniform1f(program.uniform('u_gain'), gain)
+    gl.uniform1f(program.uniform('u_pix'), (2 * this.tan[1]) / this.size[1])
+    gl.drawArrays(gl.TRIANGLES, 0, 6)
+  }
+
+  /**
+   * All galaxies of the catalogue: disks, edge-on streaks and ellipticals, and the core glows.
+   * `spin` 1 lets each galaxy turn with time (star map); 0 keeps them still (flight).
+   */
+  drawGalaxies(time: number, gain = 1, spin = 0): void {
+    const gl = this.gl
+    const layout: [string, number][] = [
       ['a_center', 3],
       ['a_u', 3],
       ['a_v', 3],
       ['a_corner', 2],
       ['a_par', 4],
+      ['a_par2', 4],
       ['a_rad', 1]
-    ])
-    gl.uniform1f(this.galaxyProgram.uniform('u_time'), time)
-    gl.uniform1f(this.galaxyProgram.uniform('u_gain'), gain)
-    gl.drawArrays(gl.TRIANGLES, 0, UNIVERSE.length * 6)
+    ]
+    for (const program of [this.diskProgram, this.haloProgram]) {
+      this.use(program, this.galaxyBuffer, GALAXY_STRIDE, layout)
+      gl.uniform1f(program.uniform('u_time'), time)
+      gl.uniform1f(program.uniform('u_gain'), gain)
+      gl.uniform1f(program.uniform('u_spin'), spin)
+      gl.drawArrays(gl.TRIANGLES, 0, UNIVERSE.length * 6)
+    }
 
     this.use(this.coreProgram, this.coreBuffer, 7, [
       ['a_center', 3],
@@ -411,8 +578,11 @@ export class UniverseGl {
     return { galaxy, buffer, count: data.length / STAR_STRIDE }
   }
 
-  /** The stars of one galaxy. `pointScale` makes the points bigger on low-resolution canvases. */
-  drawStars(cloud: StarCloud, alpha: number, pointScale = 1): void {
+  /**
+   * The stars of one galaxy. `pointScale` makes the points bigger on low-resolution canvases; `turn`
+   * is how far the galaxy has turned (pass galaxy.spin * time on the star map to match its disk).
+   */
+  drawStars(cloud: StarCloud, alpha: number, pointScale = 1, turn = 0, time = 0): void {
     if (alpha <= 0.003) return
     const gl = this.gl
     const { galaxy } = cloud
@@ -431,10 +601,12 @@ export class UniverseGl {
     gl.uniform3fv(program.uniform('u_tint'), nebula(galaxy.hue))
     gl.uniform1f(program.uniform('u_alpha'), alpha)
     gl.uniform1f(program.uniform('u_dpr'), pointScale)
+    gl.uniform1f(program.uniform('u_turn'), turn)
+    gl.uniform1f(program.uniform('u_time'), time)
     gl.drawArrays(gl.POINTS, 0, cloud.count)
   }
 
-  /** Uploads line data once; returns the buffer for drawStreaks / drawRoute. */
+  /** Uploads data once and returns the buffer. */
   createBuffer(data: Float32Array): WebGLBuffer {
     const gl = this.gl
     const buffer = gl.createBuffer()!
@@ -443,36 +615,25 @@ export class UniverseGl {
     return buffer
   }
 
-  /**
-   * Dust grains as motion streaks. The buffer holds two vertices per grain (x, y, z, end) with
-   * end = 0 and 1; the second one is projected with the camera of a moment ago.
-   */
-  drawStreaks(buffer: WebGLBuffer, grains: number, previous: Camera, range: number, alpha: number): void {
-    if (alpha <= 0.003) return
-    const gl = this.gl
-    const program = this.streakProgram
-    this.use(program, buffer, 4, [
-      ['a_pos', 3],
-      ['a_end', 1]
-    ])
-    const prev = basisOf(previous)
-    gl.uniform3fv(program.uniform('u_eyePrev'), prev.eye)
-    gl.uniform3fv(program.uniform('u_rightPrev'), prev.right)
-    gl.uniform3fv(program.uniform('u_upPrev'), prev.up)
-    gl.uniform3fv(program.uniform('u_forwardPrev'), prev.forward)
-    gl.uniform1f(program.uniform('u_range'), range)
-    gl.uniform1f(program.uniform('u_alpha'), alpha)
-    gl.drawArrays(gl.LINES, 0, grains * 2)
-  }
-
-  /** A line through the given positions, in order. */
-  drawRoute(points: Vec3[], colour: Vec3): void {
+  /** A line through the given positions, in order, with light pulses flowing from the first to the last. */
+  drawRoute(points: Vec3[], colour: Vec3, time = 0): void {
     if (points.length < 2) return
     const gl = this.gl
+    const data = new Float32Array(points.length * 4)
+    let travelled = 0
+    points.forEach((point, index) => {
+      if (index > 0)
+        travelled += Math.hypot(point[0] - points[index - 1][0], point[1] - points[index - 1][1], point[2] - points[index - 1][2])
+      data.set([...point, travelled], index * 4)
+    })
     gl.bindBuffer(gl.ARRAY_BUFFER, this.scratch)
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(points.flat()), gl.DYNAMIC_DRAW)
-    this.use(this.routeProgram, this.scratch, 3, [['a_pos', 3]])
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW)
+    this.use(this.routeProgram, this.scratch, 4, [
+      ['a_pos', 3],
+      ['a_t', 1]
+    ])
     gl.uniform3fv(this.routeProgram.uniform('u_colour'), colour)
+    gl.uniform1f(this.routeProgram.uniform('u_time'), time)
     gl.drawArrays(gl.LINE_STRIP, 0, points.length)
   }
 }

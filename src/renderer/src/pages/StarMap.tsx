@@ -2,7 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { LocateFixed } from 'lucide-react'
 import type { GameListEntry } from '@shared/types'
-import { GALAXY_COUNT, UNIVERSE, cosmicSeed, galaxyOf, length, lerp, sub, type Galaxy, type Vec3 } from '@shared/universe'
+import {
+  GALAXY_COUNT,
+  TYPE_NAMES,
+  UNIVERSE,
+  cosmicSeed,
+  extentOf,
+  galaxyKind,
+  galaxyOf,
+  length,
+  lerp,
+  sub,
+  type Galaxy,
+  type Vec3
+} from '@shared/universe'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { ChampIcon } from '@/components/icons'
@@ -19,6 +32,8 @@ const OVERVIEW = { target: [0, 0, 0] as Vec3, distance: 235 }
 /** Markers further away than this show only their ring, so a zoomed-out map isn't buried in names. */
 const LABEL_DEPTH = 120
 const FOV = 0.85
+/** frame rate of the idle animation (turning galaxies, twinkling, the flow along the route) */
+const IDLE_FPS = 30
 
 /** The galaxy the app is in right now (where the last flight went). */
 function currentGalaxy(): Galaxy | null {
@@ -33,9 +48,11 @@ function currentGalaxy(): Galaxy | null {
 /**
  * The universe catalogue as a 3D map you can turn and zoom. Galaxies you played in are marked, a
  * line connects them in the order of your games, and picking one lists the games played there.
+ * Everything moves: galaxies turn, stars twinkle, light runs along the route. That animation stops
+ * while a game is running, when the window is hidden, and with the static background setting.
  */
 export function StarMap() {
-  const { live } = useApp()
+  const { live, settings } = useApp()
   const [games, setGames] = useState<GameListEntry[]>([])
   const [selected, setSelected] = useState<Galaxy | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -44,6 +61,8 @@ export function StarMap() {
   // view state lives in a ref: it changes every frame while dragging and must not re-render React
   const view = useRef({ yaw: 0.6, pitch: 0.35, ...OVERVIEW, goal: { ...OVERVIEW }, touched: false, dirty: true })
   const inGame = !!live?.active
+  const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  const animated = !reducedMotion && settings?.ui.background !== 'static'
 
   useEffect(() => {
     const load = () => void api.listGames().then(setGames)
@@ -74,15 +93,15 @@ export function StarMap() {
     [games]
   )
 
-  const latest = useRef({ marked, route, selected, inGame })
-  latest.current = { marked, route, selected, inGame }
+  const latest = useRef({ marked, route, selected, inGame, animated })
+  latest.current = { marked, route, selected, inGame, animated }
   useEffect(() => {
     view.current.dirty = true
-  }, [marked, route, selected])
+  }, [marked, route, selected, animated])
 
   const focus = (galaxy: Galaxy | null) => {
     setSelected(galaxy)
-    view.current.goal = galaxy ? { target: galaxy.pos, distance: galaxy.radius * 9 } : { ...OVERVIEW }
+    view.current.goal = galaxy ? { target: galaxy.pos, distance: galaxy.radius * extentOf(galaxy) * 9 } : { ...OVERVIEW }
     view.current.touched = true
     view.current.dirty = true
   }
@@ -119,11 +138,13 @@ export function StarMap() {
 
     let rafId = 0
     let last = performance.now()
+    let lastDraw = 0
     const frame = (now: number) => {
       rafId = requestAnimationFrame(frame)
       const dt = Math.min(0.1, (now - last) / 1000)
       last = now
-      const { marked: markers, route: path, selected: picked, inGame: playing } = latest.current
+      const { marked: markers, route: path, selected: picked, inGame: playing, animated: moving } = latest.current
+      const alive = moving && !playing && !document.hidden
       // ease towards the focused galaxy (or back to the overview)
       const gap = length(sub(state.goal.target, state.target)) + Math.abs(state.goal.distance - state.distance)
       if (gap > 1e-3) {
@@ -133,22 +154,27 @@ export function StarMap() {
         state.dirty = true
       }
       // slow turn until the user takes over; never while a game is running
-      if (!state.touched && !playing && !document.hidden) {
+      if (!state.touched && alive) {
         state.yaw += dt * 0.04
         state.dirty = true
       }
+      // the idle animation runs at a modest frame rate; dragging and zooming get every frame
+      if (alive && now - lastDraw >= 1000 / IDLE_FPS - 2) state.dirty = true
       if (!state.dirty) return
       state.dirty = false
+      lastDraw = now
 
       const cam = camera()
+      const time = moving ? now / 1000 : 0
       universe.begin(cam)
-      universe.drawGalaxies(now / 1000, 1.25)
-      universe.drawRoute(path, [0.34, 0.22, 0.5])
-      // close to the selected galaxy its single stars come out
+      universe.drawBackdrop(time)
+      universe.drawGalaxies(time, 1.25, moving ? 1 : 0)
+      universe.drawRoute(path, [0.34, 0.22, 0.5], time)
+      // close to the selected galaxy its single stars come out, turning with their galaxy
       if (picked) {
         if (cloud?.galaxy.id !== picked.id) cloud = universe.createStars(picked, 24_000)
-        const near = Math.min(1, Math.max(0, (16 - state.distance / picked.radius) / 8))
-        universe.drawStars(cloud, near, canvas.height / 720)
+        const near = Math.min(1, Math.max(0, (16 - state.distance / (picked.radius * extentOf(picked))) / 8))
+        universe.drawStars(cloud, near, canvas.height / 720, picked.spin * time, time)
       }
       const aspect = canvas.width / canvas.height
       for (const galaxy of markers) {
@@ -268,6 +294,12 @@ export function StarMap() {
                     className="absolute -top-[9px] -left-[9px] block h-[18px] w-[18px] rounded-full"
                     style={{ border: `1.5px solid ${colour}`, boxShadow: `0 0 10px ${colour}90` }}
                   />
+                  {(isHere || isSelected) && animated && (
+                    <span
+                      className="map-ping absolute -top-[9px] -left-[9px] block h-[18px] w-[18px] rounded-full"
+                      style={{ borderColor: colour }}
+                    />
+                  )}
                   <span
                     className={`absolute top-[-8px] left-[15px] text-[11px] leading-tight font-semibold whitespace-nowrap ${isHere || isSelected ? '' : 'map-label'}`}
                     style={{ color: colour }}
@@ -293,7 +325,7 @@ export function StarMap() {
               <div className="border-b border-line p-4">
                 <div className="font-display text-xl leading-tight font-extrabold">{selected.name}</div>
                 <div className="mt-0.5 text-xs text-muted">
-                  {selected.designation} · {selected.arms} spiral arms
+                  {selected.designation} · {galaxyKind(selected)}
                   {here && here.id !== selected.id && ` · ${length(sub(selected.pos, here.pos)).toFixed(1)} Mly from here`}
                 </div>
               </div>
@@ -336,7 +368,9 @@ export function StarMap() {
                     >
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-semibold">{visit.galaxy.name}</span>
-                        <span className="block text-[11px] text-muted">{visit.galaxy.designation}</span>
+                        <span className="block truncate text-[11px] text-muted">
+                          {visit.galaxy.designation} · {TYPE_NAMES[visit.galaxy.type]}
+                        </span>
                       </span>
                       <span className="text-xs tabular-nums">
                         <span className="text-[#5fb4ff]">{wins}W</span> <span className="text-[#ff7a62]">{visit.games.length - wins}L</span>
