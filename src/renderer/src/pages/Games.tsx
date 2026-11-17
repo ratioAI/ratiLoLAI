@@ -15,6 +15,7 @@ import { WinCurve } from '@/components/WinCurve'
 import { quips, ratioApproved } from '@shared/quips'
 import { cosmicSeed, galaxyOf } from '@shared/universe'
 import { DiscoveryCard } from '@/components/AchievementToast'
+import { GameClips } from './Clips'
 
 const MODE: Record<string, string> = { KIWI: 'ARAM: Mayhem', ARAM: 'ARAM', CLASSIC: "Summoner's Rift" }
 const ago = (timestamp: number): string => {
@@ -399,6 +400,7 @@ export function GameDetail() {
       </div>
 
       <GameDiscoveries gameId={summary.gameId} />
+      <GameClips gameId={summary.gameId} />
 
       <div className="stagger grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="panel px-4 pt-3 pb-2">

@@ -1,6 +1,9 @@
-import { existsSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { copyFile, readFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { basename, extname } from 'node:path'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type {
   ChampionBuild,
@@ -48,6 +51,17 @@ import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
 import { RiotClient, regionalOf } from './riot/client'
 import type { GameResults, RecordMode } from './records'
 import { SettingsStore } from './settings'
+import { RecorderEnv } from './recorder/setup'
+import { RecorderService } from './recorder/service'
+import { ClipStore } from './recorder/clipStore'
+import { clipProtocolHandler, mediaTypeOf } from './recorder/protocol'
+import { Exporter } from './recorder/exporter'
+import { run as runProgram } from './recorder/ffmpeg'
+import { ClipSharer } from './recorder/share'
+import { quips as gameQuips } from '@shared/quips'
+import { newProject } from '@shared/editProject'
+import { normalizeProject, type EditProject } from '@shared/editProject'
+import type { ExportRequest } from '@shared/types'
 
 // The app used to be called "Rift Companion". Move its data (settings, encrypted API key, crawled
 // stats, caches) to the new folder once, or keep using the old folder if the move fails.
@@ -65,6 +79,9 @@ import { SettingsStore } from './settings'
 }
 
 if (!app.requestSingleInstanceLock()) app.quit()
+// rcclip:// plays clips in the window (read-only, ids instead of paths; see recorder/protocol.ts).
+// Must be declared before the app is ready; "stream" lets the video player seek.
+protocol.registerSchemesAsPrivileged([{ scheme: 'rcclip', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }])
 // the announcer plays sounds when a game event comes in, not after a click in the window
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
@@ -443,6 +460,106 @@ const discord = new DiscordPoster({
   log: (message) => diag.log(message)
 })
 
+// --- Clips: the gameplay recorder (FFmpeg as its own program, Windows capture interfaces only) ---
+const recorderEnv = new RecorderEnv({
+  userData,
+  // resources/ is unpacked next to the asar archive in the installed app
+  helperExe: join(__dirname, '../../resources/bin/ratio-audio.exe').replace('app.asar', 'app.asar.unpacked'),
+  videosDir: app.getPath('videos'),
+  settings: () => settings.get().recorder,
+  onFfmpeg: (state) => emit('ffmpeg', state),
+  inGame: () => inGame,
+  log: (message) => diag.log(message),
+  ffmpegOverride: app.isPackaged ? null : (process.env.RATIO_FFMPEG ?? null)
+})
+
+const clips = new ClipStore(games.database)
+const recorder = new RecorderService({
+  env: recorderEnv,
+  store: clips,
+  settings: () => settings.get().recorder,
+  takenHotkeys: () => ({ augment: settings.get().overlay.hotkey }),
+  emit: (status) => emit('recorder', status),
+  clipSaved: (clip) => emit('clipSaved', clip),
+  hotkeys: (bindings) => overlay.setExtraHotkeys(bindings),
+  displaySize: () => {
+    const display = gameScreen()
+    return { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) }
+  },
+  log: (message) => diag.log(message)
+})
+
+/** Files the user picked for the editor (music, stickers), by the token the window gets instead of the path. */
+const pickedMedia = new Map<string, string>()
+/** A playable rcclip:// URL for a music or picture file; null for anything else or a file that is gone. */
+function registerMedia(path: string): string | null {
+  const type = mediaTypeOf(path)
+  if (!type || type.startsWith('video/') || !existsSync(path)) return null
+  const known = [...pickedMedia].find(([, file]) => file === path)?.[0]
+  const token = known ?? randomBytes(12).toString('hex')
+  pickedMedia.set(token, path)
+  return `rcclip://media/${token}`
+}
+
+const exporter = new Exporter({
+  env: recorderEnv,
+  store: clips,
+  inGame: () => inGame || recorder.recording,
+  emit: (job) => emit('exportProgress', job),
+  clipSaved: (clip) => emit('clipSaved', clip),
+  font: join(__dirname, '../../resources/fonts/Anton-Regular.ttf').replace('app.asar', 'app.asar.unpacked'),
+  // the built-in loops are part of the window's files (inside the app archive, which FFmpeg cannot read)
+  builtinMusic: (file) => readFile(join(__dirname, '../renderer', file)),
+  log: (message) => diag.log(message)
+})
+
+// --- Sharing clips through the Discord webhook ---
+const sharer = new ClipSharer({
+  db: games.database,
+  store: clips,
+  settings: () => settings.get().discord,
+  webhook: () => settings.getDiscordWebhook(),
+  staticData: () => ddragon.get().catch(() => null),
+  quipOf: async (gameId) => {
+    const summary = games.get(gameId)
+    const me = summary?.players.find((player) => player.me)
+    return summary && me ? (gameQuips(summary)[me.puuid] ?? null) : null
+  },
+  // a clip that is too large is exported again with the Discord preset
+  shrink: async (clipId, targetMb) => {
+    const clip = clips.clip(clipId)
+    if (!clip) return null
+    try {
+      const project = newProject(clipId, clip.durationMs / 1000)
+      project.output = { ...project.output, preset: 'discord', targetMb }
+      const job = await exporter.runToEnd({ clipId, project, title: clip.title, images: {} })
+      if (job.state === 'paused') exporter.cancel()
+      return job.state === 'done' ? (job.clip?.id ?? null) : null
+    } catch {
+      // another export is running
+      return null
+    }
+  },
+  discard: async (clipId) => {
+    await recorder.deleteClips([clipId])
+  },
+  log: (message) => diag.log(message)
+})
+
+function registerClipProtocol(): void {
+  protocol.handle(
+    'rcclip',
+    clipProtocolHandler((kind, id) => {
+      if (kind === 'media') return pickedMedia.get(id) ?? null
+      const numericId = Number(id)
+      if (!Number.isInteger(numericId)) return null
+      if (kind === 'recording') return recorder.sessionFile(numericId)
+      const files = clips.files(numericId)
+      return kind === 'clip' ? (files?.file ?? null) : (files?.thumb ?? null)
+    })
+  )
+}
+
 /** The first full evaluation reads every saved game, so it waits until no game is running. */
 function startAchievements(): void {
   if (inGame) {
@@ -558,7 +675,17 @@ const lcu = new LcuManager({
     riot: riotResults
   },
   encounters: async (me, puuids, excludeGameId) => games.encounters(me, puuids, excludeGameId),
-  liveEvents: (events, state) => announcer.tick(events, state),
+  liveEvents: (events, state) => {
+    announcer.tick(events, state)
+    // automatic clips hang on this poll too: the recorder has no loop of its own
+    recorder.onLive(events, state)
+  },
+  phase: (phase) => {
+    recorder.onPhase(phase)
+    // exports never run next to a game
+    if (phase === 'InProgress' || phase === 'GameStart') exporter.onGameStart()
+    else if (!['Reconnect'].includes(phase)) setTimeout(() => exporter.onGameEnd(), 5000)
+  },
   log: (message) => diag.log(message),
   settings: () => settings.get(),
   staticData: () => ddragon.get(),
@@ -592,6 +719,8 @@ const lcu = new LcuManager({
         diag.log(`saving game ${summary.gameId} failed: ${String(error)}`)
       }
       emit('gameSummary', saved)
+      // the clips recorded during this game now belong to it
+      recorder.onSummary(saved.gameId)
       // after the summary is on screen; the game is over, so reading the database is fine now
       void achievements
         .onGame(saved)
@@ -599,6 +728,10 @@ const lcu = new LcuManager({
         // posted after the achievements, so the message can name the ones this game unlocked
         .then(() => discord.maybePost(saved))
         .catch((error) => diag.log(`discord after game ${saved.gameId} failed: ${String(error)}`))
+        // the best automatic clip goes under the summary (option, off by default); wait for the recorder's last clips
+        .then(() => recorder.settled())
+        .then(() => (discord.posted(saved.gameId) ? sharer.attachBest(saved.gameId) : undefined))
+        .catch((error) => diag.log(`discord clip after game ${saved.gameId} failed: ${String(error)}`))
     }
   }
 })
@@ -658,6 +791,8 @@ function registerIpc(): void {
     overlay.setVisibleInCapture(next.overlay.showInCapture)
     updateOverlay(lcu.getLive())
     tierCache.clear()
+    recorder.settingsChanged()
+    if (patch.recorder) void recorder.refresh()
     return next
   })
   handle('setApiKey', async (key: string) => {
@@ -697,6 +832,94 @@ function registerIpc(): void {
   handle('getAnnouncerSound', (trigger: Trigger) => customSound(soundsDir, String(trigger)))
   handle('openSoundFolder', async () => {
     await shell.openPath(await ensureSoundFolder(soundsDir))
+  })
+  handle('recorderSetup', () => recorderEnv.setup())
+  handle('installFfmpeg', () => recorderEnv.install())
+  handle('testEncoders', () => recorderEnv.testEncoders(true))
+  handle('recorderStatus', () => recorder.status())
+  handle('clipNow', () => recorder.clipNow())
+  handle('listClips', () => clips.list())
+  handle('updateClip', (id: number, patch: { title?: string; favorite?: boolean }) =>
+    clips.update(Number(id), { title: typeof patch?.title === 'string' ? patch.title : undefined, favorite: typeof patch?.favorite === 'boolean' ? patch.favorite : undefined })
+  )
+  handle('deleteClips', (ids: number[]) => recorder.deleteClips(Array.isArray(ids) ? ids.map(Number) : []))
+  handle('showClipInFolder', (id: number) => {
+    const file = clips.files(Number(id))?.file
+    if (file) shell.showItemInFolder(file)
+  })
+  handle('clipStorage', () => recorder.storageInfo())
+  handle('cleanupPreview', () => recorder.cleanupPreviewInfo())
+  handle('cleanupRun', () => recorder.cleanupNow())
+  handle('listRecordings', () => recorder.sessions())
+  handle('gameRecording', (gameId: number) => recorder.sessionOfGame(Number(gameId)))
+  handle('keepRecording', (id: number, keep: boolean) => recorder.keepSession(Number(id), !!keep))
+  handle('deleteRecording', (id: number) => recorder.deleteSession(Number(id)))
+  handle('clipFromRecording', (id: number, startMs: number, endMs: number) => recorder.clipFromSession(Number(id), Number(startMs), Number(endMs)))
+  handle('getEdit', (clipId: number) => {
+    const edit = clips.edit(Number(clipId))
+    if (!edit) return null
+    try {
+      return normalizeProject(JSON.parse(edit.projectJson))
+    } catch {
+      return null
+    }
+  })
+  handle('saveEdit', (clipId: number, project: EditProject) => {
+    const clean = normalizeProject(project)
+    if (clean && clips.clip(Number(clipId))) clips.saveEdit(Number(clipId), JSON.stringify(clean), Date.now())
+  })
+  handle('pickMedia', async (kind: 'music' | 'image') => {
+    const options = {
+      title: kind === 'music' ? 'Choose a music file' : 'Choose a picture',
+      properties: ['openFile'] as 'openFile'[],
+      filters: [
+        kind === 'music'
+          ? { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac'] }
+          : { name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }
+      ]
+    }
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+    const path = result.canceled ? null : result.filePaths[0]
+    const url = path ? registerMedia(path) : null
+    return path && url ? { url, path, name: basename(path, extname(path)) } : null
+  })
+  handle('mediaUrl', (path: string) => registerMedia(String(path)))
+  handle('exportStart', (request: ExportRequest) => exporter.start(request))
+  handle('exportCancel', () => exporter.cancel())
+  handle('exportStatus', () => exporter.status())
+  handle('shareClipToDiscord', (id: number, options?: { quip?: boolean; again?: boolean }) =>
+    sharer.share(Number(id), { quip: options?.quip ?? settings.get().discord.includeQuips, again: !!options?.again })
+  )
+  handle('copyClipFile', async (id: number) => {
+    const file = clips.files(Number(id))?.file
+    if (!file || !existsSync(file)) return false
+    if (process.platform === 'win32') {
+      // a real file drop list on the clipboard, so Ctrl+V in Discord or Explorer pastes the file itself
+      const copied = await runProgram('powershell', ['-NoProfile', '-NonInteractive', '-Command', `Set-Clipboard -LiteralPath '${file.replace(/'/g, "''")}'`], {
+        timeoutMs: 15_000
+      })
+      if (copied.code === 0) return true
+    }
+    clipboard.writeText(file)
+    return process.platform !== 'win32'
+  })
+  handle('saveClipAs', async (id: number) => {
+    const file = clips.files(Number(id))?.file
+    if (!file || !existsSync(file)) return false
+    const options = { title: 'Save as', defaultPath: join(app.getPath('downloads'), basename(file)) }
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return false
+    await copyFile(file, result.filePath)
+    return true
+  })
+  handle('openClipFolder', async () => {
+    mkdirSync(recorderEnv.folder(), { recursive: true })
+    await shell.openPath(recorderEnv.folder())
+  })
+  handle('chooseClipFolder', async () => {
+    const options = { title: 'Folder for clips and recordings', defaultPath: recorderEnv.folder(), properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] }
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   handle('getPatches', (mode: GameMode) => store.patches(assertMode(mode)))
   handle('getTierList', (patch: string, mode: GameMode) => tierList(patch, assertMode(mode)))
@@ -804,6 +1027,7 @@ function registerIpc(): void {
           emit('live', live)
           updateOverlay(live)
           announcer.tick(events, live)
+          recorder.onLive(events, live)
         },
         realLive: () => lcu.getLive(),
         restore: () => {
@@ -821,6 +1045,8 @@ function registerIpc(): void {
         games,
         achievements,
         discord,
+        recorderEnv,
+        recorder,
         diag,
         padsFile: minimapPadsFile
       })
@@ -1002,7 +1228,12 @@ void app.whenReady().then(async () => {
   }
   app.setAppUserModelId('dev.riftcompanion.app')
   registerIpc()
+  registerClipProtocol()
   createWindow()
+  void recorderEnv
+    .init()
+    .then(() => recorder.refresh())
+    .catch((error) => diag.log(`recorder: init failed – ${String(error)}`))
   lcu.start()
   overlay.setHotkey(settings.get().overlay.hotkey)
   overlay.setVisibleInCapture(settings.get().overlay.showInCapture)
@@ -1012,7 +1243,24 @@ void app.whenReady().then(async () => {
   })
 })
 
-app.on('will-quit', () => games.close())
+// a running recording is closed properly before the app goes (FFmpeg finishes its last segment)
+let recorderClosed = false
+app.on('before-quit', (event) => {
+  if (recorderClosed || !recorder.recording) return
+  event.preventDefault()
+  void recorder
+    .shutdown()
+    .catch(() => undefined)
+    .finally(() => {
+      recorderClosed = true
+      app.quit()
+    })
+})
+
+app.on('will-quit', () => {
+  recorderEnv.helper.quit()
+  games.close()
+})
 
 app.on('window-all-closed', () => {
   scanner.stop()

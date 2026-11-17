@@ -45,6 +45,7 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. ra
 | 💀 **Nemesis & old friends** | On the loading screen every stranger you met before gets a small badge and a one-liner from your saved games: *Nemesis* (beat you in most of 3+ games), *Victim*, *Lucky charm* (you win with them), *Jinx*, *Rival* or just *Last time: 2/14/3 Yasuo, 12 days ago* – plus a note when they changed their Riot ID. Your premades never get one. The profile page shows your history with a player and links to your shared games. |
 | ✨ **Achievements as constellations** | 28 achievements – pentakills, untouchable wins, *Ratio Approved* augments, MVP streaks, game milestones, galaxies visited and a handful of secret ones. Each one is a constellation in the sky of the star map: locked ones are faint stars, unlocked ones light up in bronze, silver, gold or a cosmic gradient. *Games → Achievements* shows all of them with progress; a new one draws itself star by star after the game. |
 | 💬 **Discord webhook** | After every game a summary lands in your friends' Discord channel: result, both teams with K/D/A and quips, MVP and troll, the best highlights and new achievements. Your own webhook (stored encrypted), per mode, optionally only with premades, strangers anonymized by default. Or post any saved game by hand. |
+| 🎬 **Clips** | A free replacement for Medal, built in: your games are recorded in full quality – **no paywall, no watermark, no outro, no upload limit** but Discord's own – through Windows' own capture interfaces (nothing is injected into the game). *Instant replay* keeps the last 30 seconds and a hotkey saves them; pentakills, quadras, triples, aces and first bloods are saved on their own; a bookmark hotkey marks a moment for after the game; or keep the whole game. Clips are cut without re-encoding, so saving one costs nothing in the game. Only the League window is captured and only the game's sound – no Discord voice, no desktop, no notifications. The *Clips* tab is a library with hover previews, filters and search, linked to your games (champion, K/D/A, result). An editor turns clips into montages, slow motion, 9:16 shorts, GIFs and memes – meme text, your quip from the summary, stickers, a stats overlay, music with ducking – and exports them for Discord (fits under 20 MB on its own), as high-quality MP4, short, GIF or WebM. Share through your Discord webhook or save locally: no cloud, no servers, everything stays on your PC. Off by default. |
 | 📣 **Hype announcer** | Sounds for your multikills, a premade's pentakill, first blood, aces, victory and defeat – and a sad trombone for your 10th death. Generated live with WebAudio (no recordings) plus an optional line from the system's offline voice, cooldown and priority so it never spams, every trigger can be switched off or replaced by your own sound file. Audio only, from the app's window; off by default. |
 | ✨ **ARAM: Mayhem** | Augment tips per champion (top combos, strong picks, *traps*), proven multi-augment combinations and the most picked augments per rarity – shown in champion select, **in game** next to the scoreboard and on a dedicated page. Items & runes come from ARAM data, and your **own** Mayhem history (augments you picked, win rate) is read from the League client. |
 | 👤 **Profiles** | op.gg-style player lookup: ranks, mastery, last 15 games with KDA, CS/min, items, runes and champion stats. |
@@ -52,6 +53,16 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. ra
 | 🔐 **Private by design** | Your API key is encrypted with the OS keychain (DPAPI/Keychain) and never leaves the main process. No telemetry. |
 
 <p align="center"><img src="docs/screenshots/overlay-cards.png" alt="In-game augment overlay" width="900" /><br/><sub>In-game overlay on a real ARAM: Mayhem augment choice</sub></p>
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/clips-library.png" alt="Clips library" /></td>
+    <td><img src="docs/screenshots/clips-editor.png" alt="Clips editor" /></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/screenshots/clips-export.png" alt="Export dialog" width="600" /><br/><sub>Clips: library, editor and export (web demo – the clips are FFmpeg test pictures)</sub></td>
+  </tr>
+</table>
 
 <table>
   <tr>
@@ -133,6 +144,10 @@ flowchart LR
     Games --> Ach[Achievements · encounters]
     Games --> Discord[Discord poster]
     Live --> Announcer[Announcer triggers]
+    Live --> Rec[Recorder<br/>auto clips]
+    LCU --> Rec
+    Rec -->|spawns| FF[FFmpeg + ratio-audio<br/>WGC · WASAPI]
+    Rec --> Games
     DD[Data Dragon cache]
   end
   subgraph Renderer["Renderer (React 19 + Tailwind 4)"]
@@ -158,13 +173,52 @@ src/
 │  ├─ achievements.ts achievements: full evaluation at start, then per game; flights
 │  ├─ discord.ts      Discord webhook poster (dedupe, rate limits)
 │  ├─ announcer.ts    feeds the live event feed into the hype announcer
+│  ├─ recorder/       Clips: FFmpeg download + encoder test, recorder service (segments, ring,
+│  │                  hotkeys, automatic clips), clip store, rcclip:// protocol, exporter, sharing
 │  └─ profile.ts      summoner profiles & live-game scouting
 ├─ preload/           contextBridge – exposes a typed `window.rc` API
 ├─ renderer/          React UI (also builds as a standalone web demo)
 └─ shared/            types, tier/build analysis, static-data parsing, the universe catalogue
                       and flight path (pure & tested)
+native/audio/         ratio-audio.exe (Rust): the game's sound through WASAPI process loopback
 test/                 Vitest unit + integration tests (crawler against a fake Riot API)
 ```
+
+### How Clips record
+
+```
+League window ──Windows Graphics Capture──▶ FFmpeg (gfxcapture, D3D11 frames stay on the GPU)
+                                              │  NVENC / AMF / Quick Sync, constant quality,
+game process ──WASAPI process loopback──▶ ratio-audio.exe ──named pipe (PCM)──▶ │  keyframe every second
+                                              ▼
+                              2-second fMP4 segments + segments.csv   (ring of the last 30 s, or the whole game)
+                                              ▼
+              hotkey · automatic clip · bookmark  ──▶  concat + stream copy  ──▶  clip.mp4 + thumbnail
+```
+
+- **FFmpeg is its own program**, not linked into the app and not part of the installer: an LGPL build (no x264/x265) is downloaded once from this repository's release assets, checked against a SHA-256 written into the code and unpacked into the app's data folder (`shared/ffmpegBuild.ts`).
+- **Hardware encoders only** (tested once, best first: AV1 → HEVC → H.264 on NVIDIA, AMD or Intel). Without one the recorder stays off – there is no x264 fallback, because software encoding next to a game costs frames.
+- **Nothing blocks the game.** FFmpeg and the sound helper run at below-normal priority; the capture hands out frames from a pool of two, so when the encoder cannot keep up frames are dropped in the recording, never in the game. Clips are stream copies of finished segments. The recorder has no timer of its own: automatic clips, the ring and the status hang on the live poll that already runs every two seconds.
+- **Automatic clips** come from the Live Client Data event feed (`Multikill`, `FirstBlood`, `Ace`, `ChampionKill`, `GameEnd`): each kind has a lead-in and lead-out, overlapping moments become one clip, and when the app starts in the middle of a game nothing is made up for the past.
+- **Storage** has a limit (30 GB by default). The cleanup deletes leftovers of replay recordings first, then whole-game recordings older than a week that were not marked *keep* – never clips or favorites – and shows what it would delete before it does.
+
+#### Frame rate cost and file sizes
+
+The goal is **less than 3 % fewer frames** while recording. How to measure it on your PC: play a practice-tool game (or a replay) with the frame-rate display on (<kbd>Ctrl</kbd>+<kbd>F</kbd>), frame cap off, standing in the same spot; note the average for a minute with *Record my games* off and for a minute with it on. The Admin tab's *Record without a game* shows the megabytes per minute your encoder really produces.
+
+| | Without recording | Compact | High | Original |
+|---|---|---|---|---|
+| Average FPS | *not measured yet* | *not measured yet* | *not measured yet* | *not measured yet* |
+
+> The table is empty on purpose: this version was built without access to a Windows PC with League, so no number here would be a measurement. Fill it in with the method above (GPU, driver, resolution).
+
+File sizes are estimated from typical League bitrates (the settings page shows the estimate for your encoder; real numbers depend on how much moves on screen):
+
+| Profile | Picture | AV1 | HEVC | H.264 |
+|---|---|---|---|---|
+| Compact | up to 1080p60 | ~46 MB/min | ~57 MB/min | ~84 MB/min |
+| High | up to 1440p60 | ~94 MB/min | ~117 MB/min | ~174 MB/min |
+| Original | native | ~91 MB/min at 1080p | ~114 MB/min at 1080p | ~166 MB/min at 1080p |
 
 ### How the numbers are computed
 
@@ -178,13 +232,16 @@ test/                 Vitest unit + integration tests (crawler against a fake Ri
 
 ```bash
 npm run dev         # Electron + Vite with hot reload
-npm test            # Vitest (241 tests)
+npm test            # Vitest (341 tests)
 npm run typecheck   # strict TypeScript for main + renderer
 npm run build:web   # standalone web demo in ./dist-web (synthetic data)
-npm run screenshots # README screenshots of the 1.2 features from the built web demo (needs internet)
+npm run screenshots # README screenshots of the 1.2 and 1.3 features from the built web demo (needs internet)
+npm run build:audio # Clips: builds native/audio (Rust) into resources/bin/ratio-audio.exe – Windows only
 ```
 
-`npm run dev` also adds an **Admin** tab with developer tools: flights to any galaxy type (wormhole or black hole), the in-game overlays without a game (including loading-screen lobbies with every kind of encounter, or built from your own history), a simulated League client and ARAM game (inhibitor and relic events, fights with multikills and aces for the announcer), test games for the post-game summary, achievements (unlock, reset, play the animation), the Discord message of your newest game, every announcer sound, the live overlay log and a relic pad calibration for maps the timers don't know yet. Builds leave all of it out (`import.meta.env.DEV`), so it is never part of the installer.
+**Clips in development.** The recorder needs two programs that are not in the repository: the sound helper (`npm run build:audio` with [Rust](https://rustup.rs), or the `ratio-audio` artifact of a CI run, saved as `resources/bin/ratio-audio.exe`) and FFmpeg 8.1 or newer. For FFmpeg either publish the build as described in `src/shared/ffmpegBuild.ts`, or point the development app at a local one: `set RATIO_FFMPEG=C:\path\to\ffmpeg.exe` before `npm run dev` (ignored by the installed app). Without the helper clips have no sound; without a hardware encoder nothing is recorded.
+
+`npm run dev` also adds an **Admin** tab with developer tools: flights to any galaxy type (wormhole or black hole), the in-game overlays without a game (including loading-screen lobbies with every kind of encounter, or built from your own history), a simulated League client and ARAM game (inhibitor and relic events, fights with multikills and aces for the announcer), test games for the post-game summary, achievements (unlock, reset, play the animation), the Discord message of your newest game, every announcer sound, the live overlay log and a relic pad calibration for maps the timers don't know yet. For Clips it has an encoder test, *Reload FFmpeg*, *Record without a game* (20 s of a test picture or of the main screen through the real pipeline), a test recording the simulated game can cut automatic clips from, the ring buffer and *Clip now*. Builds leave all of it out (`import.meta.env.DEV`), so it is never part of the installer.
 
 CI runs type checks, tests and both builds on every push. Tagging `v*` builds the Windows installer and attaches it to a GitHub release; `main` is deployed as the web demo to GitHub Pages.
 
@@ -193,6 +250,20 @@ CI runs type checks, tests and both builds on every push. Tagging `v*` builds th
 ratioAI only uses **official, documented interfaces**: the public Riot API, the League Client API (LCU – the same interface Blitz, Porofessor, Mobalytics etc. use for rune import) and the in-game Live Client Data API. It does not read game memory or inject anything into the game, so it is not affected by Vanguard. For personal use a development or personal API key is sufficient; if you want to distribute the app publicly with a shared key you have to register it as a product with Riot.
 
 The 1.2 features add nothing to that list: encounters and achievements are worked out from your own game database, the announcer listens to the same Live Client Data feed the Live tab already polls and only plays audio in the app's own window. **Discord posts only go to the webhook URL you enter yourself** (stored encrypted, never shown again), nothing is sent anywhere else, and players who aren't you or your premades appear only as their champion unless you switch that off.
+
+**Clips (1.3) record only through operating system interfaces.** The picture comes from Windows Graphics Capture (or Desktop Duplication/DXGI as a fallback), the sound from WASAPI process loopback. There is **no hook and no injection into the game process** (so nothing like OBS's "Game Capture"), no memory is read, and the helper never even opens the game process – it finds the window by its title and gives Windows the process id. Only the League window is captured, never the whole desktop, and by default **only the game's sound** – what Discord or any other program plays is not in the clip; the microphone is optional and off. Game events for automatic clips come from the Live Client Data API (127.0.0.1:2999) and the client (LCU), nothing else. Clips never leave your PC unless you share them.
+
+## Third-party licenses
+
+| | License | Where |
+|---|---|---|
+| [FFmpeg](https://ffmpeg.org) 8.1 (LGPL build, no x264/x265) | LGPL-2.1-or-later | Runs as its own program, downloaded on first use; it is not linked into ratioAI. Build and source: [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), [ffmpeg.org](https://ffmpeg.org/download.html). License text: [LGPL 2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html). |
+| [Anton](https://github.com/googlefonts/AntonFont) (meme text) | SIL Open Font License 1.1 | `resources/fonts/` with the license text, and `@fontsource/anton` |
+| [Twemoji](https://github.com/jdecked/twemoji) 15 (24 emoji stickers) | CC-BY 4.0, © Twitter, Inc and other contributors | `src/renderer/src/assets/stickers/` |
+| [wasapi-rs](https://github.com/HEnquist/wasapi-rs), serde_json (sound helper) | MIT / MIT or Apache-2.0 | `native/audio/` |
+| Built-in music loops | CC0 1.0, synthesized by `scripts/make-music.py` | `src/renderer/public/music/` |
+
+ratioAI ships no chart music, no commercial fonts and no sticker packs; music of your own that you add to a clip is your responsibility when you share it.
 
 ## Legal
 

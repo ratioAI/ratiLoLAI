@@ -59,6 +59,8 @@ export interface LcuManagerDeps {
   encounters?(me: string | null, puuids: string[], excludeGameId: number | null): Promise<Map<string, EncounterStats>>
   /** The whole event feed of each live poll (hype announcer); called right after emit.live. */
   liveEvents?(events: LiveEvent[], state: LiveGameState | null): void
+  /** The gameflow phase changed (the recorder starts with InProgress and stops when the game is over). */
+  phase?(phase: string): void
   log?(message: string): void
 }
 
@@ -420,6 +422,7 @@ export class LcuManager {
   private onPhase(phase: string): void {
     if (phase === 'ChampSelect' && this.lastPhase === 'ReadyCheck') this.deps.emit.matchAccepted()
     this.lastPhase = phase
+    this.deps.phase?.(phase)
     if (['Lobby', 'Matchmaking', 'ReadyCheck', 'ChampSelect'].includes(phase)) void this.fetchParty()
     if (phase === 'InProgress') void this.fetchLoading()
     else if (this.loadingState) {

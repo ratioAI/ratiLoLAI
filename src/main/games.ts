@@ -42,7 +42,7 @@ CREATE INDEX IF NOT EXISTS game_players_puuid ON game_players (puuid);
 `
 
 /** Version of the database layout, kept in `PRAGMA user_version`. Databases from 1.0 and 1.1 are version 1 (or 0). */
-export const DB_VERSION = 3
+export const DB_VERSION = 4
 
 /** Columns one migration adds to an existing table (skipped when they are already there). */
 type AddColumns = { table: string; columns: [name: string, definition: string][] }
@@ -88,6 +88,46 @@ const MIGRATIONS: Record<number, { add?: AddColumns[]; sql?: string; after?: (db
         at      INTEGER NOT NULL,
         variant TEXT    NOT NULL,
         galaxy  INTEGER NOT NULL
+      );`
+  },
+  // 1.3: Clips. Recordings (the segments of one game), the clips cut from them, the editor's
+  // projects and which clips were posted to Discord. The video files live in the clips folder; deleting a game keeps its clips.
+  4: {
+    sql: `
+      CREATE TABLE IF NOT EXISTS recordings (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_id    INTEGER,
+        started_at INTEGER NOT NULL,
+        ended_at   INTEGER,
+        dir        TEXT    NOT NULL,
+        bytes      INTEGER NOT NULL DEFAULT 0,
+        kept       INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS recordings_game ON recordings (game_id);
+      CREATE TABLE IF NOT EXISTS clips (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_id      INTEGER,
+        recording_id INTEGER,
+        created_at   INTEGER NOT NULL,
+        start_ms     INTEGER NOT NULL,
+        end_ms       INTEGER NOT NULL,
+        file         TEXT    NOT NULL,
+        thumb        TEXT,
+        kind         TEXT    NOT NULL,
+        title        TEXT    NOT NULL DEFAULT '',
+        favorite     INTEGER NOT NULL DEFAULT 0,
+        bytes        INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS clips_game ON clips (game_id);
+      CREATE INDEX IF NOT EXISTS clips_created ON clips (created_at DESC);
+      CREATE TABLE IF NOT EXISTS edits (
+        clip_id      INTEGER PRIMARY KEY,
+        project_json TEXT    NOT NULL,
+        updated_at   INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS clip_posts (
+        clip_id   INTEGER PRIMARY KEY,
+        posted_at INTEGER NOT NULL
       );`
   }
 }

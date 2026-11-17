@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Download, ExternalLink, FolderOpen, KeyRound, Loader2, MonitorPlay, ScanSearch, Send, Volume2, Webhook } from 'lucide-react'
+import { Check, Clapperboard, Download, ExternalLink, FolderOpen, KeyRound, Loader2, MonitorPlay, RefreshCw, ScanSearch, Send, Volume2, Webhook, X } from 'lucide-react'
 import type {
   EditableSettings,
+  FfmpegState,
+  RecorderSetup,
   OverlayDiagnostics,
   Platform,
   ScanTestResult,
@@ -10,6 +12,17 @@ import type {
   UpdateState
 } from '@shared/types'
 import { DISCORD_MODES } from '@shared/discordPayload'
+import {
+  AUTO_CLIP_KINDS,
+  AUTO_CLIP_LABELS,
+  QUALITY_PROFILES,
+  encoderById,
+  estimateMbPerMinute,
+  hotkeyConflicts,
+  pickEncoder,
+  type RecorderSettings
+} from '@shared/recorder'
+import { FFMPEG_BUILD } from '@shared/ffmpegBuild'
 import { TRIGGERS, TRIGGER_LABELS, type Trigger } from '@shared/announcer'
 import { playAnnouncement, reloadCustomSounds } from '@/lib/announcer'
 import { PLATFORMS } from '@shared/types'
@@ -303,6 +316,10 @@ export function Settings() {
         <DiscordSettings settings={settings} save={save} refresh={async () => setSettings(await api.getSettings())} />
       </Group>
 
+      <Group title="Clips">
+        <ClipsSettings settings={settings} save={save} />
+      </Group>
+
       <Group title="Hype announcer">
         <AnnouncerSettings settings={settings} save={save} />
       </Group>
@@ -482,6 +499,265 @@ function DiscordSettings({
         value={discord.includeAchievements}
         onChange={(value) => set({ includeAchievements: value })}
       />
+      <Toggle
+        label="Add the game's best automatic clip under the summary"
+        value={discord.attachBestClip}
+        onChange={(value) => set({ attachBestClip: value })}
+      />
+      <NumberField
+        label="Upload limit for clips (MB) – 20 for everyone, 50 or 100 on boosted servers"
+        value={discord.uploadLimitMb}
+        min={1}
+        max={500}
+        onChange={(uploadLimitMb) => set({ uploadLimitMb })}
+      />
+    </>
+  )
+}
+
+const FFMPEG_LABEL: Record<FfmpegState['status'], string> = {
+  missing: 'Not downloaded',
+  downloading: 'Downloading',
+  verifying: 'Checking the download',
+  unpacking: 'Unpacking',
+  ready: 'Ready',
+  error: 'Failed'
+}
+
+/** One line of the recorder's setup: a check or a cross, a name and what is there. */
+function SetupLine({ ok, busy, label, children }: { ok: boolean; busy?: boolean; label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 py-1.5 text-sm">
+      <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${ok ? 'bg-win/15 text-win' : 'bg-panel-2 text-muted'}`}>
+        {busy ? <Loader2 size={12} className="animate-spin" /> : ok ? <Check size={12} /> : <X size={12} />}
+      </span>
+      <span className="w-28 shrink-0 font-semibold">{label}</span>
+      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-muted">{children}</span>
+    </div>
+  )
+}
+
+/**
+ * Clips: the gameplay recorder. On/off, what it needs (FFmpeg, a hardware encoder, the sound
+ * helper), mode, quality, sound, hotkeys, automatic clips and storage.
+ */
+function ClipsSettings({ settings, save }: { settings: SettingsT; save: (patch: Partial<EditableSettings>) => Promise<void> }) {
+  const recorder = settings.recorder
+  const [setup, setSetup] = useState<RecorderSetup | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [hotkeys, setHotkeys] = useState(recorder.hotkeys)
+  useEffect(() => {
+    void api.recorderSetup().then(setSetup)
+    return api.on('ffmpeg', (ffmpeg) => {
+      setSetup((current) => (current ? { ...current, ffmpeg } : current))
+      // the encoders are tested right after the download
+      if (ffmpeg.status === 'ready') void api.recorderSetup().then(setSetup)
+    })
+  }, [])
+  const set = (patch: Partial<RecorderSettings>) => save({ recorder: { ...recorder, ...patch } })
+  const install = async () => {
+    await api.installFfmpeg().catch(() => undefined)
+    setSetup(await api.recorderSetup())
+  }
+  const enable = async (value: boolean) => {
+    await set({ enabled: value })
+    if (value && setup && setup.ffmpeg.status !== 'ready' && setup.ffmpeg.status !== 'downloading') void install()
+  }
+  const testEncoders = async () => {
+    setTesting(true)
+    await api.testEncoders().catch(() => null)
+    setSetup(await api.recorderSetup())
+    setTesting(false)
+  }
+  const ffmpeg = setup?.ffmpeg ?? { status: 'missing' as const }
+  const downloading = ffmpeg.status === 'downloading' || ffmpeg.status === 'verifying' || ffmpeg.status === 'unpacking'
+  const available = setup?.encoders?.available ?? []
+  const encoder = pickEncoder(available, recorder.encoder)
+  const conflicts = hotkeyConflicts(hotkeys, { augment: settings.overlay.hotkey })
+  const saveHotkeys = () => {
+    if (!conflicts.length && JSON.stringify(hotkeys) !== JSON.stringify(recorder.hotkeys)) void set({ hotkeys })
+  }
+  // the estimate uses the encoder that will record (HEVC when nothing was tested yet)
+  const mbPerMinute = (quality: RecorderSettings['quality']) => estimateMbPerMinute(quality, encoder?.codec ?? 'hevc', recorder.fps, null)
+
+  return (
+    <>
+      <Toggle label="Record my games" value={recorder.enabled} onChange={enable} />
+      {setup && !setup.supported && !isDemo && (
+        <p className="py-2 text-sm text-gold">Recording needs Windows 10 version 2004 or newer.</p>
+      )}
+      <div className="border-b border-line/50 py-2">
+        <SetupLine ok={ffmpeg.status === 'ready'} busy={downloading} label="FFmpeg">
+          <span>
+            {FFMPEG_LABEL[ffmpeg.status]}
+            {ffmpeg.status === 'ready' && ffmpeg.version ? ` · ${ffmpeg.version}` : ''}
+            {ffmpeg.status === 'downloading' ? ` · ${Math.round((ffmpeg.progress ?? 0) * 100)} %` : ''}
+          </span>
+          {ffmpeg.status === 'downloading' && (
+            <span className="h-1.5 w-40 overflow-hidden rounded-full bg-panel-2">
+              <span className="block h-full rounded-full bg-accent transition-all" style={{ width: `${Math.round((ffmpeg.progress ?? 0) * 100)}%` }} />
+            </span>
+          )}
+          {ffmpeg.status === 'error' && <span className="text-loss">{ffmpeg.message}</span>}
+          {(ffmpeg.status === 'missing' || ffmpeg.status === 'error') && (
+            <button className="btn btn-ghost px-2 py-1 text-xs" onClick={install}>
+              <Download size={13} /> Download
+            </button>
+          )}
+        </SetupLine>
+        <SetupLine ok={!!encoder} busy={testing} label="Encoder">
+          {encoder ? (
+            <span>
+              {available.map((id) => encoderById(id)?.label).filter(Boolean).join(' ✓ · ')} ✓
+            </span>
+          ) : setup?.encoders ? (
+            <span className="text-gold">No hardware encoder (NVENC, AMF, Quick Sync) found – recording stays off.</span>
+          ) : (
+            <span>Tested after the download</span>
+          )}
+          {ffmpeg.status === 'ready' && (
+            <button className="btn btn-ghost px-2 py-1 text-xs" onClick={testEncoders} disabled={testing}>
+              <RefreshCw size={13} /> Test again
+            </button>
+          )}
+        </SetupLine>
+        <SetupLine ok={!!setup?.audioHelper} label="Game sound">
+          {setup?.audioHelper ? 'Only the game is recorded – no Discord voice, no other programs' : 'Sound helper missing – clips are recorded without sound'}
+        </SetupLine>
+      </div>
+
+      <Field label="Mode">
+        <select className="input w-56" value={recorder.mode} onChange={(event) => set({ mode: event.target.value as RecorderSettings['mode'] })}>
+          <option value="replay">Instant replay (last seconds)</option>
+          <option value="session">Whole game</option>
+        </select>
+      </Field>
+      {recorder.mode === 'replay' && (
+        <NumberField label="Replay length (seconds)" value={recorder.replaySeconds} min={10} max={300} onChange={(replaySeconds) => set({ replaySeconds })} />
+      )}
+      <Field label="Quality">
+        <select className="input w-56" value={recorder.quality} onChange={(event) => set({ quality: event.target.value as RecorderSettings['quality'] })}>
+          {Object.values(QUALITY_PROFILES).map((profile) => (
+            <option key={profile.id} value={profile.id}>
+              {profile.label} · {profile.maxHeight ? `${profile.maxHeight}p` : 'native'} · ~{mbPerMinute(profile.id)} MB/min
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Frames per second">
+        <select className="input w-56" value={recorder.fps} onChange={(event) => set({ fps: Number(event.target.value) === 30 ? 30 : 60 })}>
+          <option value={60}>60</option>
+          <option value={30}>30</option>
+        </select>
+      </Field>
+      <Field label="Encoder">
+        <select className="input w-56" value={recorder.encoder} onChange={(event) => set({ encoder: event.target.value })}>
+          <option value="auto">Automatic{encoder ? ` (${encoder.label})` : ''}</option>
+          {available.map((id) => (
+            <option key={id} value={id}>
+              {encoderById(id)?.label ?? id}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Toggle label="Record the game's sound" value={recorder.audio.game} onChange={(game) => set({ audio: { ...recorder.audio, game } })} />
+      <Toggle label="Record my microphone" value={recorder.audio.mic} onChange={(mic) => set({ audio: { ...recorder.audio, mic } })} />
+      {recorder.audio.mic && (
+        <Field label="Microphone volume">
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            className="w-56 accent-[var(--color-accent)]"
+            value={recorder.audio.micVolume}
+            onChange={(event) => set({ audio: { ...recorder.audio, micVolume: Number(event.target.value) } })}
+          />
+        </Field>
+      )}
+      {(
+        [
+          ['clip', 'Hotkey: save a clip'],
+          ['bookmark', 'Hotkey: bookmark (clip after the game)'],
+          ['screenshot', 'Hotkey: screenshot']
+        ] as const
+      ).map(([name, label]) => (
+        <Field key={name} label={label}>
+          <input
+            className="input w-56"
+            value={hotkeys[name]}
+            placeholder="off"
+            onChange={(event) => setHotkeys({ ...hotkeys, [name]: event.target.value })}
+            onBlur={saveHotkeys}
+          />
+        </Field>
+      ))}
+      {conflicts.map((conflict) => (
+        <p key={conflict} className="py-1 text-sm text-loss">
+          {conflict}
+        </p>
+      ))}
+      <Field label="Automatic clips">
+        <div className="flex max-w-md flex-wrap justify-end gap-1.5">
+          {AUTO_CLIP_KINDS.map((kind) => {
+            const on = recorder.autoClips[kind]
+            return (
+              <button
+                key={kind}
+                onClick={() => set({ autoClips: { ...recorder.autoClips, [kind]: !on } })}
+                className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${on ? 'border-accent/60 bg-accent/15 text-accent' : 'border-line text-muted'}`}
+              >
+                {AUTO_CLIP_LABELS[kind]}
+              </button>
+            )
+          })}
+        </div>
+      </Field>
+      <Field label="Storage folder">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="max-w-[260px] truncate text-xs text-muted" title={setup?.folder}>
+            {setup?.folder ?? ''}
+          </span>
+          <button
+            className="btn btn-ghost px-2 py-1 text-xs"
+            onClick={async () => {
+              const folder = await api.chooseClipFolder()
+              if (folder) {
+                await set({ storage: { ...recorder.storage, folder } })
+                setSetup(await api.recorderSetup())
+              }
+            }}
+          >
+            Change
+          </button>
+          <button className="btn btn-ghost px-2 py-1 text-xs" onClick={() => api.openClipFolder()}>
+            <FolderOpen size={13} /> Open folder
+          </button>
+        </div>
+      </Field>
+      <NumberField label="Storage limit (GB)" value={recorder.storage.maxGb} min={2} max={2000} onChange={(maxGb) => set({ storage: { ...recorder.storage, maxGb } })} />
+      {recorder.mode === 'session' && (
+        <NumberField
+          label="Delete whole-game recordings after (days)"
+          value={recorder.storage.keepSessionsDays}
+          min={1}
+          max={365}
+          onChange={(keepSessionsDays) => set({ storage: { ...recorder.storage, keepSessionsDays } })}
+        />
+      )}
+      <Toggle label="Click sound when a clip was saved" value={recorder.clipSound} onChange={(clipSound) => set({ clipSound })} />
+      <p className="pt-3 text-xs leading-relaxed text-muted">
+        <Clapperboard size={12} className="mr-1 inline" />
+        Recording uses Windows' own capture interfaces only (Windows Graphics Capture, WASAPI); nothing is injected into the game. Third-party
+        licenses: FFmpeg {FFMPEG_BUILD.version} ({FFMPEG_BUILD.license}, runs as its own program) ·{' '}
+        <button className="underline" onClick={() => api.openExternal(FFMPEG_BUILD.licenseUrl)}>
+          license
+        </button>{' '}
+        ·{' '}
+        <button className="underline" onClick={() => api.openExternal(FFMPEG_BUILD.sourceUrl)}>
+          build and source
+        </button>
+      </p>
     </>
   )
 }

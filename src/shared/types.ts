@@ -2,6 +2,8 @@ import type { GameSummary } from './summary'
 import type { Encounter } from './encounters'
 import type { AchievementCategory, AchievementRank } from './achievements'
 import type { Announcement, Trigger } from './announcer'
+import type { ClipKind, EncoderProbe, RecorderMode, RecorderSettings } from './recorder'
+import type { EditProject, ExportPresetId } from './editProject'
 // Types shared between the Electron main process and the React renderer.
 
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
@@ -321,6 +323,10 @@ export interface Settings {
     anonymizeRandoms: boolean
     includeQuips: boolean
     includeAchievements: boolean
+    /** after a game was posted, add its best automatic clip (off by default) */
+    attachBestClip: boolean
+    /** files above this many MB are exported smaller before they are sent (Discord: 20; boosted servers 50 or 100) */
+    uploadLimitMb: number
   }
   /** sounds for multikills, aces, many deaths … during a game (main window, audio only) */
   announcer: {
@@ -333,6 +339,8 @@ export interface Settings {
     cooldownS: number
     triggers: Record<Trigger, boolean>
   }
+  /** Clips: records your games through Windows' own capture interfaces (off by default) */
+  recorder: RecorderSettings
 }
 
 /** The settings the renderer can change (the flags about stored secrets are read-only). */
@@ -418,6 +426,152 @@ export interface LeaderboardEntry {
 }
 
 export type AcceptDelay = 'instant' | 'human' | 'slow'
+
+// ---------------------------------------------------------------------------
+// Clips (gameplay recorder)
+// ---------------------------------------------------------------------------
+
+/** The FFmpeg build the recorder uses (downloaded once into userData/ffmpeg, never bundled). */
+export interface FfmpegState {
+  status: 'missing' | 'downloading' | 'verifying' | 'unpacking' | 'ready' | 'error'
+  /** 0 to 1 while downloading */
+  progress?: number
+  version?: string
+  message?: string
+}
+
+/** The game a clip belongs to, for the library (from the saved summary). */
+export interface ClipGame {
+  championId: number
+  kda: [number, number, number]
+  win: boolean
+  mode: string
+  queueId: number
+  createdAt: number
+}
+
+/** A saved clip. The video is served to the window as rcclip://clip/<id>. */
+export interface Clip {
+  id: number
+  gameId: number | null
+  recordingId: number | null
+  createdAt: number
+  /** position in its recording */
+  startMs: number
+  endMs: number
+  durationMs: number
+  /** manual, bookmark, auto:penta … or 'export' for something the editor made */
+  kind: ClipKind | 'export'
+  title: string
+  favorite: boolean
+  bytes: number
+  url: string
+  thumbUrl: string | null
+  /** null for clips without a saved game (tests, games whose summary never came) */
+  game: ClipGame | null
+}
+
+/** A whole-game recording (session mode), joined into one file after the game. */
+export interface SessionRecording {
+  id: number
+  gameId: number | null
+  startedAt: number
+  durationMs: number
+  bytes: number
+  /** marked "keep": never deleted by the cleanup */
+  kept: boolean
+  /** when the cleanup deletes it (null when kept) */
+  expiresAt: number | null
+  url: string
+  game: ClipGame | null
+}
+
+/** Space used by clips and recordings. */
+export interface ClipStorageInfo {
+  usedBytes: number
+  quotaBytes: number
+  clipBytes: number
+  sessionBytes: number
+  /** leftovers of replay recordings, screenshots, exports */
+  otherBytes: number
+  clips: number
+  sessions: number
+}
+
+/** What "Clean up" would delete. Clips and favorites are never on this list. */
+export interface CleanupPreview {
+  items: { name: string; type: 'replay' | 'session'; bytes: number; at: number }[]
+  freedBytes: number
+  usedAfter: number
+  overQuota: boolean
+}
+
+/** What the editor sends to export a project. */
+export interface ExportRequest {
+  /** the clip the project belongs to (the export shows up next to it in the library) */
+  clipId: number
+  project: EditProject
+  title: string
+  /**
+   * Pictures the window drew for the export, as PNG data URLs: one per sticker id (emoji and
+   * imported pictures alike) and 'stats' for the stats overlay at output size.
+   */
+  images: Record<string, string>
+}
+
+/** An export in progress or finished. One runs at a time, never during a game. */
+export interface ExportJob {
+  id: number
+  /** paused = a game started; it starts again from the beginning when the game is over */
+  state: 'running' | 'paused' | 'done' | 'error' | 'cancelled'
+  /** 0 to 1 */
+  progress: number
+  preset: ExportPresetId
+  title: string
+  message: string | null
+  bytes: number
+  /** the finished export as a clip of the library */
+  clip: Clip | null
+}
+
+/** A file the user picked for the editor (music or a picture); the window plays it through `url`. */
+export interface PickedMedia {
+  url: string
+  path: string
+  name: string
+}
+
+/** What the recorder is doing, for the header of the main window and the Clips settings. */
+export interface RecorderStatus {
+  /** off = switched off or something is missing (see message), error = recording failed */
+  state: 'off' | 'idle' | 'recording' | 'saving' | 'error'
+  message: string | null
+  mode: RecorderMode
+  /** "NVIDIA AV1" while recording */
+  encoder: string | null
+  startedAt: number | null
+  /** space used by clips and recordings */
+  bytes: number
+  quotaBytes: number
+  /** seconds of footage a clip could go back right now */
+  ringSeconds: number
+  /** bookmarks set in the running game */
+  bookmarks: number
+  lastClip: Clip | null
+}
+
+/** What the recorder needs before it can run, for the Clips settings. */
+export interface RecorderSetup {
+  ffmpeg: FfmpegState
+  /** null until the encoders were tested (needs FFmpeg) */
+  encoders: EncoderProbe | null
+  /** the small helper that records the game's sound (ratio-audio.exe) is there */
+  audioHelper: boolean
+  /** the storage folder in use */
+  folder: string
+  /** recording only works on Windows 10 2004 or newer */
+  supported: boolean
+}
 
 /** Timers shown on the minimap (all times are game time in seconds). */
 export interface MinimapState {
@@ -714,6 +868,53 @@ export interface RcApi {
   getAnnouncerSound(trigger: Trigger): Promise<{ data: Uint8Array; mime: string } | null>
   /** opens the folder for your own announcer sounds (creates it if needed) */
   openSoundFolder(): Promise<void>
+  /** FFmpeg, encoders and helper of the recorder */
+  recorderSetup(): Promise<RecorderSetup>
+  /** downloads and verifies the FFmpeg build (progress comes as 'ffmpeg' events) */
+  installFfmpeg(): Promise<FfmpegState>
+  /** tests the GPU encoders again (never during a game) */
+  testEncoders(): Promise<EncoderProbe | null>
+  recorderStatus(): Promise<RecorderStatus>
+  /** the same as the clip hotkey: saves the last seconds of the running recording */
+  clipNow(): Promise<Clip | null>
+  listClips(): Promise<Clip[]>
+  updateClip(id: number, patch: { title?: string; favorite?: boolean }): Promise<Clip | null>
+  /** deletes clips and their files for good, returns how many */
+  deleteClips(ids: number[]): Promise<number>
+  /** shows a clip's file in the file manager */
+  showClipInFolder(id: number): Promise<void>
+  clipStorage(): Promise<ClipStorageInfo>
+  cleanupPreview(): Promise<CleanupPreview>
+  cleanupRun(): Promise<CleanupPreview>
+  /** whole-game recordings that still exist, newest first */
+  listRecordings(): Promise<SessionRecording[]>
+  /** the whole-game recording of a game, null when there is none (any more) */
+  gameRecording(gameId: number): Promise<SessionRecording | null>
+  keepRecording(id: number, keep: boolean): Promise<SessionRecording | null>
+  deleteRecording(id: number): Promise<void>
+  /** cuts a clip out of a whole-game recording (stream copy) */
+  clipFromRecording(id: number, startMs: number, endMs: number): Promise<Clip | null>
+  /** the editor's saved project of a clip, null when there is none yet */
+  getEdit(clipId: number): Promise<EditProject | null>
+  saveEdit(clipId: number, project: EditProject): Promise<void>
+  /** asks for a music file or a picture from the disk */
+  pickMedia(kind: 'music' | 'image'): Promise<PickedMedia | null>
+  /** a playable URL for a file a saved project names (music, picture); null when it is gone */
+  mediaUrl(path: string): Promise<string | null>
+  /** starts an export in the background; progress comes as 'exportProgress' events */
+  exportStart(request: ExportRequest): Promise<ExportJob>
+  exportCancel(): Promise<void>
+  exportStatus(): Promise<ExportJob | null>
+  /** posts a clip to the Discord webhook; a clip that was posted before needs `again` */
+  shareClipToDiscord(id: number, options?: { quip?: boolean; again?: boolean }): Promise<{ ok: boolean; message: string; alreadyPosted?: boolean }>
+  /** puts a clip's file on the clipboard, ready to paste into Discord or a folder */
+  copyClipFile(id: number): Promise<boolean>
+  /** "Save as…": copies a clip's file to a place of your choice; false when cancelled */
+  saveClipAs(id: number): Promise<boolean>
+  /** opens the folder with your clips (creates it if needed) */
+  openClipFolder(): Promise<void>
+  /** asks for another storage folder; null when cancelled */
+  chooseClipFolder(): Promise<string | null>
   /** your saved games with or against a player; null when you never met */
   getPlayerHistory(puuid: string, riotId?: string): Promise<PlayerHistory | null>
   setOwnedAugments(ids: number[]): Promise<void>
@@ -820,6 +1021,14 @@ export interface AdminApi {
   announce(trigger: Trigger): Promise<void>
   /** the Discord message the newest saved game would get, and why it would not be posted automatically */
   discordPreview(): Promise<{ gameId: number | null; payload: unknown; skip: string | null }>
+  /** starts or stops a recording of a test picture, so the simulated game has something to cut clips from */
+  recorderTestRecording(on: boolean): Promise<RecorderStatus>
+  /** the segments of the running recording, pending automatic clips and bookmarks */
+  recorderRing(): Promise<{ segments: number; from: number; to: number; bytes: number; pending: string[]; bookmarks: number; offset: number | null }>
+  /** downloads FFmpeg again and tests the encoders from scratch */
+  recorderReloadFfmpeg(): Promise<RecorderSetup>
+  /** records 20 s of a test picture or of the main screen through the real pipeline; returns the folder and what FFmpeg said */
+  recorderTestCapture(source: 'testsrc' | 'screen'): Promise<{ ok: boolean; dir: string; segments: number; bytes: number; log: string[] }>
   /** locks every achievement again (they are worked out anew from the history), returns the unlocked ones after that */
   resetAchievements(): Promise<number>
   log(lines: number): Promise<string[]>
@@ -899,6 +1108,13 @@ export interface RcEvents {
   /** something worth a sound happened in the game (hype announcer) */
   announce: Announcement
   loading: LoadingState | null
+  /** download progress and state of the recorder's FFmpeg */
+  ffmpeg: FfmpegState
+  /** recorder status: idle, recording, saving, space used, last clip */
+  recorder: RecorderStatus
+  /** a clip was saved (hotkey, automatic, bookmark) */
+  clipSaved: Clip
+  exportProgress: ExportJob
   /** map timers for the main window (the minimap overlay gets its own copy with positions) */
   mapTimers: MinimapState | null
   minimap: MinimapState | null

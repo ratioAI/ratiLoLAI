@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.3.0
+
+**Clips** – a free replacement for Medal inside ratioAI. Games are recorded in full quality without a paywall or a watermark, clips are made by hotkey or on their own, an editor turns them into montages, GIFs and memes, and you share them through your Discord webhook or keep them on disk. Everything runs locally: no servers, no cloud, no running costs. Off by default.
+
+### Recorder
+- Records only through Windows' own interfaces: Windows Graphics Capture for the League window (Desktop Duplication as the fallback), WASAPI process loopback for the game's sound. No hook, no injection, no memory reading. Only the game window and only the game's sound are captured – no desktop, no Discord voice; the microphone is optional.
+- Hardware encoders only (AV1 → HEVC → H.264 on NVIDIA, AMD, Intel), frames stay on the GPU, FFmpeg and the sound helper run at below-normal priority, and a busy encoder drops frames in the recording, never in the game. Without a hardware encoder the recorder stays off.
+- **Instant replay** (the last 10–300 seconds, saved by hotkey) or **whole game** (kept as one file; *Keep* or *Delete* on the game page, deleted after a week otherwise).
+- Hotkeys: clip (<kbd>Alt</kbd>+<kbd>F9</kbd>), bookmark for a clip after the game (<kbd>Alt</kbd>+<kbd>F10</kbd>), screenshot (<kbd>Alt</kbd>+<kbd>F11</kbd>). They are only held while a recording runs and may not collide with the augment hotkey.
+- **Automatic clips** from the live event feed: your triple, quadra and pentakills, first blood, an ace of your team, optionally your death at the end of a team fight and the end of the game. Overlapping moments become one clip.
+- Three quality profiles (Compact up to 1080p60, High up to 1440p60, Original) with the megabytes per minute shown, 60 or 30 fps, a storage limit with a cleanup that never touches clips or favorites.
+- FFmpeg (LGPL build) is downloaded on first use, verified by SHA-256 and runs as its own program; it is not part of the installer.
+- A small red dot with the space in use in the header of the main window while recording; nothing new is drawn over the game. Optional click sound when a clip was saved (off).
+
+### Library
+- New tab **Clips**: a grid with hover previews, filters for champion, mode, date, kind and favorites, search, sorting and multi-select delete.
+- Every clip knows its game: champion, K/D/A and result on the clip, the clips of a game on its page, one click to the summary.
+- Player with keyboard shortcuts (<kbd>Space</kbd>, <kbd>J</kbd>/<kbd>K</kbd>/<kbd>L</kbd>, arrow keys for single frames), rename, favorite, show in folder.
+- Whole-game recordings can be played and cut into clips.
+
+### Editor & export
+- Timeline with waveform: trim, split, delete, slow motion (0.5× and 0.25×), several clips in a row as a montage with cut, fade or glitch.
+- Formats 16:9, 9:16 (with a movable crop) and 1:1.
+- Meme text top and bottom, text boxes with fades, suggestions from the game (your quip, PENTAKILL, 0/10 POWERSPIKE, MVP or troll crown), a stats overlay (champion icon, K/D/A, result), emoji stickers or your own pictures.
+- Music: your own audio files or three built-in loops, with volume, start, fades and the game's sound turned down under the music. ratioAI ships and downloads no chart music.
+- Export presets: **Discord** (fits under 20 MB on its own, drops to 720p when needed; the limit can be raised for boosted servers), **High quality MP4**, **9:16 Short**, **GIF** (two passes with its own palette), **WebM**. Progress, cancel, runs in the background and never during a game. Copy the file, show it in its folder or save it elsewhere.
+- Projects are saved per clip, with undo and redo.
+
+### Sharing
+- *Share to Discord* sends a clip through your webhook with an embed (title, champion, K/D/A, result, optionally your quip). A file that is too large is exported smaller and sent again on its own.
+- Option: add the game's best automatic clip under the game summary (off by default).
+
+### Under the hood
+- `games.db` version 4: tables `recordings`, `clips`, `edits` and `clip_posts`. Settings schema 6 with the new block `recorder`.
+- `native/audio`: a small Rust helper for the game's sound (`npm run build:audio`); built by the release workflow and checked by CI on Windows.
+- Admin tab (development builds only): encoder test, reload FFmpeg, record without a game, a test recording for the simulated game's automatic clips, the ring buffer and *Clip now*.
+
 ## 1.2.0
 
 Four new features, all built on official interfaces only (LCU, Live Client Data API, Riot API, your own game database) – nothing reads the game's memory or draws anything new over the game.

@@ -29,6 +29,8 @@ import type { DiagLog } from './diag'
 import type { GameStore } from './games'
 import type { AchievementService } from './achievements'
 import type { DiscordPoster } from './discord'
+import type { RecorderEnv } from './recorder/setup'
+import type { RecorderService } from './recorder/service'
 import type { OverlayManager } from './overlay'
 import type { MinimapWatcher } from './minimap/watcher'
 import { validPads, writeMeasuredPads } from './minimap/store'
@@ -70,6 +72,8 @@ export interface AdminContext {
   games: GameStore
   achievements: AchievementService
   discord: DiscordPoster
+  recorderEnv: RecorderEnv
+  recorder: RecorderService
   diag: DiagLog
   padsFile: string
 }
@@ -504,6 +508,26 @@ export function registerAdmin(ctx: AdminContext): void {
     const removed = ctx.games.deleteTestGames()
     log(`${removed} test game${removed === 1 ? '' : 's'} deleted`)
     return removed
+  })
+
+  handle('admin:recorderReloadFfmpeg', async () => {
+    log('recorder: FFmpeg removed and downloaded again')
+    await ctx.recorderEnv.install(true)
+    return ctx.recorderEnv.setup()
+  })
+
+  handle('admin:recorderTestRecording', async (on: boolean) => {
+    const status = await ctx.recorder.testRecording(!!on)
+    log(`recorder: test recording ${on ? 'started' : 'stopped'}`)
+    return status
+  })
+
+  handle('admin:recorderRing', () => ctx.recorder.ring())
+
+  handle('admin:recorderTestCapture', async (source: 'testsrc' | 'screen') => {
+    const result = await ctx.recorderEnv.testCapture(source === 'screen' ? 'screen' : 'testsrc')
+    log(`recorder: test capture ${result.ok ? 'ok' : 'failed'} – ${result.segments} segments, ${Math.round(result.bytes / 1e5) / 10} MB`)
+    return result
   })
 
   handle('admin:log', (lines: number) => diag.recent(Math.max(1, Math.min(200, Math.round(Number(lines) || 80)))))

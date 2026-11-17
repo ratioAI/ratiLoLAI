@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Database, Gauge, History, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy, Wrench } from 'lucide-react'
-import type { GameMode, UpdateState } from '@shared/types'
+import { Clapperboard, Database, Gauge, History, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy, Wrench } from 'lucide-react'
+import type { GameMode, RecorderStatus, UpdateState } from '@shared/types'
 import type { GameSummary } from '@shared/summary'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
@@ -16,6 +16,7 @@ const NAV = [
   { to: '/champions', label: 'Champions', icon: LayoutGrid },
   { to: '/live', label: 'Live', icon: Radio },
   { to: '/games', label: 'Games', icon: History },
+  { to: '/clips', label: 'Clips', icon: Clapperboard },
   { to: '/mayhem', label: 'Mayhem', icon: Sparkles },
   { to: '/profile', label: 'Profile', icon: Search },
   { to: '/data', label: 'Data', icon: Database },
@@ -54,6 +55,66 @@ export function Wordmark({ className = '' }: { className?: string }) {
   return (
     <span className={`font-display font-extrabold tracking-tight ${className}`}>
       ratio<span className="iridescent-text">AI</span>
+    </span>
+  )
+}
+
+/** A short, quiet click (two decaying sine blips) when a clip was saved. Off unless turned on in the settings. */
+function playClipSound(): void {
+  try {
+    const context = new AudioContext()
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(0.12, context.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.14)
+    gain.connect(context.destination)
+    for (const [frequency, at] of [
+      [880, 0],
+      [1320, 0.05]
+    ]) {
+      const tone = context.createOscillator()
+      tone.frequency.value = frequency
+      tone.connect(gain)
+      tone.start(context.currentTime + at)
+      tone.stop(context.currentTime + at + 0.08)
+    }
+    setTimeout(() => void context.close(), 400)
+  } catch {
+    // no audio device
+  }
+}
+
+/** "1.2 GB" */
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`
+  return `${Math.max(0, Math.round(bytes / 1e3))} KB`
+}
+
+/** The recorder in the header: a red dot and the space in use while recording. Only in the main window, never in the game. */
+function RecorderIndicator() {
+  const { settings } = useApp()
+  const [status, setStatus] = useState<RecorderStatus | null>(null)
+  const clipSound = !!settings?.recorder.clipSound
+  useEffect(() => {
+    void api.recorderStatus().then(setStatus).catch(() => undefined)
+    return api.on('recorder', setStatus)
+  }, [])
+  useEffect(() => {
+    if (!clipSound) return
+    return api.on('clipSaved', playClipSound)
+  }, [clipSound])
+  if (!status || status.state === 'off' || status.state === 'idle') return null
+  if (status.state === 'error')
+    return (
+      <span className="flex items-center gap-2 text-gold" title={status.message ?? ''}>
+        <span className="h-2 w-2 rounded-full bg-gold" />
+        Recording failed
+      </span>
+    )
+  return (
+    <span className="flex items-center gap-2 text-muted" title={`${status.encoder ?? ''} · ${status.mode === 'replay' ? `last ${status.ringSeconds} s` : 'whole game'}`}>
+      <span className="h-2 w-2 animate-pulse rounded-full bg-loss" />
+      {status.state === 'saving' ? 'Saving clip' : 'REC'} · {formatBytes(status.bytes)}
     </span>
   )
 }
@@ -117,6 +178,7 @@ export function Layout({ children }: { children: ReactNode }) {
               Update {update.version} ready – restart
             </button>
           )}
+          <RecorderIndicator />
           {crawler?.running && (
             <span className="flex items-center gap-2 text-muted">
               <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />

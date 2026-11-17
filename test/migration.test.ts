@@ -142,3 +142,62 @@ describe('summary multikills', () => {
     expect(summary.players[1]).toMatchObject({ multikill: 0, pentas: 0 })
   })
 })
+
+describe('migration v4 (clips)', () => {
+  const tables = (db: DatabaseSync): string[] =>
+    (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as unknown as { name: string }[]).map((row) => row.name)
+
+  /** A database as 1.2 left it: layout version 3. */
+  function v3Db(): DatabaseSync {
+    const db = legacyDb([oldSummary(1, [3, 1, 0])])
+    db.exec('ALTER TABLE game_players ADD COLUMN kills INTEGER NOT NULL DEFAULT 0')
+    db.exec('ALTER TABLE game_players ADD COLUMN deaths INTEGER NOT NULL DEFAULT 0')
+    db.exec('ALTER TABLE game_players ADD COLUMN assists INTEGER NOT NULL DEFAULT 0')
+    db.exec('ALTER TABLE game_players ADD COLUMN multikill INTEGER NOT NULL DEFAULT 0')
+    db.exec('CREATE TABLE achievements (id TEXT PRIMARY KEY, unlocked_at INTEGER NOT NULL, game_id INTEGER, seen INTEGER NOT NULL DEFAULT 0)')
+    db.exec('CREATE TABLE discord_posts (game_id INTEGER PRIMARY KEY, posted_at INTEGER NOT NULL)')
+    db.exec('CREATE TABLE flights (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, variant TEXT NOT NULL, galaxy INTEGER NOT NULL)')
+    db.exec("INSERT INTO achievements (id, unlocked_at, game_id, seen) VALUES ('first', 5, 1, 1)")
+    db.exec('PRAGMA user_version = 3')
+    return db
+  }
+
+  it('adds recordings, clips and edits to a v3 database and keeps what is there', () => {
+    const db = v3Db()
+    expect(migrate(db)).toBe(4)
+    expect(DB_VERSION).toBe(4)
+    expect(tables(db)).toEqual(expect.arrayContaining(['recordings', 'clips', 'edits', 'games', 'achievements', 'flights']))
+    expect((db.prepare('SELECT COUNT(*) AS n FROM games').get() as { n: number }).n).toBe(1)
+    expect((db.prepare('SELECT seen FROM achievements').get() as { seen: number }).seen).toBe(1)
+    const columns = (table: string): string[] =>
+      (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).map((column) => column.name)
+    expect(columns('recordings')).toEqual(['id', 'game_id', 'started_at', 'ended_at', 'dir', 'bytes', 'kept'])
+    expect(columns('clips')).toEqual([
+      'id',
+      'game_id',
+      'recording_id',
+      'created_at',
+      'start_ms',
+      'end_ms',
+      'file',
+      'thumb',
+      'kind',
+      'title',
+      'favorite',
+      'bytes'
+    ])
+    expect(columns('edits')).toEqual(['clip_id', 'project_json', 'updated_at'])
+  })
+
+  it('is idempotent: a second run changes nothing and keeps the clips', () => {
+    const db = v3Db()
+    migrate(db)
+    db.exec("INSERT INTO clips (game_id, created_at, start_ms, end_ms, file, kind) VALUES (1, 10, 0, 30000, 'a.mp4', 'manual')")
+    expect(migrate(db)).toBe(4)
+    // even when the version was reset, the tables are created with IF NOT EXISTS
+    db.exec('PRAGMA user_version = 3')
+    expect(migrate(db)).toBe(4)
+    expect((db.prepare('SELECT COUNT(*) AS n FROM clips').get() as { n: number }).n).toBe(1)
+    expect((db.prepare('SELECT title, favorite, bytes FROM clips').get() as Record<string, unknown>)).toEqual({ title: '', favorite: 0, bytes: 0 })
+  })
+})
