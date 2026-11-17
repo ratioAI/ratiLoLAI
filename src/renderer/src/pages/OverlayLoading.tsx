@@ -1,11 +1,13 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Link2, Loader2 } from 'lucide-react'
 import type { LoadingPlayer, LoadingState } from '@shared/types'
+import { encounterLine, toEncounter, type Encounter, type EncounterKind } from '@shared/encounters'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { ChampIcon } from '@/components/icons'
 import { CosmosBackground, cosmicSeed } from '@/components/CosmosBackground'
 import { Logo } from '@/components/Layout'
+import { ENCOUNTER_STYLE, EncounterIcon, encounterTitle } from '@/components/EncounterBadge'
 
 const MODE_LABEL = { mayhem: 'ARAM: Mayhem', aram: 'ARAM' } as const
 const TEAM = {
@@ -14,6 +16,33 @@ const TEAM = {
 } as const
 /** below this many games a win rate says little, so it is shown dimmed */
 const FEW_GAMES = 5
+
+const DAY = 86_400_000
+/** One made-up encounter per kind for the demo lobby: [games together, wins], [games against, wins], their last game. */
+function demoEncounter(
+  together: [number, number],
+  against: [number, number],
+  last: { championId: number; kda: [number, number, number]; daysAgo: number; ally: boolean; win: boolean },
+  riotId = ''
+): Encounter | null {
+  return toEncounter(
+    {
+      together: { games: together[0], wins: together[1] },
+      against: { games: against[0], wins: against[1] },
+      riotId,
+      last: { gameId: 7_200_000_000 + last.daysAgo, createdAt: Date.now() - last.daysAgo * DAY - 3_600_000, ...last }
+    },
+    riotId ? 'now#EUW' : ''
+  )
+}
+const DEMO_ENCOUNTERS: Record<string, Encounter | null> = {
+  Toni: demoEncounter([5, 4], [0, 0], { championId: 222, kda: [9, 4, 13], daysAgo: 2, ally: true, win: true }),
+  ratio: demoEncounter([4, 1], [1, 0], { championId: 103, kda: [3, 11, 8], daysAgo: 5, ally: true, win: false }),
+  simwai: demoEncounter([0, 0], [3, 0], { championId: 157, kda: [17, 3, 6], daysAgo: 1, ally: false, win: false }),
+  'Psychedelic Bard': demoEncounter([1, 1], [4, 3], { championId: 432, kda: [1, 9, 22], daysAgo: 9, ally: false, win: true }),
+  Guido: demoEncounter([0, 0], [2, 1], { championId: 25, kda: [6, 6, 15], daysAgo: 21, ally: false, win: true }),
+  Splitter: demoEncounter([1, 0], [0, 0], { championId: 157, kda: [2, 14, 5], daysAgo: 12, ally: true, win: false }, 'Splitterfaser#EUW')
+}
 
 /** Example lobby for screenshots, the web demo and the admin tool. */
 export const DEMO_LOBBY: LoadingState = {
@@ -39,7 +68,8 @@ export const DEMO_LOBBY: LoadingState = {
     me,
     premade,
     record: { games, wins },
-    loading: false
+    loading: false,
+    encounter: DEMO_ENCOUNTERS[name] ?? null
   }))
 }
 
@@ -56,7 +86,18 @@ function teamWinRate(players: LoadingPlayer[]): { rate: number | null; games: nu
   return { rate: games ? (wins / games) * 100 : null, games }
 }
 
-function Row({ player, side }: { player: LoadingPlayer; side: 'ally' | 'enemy' }) {
+/** Badge and one-liner about a player you met before; takes the place of nothing, the row keeps its height. */
+function EncounterLine({ encounter, champName }: { encounter: Encounter; champName: (id: number) => string }) {
+  const kind: EncounterKind = encounter.kind
+  return (
+    <div className="ld-enc" style={{ '--enc': ENCOUNTER_STYLE[kind].color } as CSSProperties} title={encounterTitle(encounter)}>
+      <EncounterIcon kind={kind} size={11} />
+      <span>{encounterLine(encounter, { champName })}</span>
+    </div>
+  )
+}
+
+function Row({ player, side, champName }: { player: LoadingPlayer; side: 'ally' | 'enemy'; champName: (id: number) => string }) {
   const winRate = winRateOf(player)
   const games = player.record?.games ?? 0
   const wins = player.record?.wins ?? 0
@@ -71,7 +112,7 @@ function Row({ player, side }: { player: LoadingPlayer; side: 'ally' | 'enemy' }
       style={{ '--team': team.color } as CSSProperties}
     >
       <ChampIcon id={player.championId} size={30} tooltip={false} className="ld-champ" />
-      <div className="ld-who">
+      <div className={`ld-who ${player.encounter ? 'ld-who-enc' : ''}`}>
         <div className="ld-name">
           <span className={player.me ? 'text-gold' : player.premade ? 'text-[#8fd0ff]' : 'text-text'}>{name}</span>
           {player.me && <span className="ld-tag ld-tag-me">you</span>}
@@ -81,6 +122,7 @@ function Row({ player, side }: { player: LoadingPlayer; side: 'ally' | 'enemy' }
             </span>
           )}
         </div>
+        {player.encounter && <EncounterLine encounter={player.encounter} champName={champName} />}
         {/* wins and losses as one split bar */}
         <div className="ld-split" title={games ? `${wins} wins, ${games - wins} losses` : undefined}>
           {games > 0 && (
@@ -118,8 +160,9 @@ function Row({ player, side }: { player: LoadingPlayer; side: 'ally' | 'enemy' }
  * loads, hidden with Space, gone once the game starts.
  */
 export function OverlayLoading() {
-  const { settings } = useApp()
+  const { settings, data } = useApp()
   const [state, setState] = useState<LoadingState | null>(null)
+  const champName = (id: number): string => data?.champions[id]?.name ?? ''
 
   useEffect(() => {
     document.documentElement.classList.add('overlay-mode')
@@ -157,7 +200,7 @@ export function OverlayLoading() {
               {TEAM.ally.label}
             </div>
             {allies.map((player) => (
-              <Row key={player.puuid} player={player} side="ally" />
+              <Row key={player.puuid} player={player} side="ally" champName={champName} />
             ))}
           </div>
           {/* team averages face each other in the middle */}
@@ -176,7 +219,7 @@ export function OverlayLoading() {
               {TEAM.enemy.label}
             </div>
             {enemies.map((player) => (
-              <Row key={player.puuid} player={player} side="enemy" />
+              <Row key={player.puuid} player={player} side="enemy" champName={champName} />
             ))}
           </div>
         </div>

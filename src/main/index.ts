@@ -15,8 +15,10 @@ import type {
   UpdateState,
   OverlayDiagnostics,
   MinimapState,
-  AugmentOffer
+  AugmentOffer,
+  PlayerHistory
 } from '@shared/types'
+import { toEncounter } from '@shared/encounters'
 import { GAME_MODES, PLATFORMS, QUEUE_IDS } from '@shared/types'
 import { buildChampionView, buildTierList } from '@shared/analysis'
 import { Crawler } from './crawler/crawler'
@@ -501,6 +503,7 @@ const lcu = new LcuManager({
     local: async (puuids, mode) => games.results(puuids, mode),
     riot: riotResults
   },
+  encounters: async (me, puuids, excludeGameId) => games.encounters(me, puuids, excludeGameId),
   log: (message) => diag.log(message),
   settings: () => settings.get(),
   staticData: () => ddragon.get(),
@@ -674,6 +677,12 @@ function registerIpc(): void {
   handle('listGames', () => games.list())
   handle('getGame', (id: number) => games.get(Number(id)))
   handle('getLeaderboard', () => games.leaderboard())
+  handle('getPlayerHistory', (puuid: string, riotId?: string): PlayerHistory | null => {
+    const id = String(puuid)
+    const stats = games.encounters(lcu.getStatus().summoner?.puuid ?? null, [id]).get(id)
+    if (!stats) return null
+    return { encounter: toEncounter(stats, typeof riotId === 'string' ? riotId : ''), gameIds: games.gamesWith(id) }
+  })
   handle('setOwnedAugments', (ids: number[]) => setOwned(Array.isArray(ids) ? ids.filter((id) => Number.isInteger(id)) : []))
   handle('overlayScanNow', () => {
     diag.log('scan requested from the overlay')

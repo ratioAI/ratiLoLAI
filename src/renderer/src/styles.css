@@ -875,6 +875,41 @@ html.overlay-mode .btn-primary {
 .ld-row-enemy .ld-who {
   align-items: flex-end;
 }
+/* a player you met before: the one-liner takes the split bar's line, the bar moves under it as a
+   hairline, so the row stays exactly as tall as the others */
+.ld-who-enc {
+  position: relative;
+  gap: 1px;
+}
+.ld-who-enc .ld-name {
+  line-height: 16px;
+}
+.ld-who-enc .ld-split {
+  position: absolute;
+  right: 0;
+  bottom: -4px;
+  left: 0;
+  height: 2px;
+}
+.ld-enc {
+  display: flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 12px;
+  color: color-mix(in srgb, var(--enc) 78%, #f1edfb);
+  white-space: nowrap;
+}
+.ld-enc span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ld-row-enemy .ld-enc {
+  flex-direction: row-reverse;
+}
 .ld-name {
   display: flex;
   min-width: 0;

@@ -30,6 +30,7 @@ import {
   Square,
   Swords,
   Trash2,
+  Users,
   X
 } from 'lucide-react'
 import type { AdminMinimapSnapshot, AdminRelicPad, AdminRelicSeen, AdminSimOptions, AdminSimState, MinimapState } from '@shared/types'
@@ -514,12 +515,25 @@ function OverlaysCard() {
 
       <div>
         <Label>Loading screen</Label>
-        <Btn
-          icon={<Play size={15} />}
-          onClick={() => action.run('Showing loading panel', async () => void (await admin?.showLoading(DEMO_LOBBY)))}
-        >
-          Win rates panel (demo lobby)
-        </Btn>
+        <div className="flex flex-wrap gap-2">
+          <Btn
+            icon={<Play size={15} />}
+            onClick={() => action.run('Showing loading panel', async () => void (await admin?.showLoading(DEMO_LOBBY)))}
+          >
+            Demo lobby (every encounter kind)
+          </Btn>
+          <Btn
+            icon={<Users size={15} />}
+            onClick={() =>
+              action.run('Building lobby from your games', async () => {
+                const count = (await admin?.showHistoryLobby()) ?? 0
+                return `${count} players you met most often – encounters straight from games.db`
+              })
+            }
+          >
+            Lobby from your history
+          </Btn>
+        </div>
       </div>
 
       <div className="border-t border-line/60 pt-4">

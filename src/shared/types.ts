@@ -1,4 +1,5 @@
 import type { GameSummary } from './summary'
+import type { Encounter } from './encounters'
 // Types shared between the Electron main process and the React renderer.
 
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
@@ -318,6 +319,15 @@ export interface LoadingPlayer {
   /** recent games of this mode in the player's match history, null while loading / unavailable */
   record: { games: number; wins: number } | null
   loading: boolean
+  /** what your saved games say about this player (never set for you and your premades) */
+  encounter?: Encounter | null
+}
+
+/** You and one other player in your saved games (Profile page). */
+export interface PlayerHistory {
+  encounter: Encounter | null
+  /** saved games you shared, newest first */
+  gameIds: number[]
 }
 
 export interface LoadingState {
@@ -640,6 +650,8 @@ export interface RcApi {
   listGames(): Promise<GameListEntry[]>
   getGame(gameId: number): Promise<GameSummary | null>
   getLeaderboard(): Promise<LeaderboardEntry[]>
+  /** your saved games with or against a player; null when you never met */
+  getPlayerHistory(puuid: string, riotId?: string): Promise<PlayerHistory | null>
   setOwnedAugments(ids: number[]): Promise<void>
   overlayTestScan(): Promise<ScanTestResult>
   openDiagnosticsFolder(): Promise<void>
@@ -725,6 +737,8 @@ export interface AdminApi {
   /** card frames of an augment choice for this champion until hideOverlays */
   showFrames(championId: number): Promise<void>
   showLoading(state: LoadingState): Promise<void>
+  /** the loading panel with the players you met most often in your saved games and their real encounters */
+  showHistoryLobby(): Promise<number>
   /** ends every preview and puts the real overlays back */
   hideOverlays(): Promise<void>
   /** stores a made-up summary as a game with a negative id and opens it */

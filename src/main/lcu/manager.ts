@@ -18,6 +18,7 @@ import { acceptDelayMs } from './acceptDelay'
 import { buildSummary, type CurvePoint, type GameSummary, type RawGame, type RawTimeline } from '@shared/summary'
 import { modeResults, personalMayhemStats, type LcuHistory } from '../mayhem'
 import { mergeResults, type GameResults } from '../records'
+import { encounterTargets, toEncounter, type EncounterStats } from '@shared/encounters'
 import { fetchAllGameData, parseLiveData } from '../live/liveClient'
 import {
   buildItemSet,
@@ -53,6 +54,8 @@ export interface LcuManagerDeps {
     local(puuids: string[], mode: 'mayhem' | 'aram'): Promise<Map<string, GameResults>>
     riot(puuid: string, mode: 'mayhem' | 'aram'): Promise<GameResults | null>
   }
+  /** What your saved games say about the other players of a game (see GameStore.encounters). */
+  encounters?(me: string | null, puuids: string[], excludeGameId: number | null): Promise<Map<string, EncounterStats>>
   log?(message: string): void
 }
 
@@ -355,10 +358,16 @@ export class LcuManager {
           mode
         )
         .catch(() => null)) ?? new Map()
+    // Nemesis & co: strangers only, never you or the people you queued with
+    const strangers = encounterTargets(players)
+    const met =
+      (await this.deps.encounters?.(myPuuid ?? null, strangers, gameData.gameId ?? null).catch(() => null)) ??
+      new Map<string, EncounterStats>()
     const fromClient = new Map<string, GameResults>()
     const update = (player: LoadingPlayer, ...extra: (GameResults | null)[]): void => {
       const record = mergeResults(local.get(player.puuid), fromClient.get(player.puuid), ...extra)
       player.record = record.games ? record : null
+      player.encounter = strangers.includes(player.puuid) ? toEncounter(met.get(player.puuid), player.riotId) : null
     }
     const publish = (): void => {
       if (this.loadingState?.players === players) this.deps.emit.loading({ mode, players: [...players] })

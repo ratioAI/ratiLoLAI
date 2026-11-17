@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import { QUEUE_IDS, type GameListEntry, type LeaderboardEntry } from '@shared/types'
 import { teamBlame, type GameSummary } from '@shared/summary'
+import type { EncounterStats } from '@shared/encounters'
 
 /** The layout of version 1 (1.0 and 1.1). Later versions build on it through MIGRATIONS. */
 export const BASE_SCHEMA = `
@@ -304,6 +305,100 @@ export class GameStore {
       results.set(row.puuid, forPlayer)
     }
     return results
+  }
+
+  /**
+   * What your saved games say about each of these players: games with and against them (from your
+   * side), and the last game you shared, with their champion and K/D/A. One query, a self-join on
+   * your own row of each game. `me` is your puuid (null: any account that was you), players that are
+   * you are skipped, and so is `excludeGameId` (the game that is loading right now).
+   */
+  encounters(me: string | null, puuids: string[], excludeGameId: number | null = null): Map<string, EncounterStats> {
+    const result = new Map<string, EncounterStats>()
+    const others = puuids.filter((puuid) => puuid && puuid !== me)
+    if (!others.length) return result
+    const rows = this.db
+      .prepare(
+        `SELECT o.puuid AS puuid, o.riot_id AS riot_id, o.game_id AS game_id, g.created_at AS created_at,
+                o.champion_id AS champion_id, o.kills AS kills, o.deaths AS deaths, o.assists AS assists,
+                o.ally AS ally, m.win AS my_win
+           FROM game_players o
+           JOIN game_players m ON m.game_id = o.game_id AND m.me = 1 AND m.puuid <> o.puuid ${me ? 'AND m.puuid = ?' : ''}
+           JOIN games g ON g.game_id = o.game_id
+          WHERE o.puuid IN (${others.map(() => '?').join(', ')}) AND o.me = 0 AND o.game_id <> ?
+          ORDER BY g.created_at DESC, o.game_id DESC`
+      )
+      .all(...(me ? [me] : []), ...others, excludeGameId ?? 0) as unknown as {
+      puuid: string
+      riot_id: string
+      game_id: number
+      created_at: number
+      champion_id: number
+      kills: number
+      deaths: number
+      assists: number
+      ally: number
+      my_win: number
+    }[]
+    for (const row of rows) {
+      let stats = result.get(row.puuid)
+      if (!stats) {
+        // rows come newest first, so the first one is the last time you met
+        stats = {
+          together: { games: 0, wins: 0 },
+          against: { games: 0, wins: 0 },
+          riotId: row.riot_id,
+          last: {
+            gameId: row.game_id,
+            createdAt: row.created_at,
+            championId: row.champion_id,
+            kda: [row.kills, row.deaths, row.assists],
+            ally: row.ally === 1,
+            win: row.my_win === 1
+          }
+        }
+        result.set(row.puuid, stats)
+      }
+      const side = row.ally === 1 ? stats.together : stats.against
+      side.games++
+      side.wins += row.my_win
+    }
+    return result
+  }
+
+  /** The players you shared the most saved games with (not you), most first. For the admin tool. */
+  mostMet(limit: number): { puuid: string; riotId: string; championId: number; together: number; against: number }[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT o.puuid AS puuid, MAX(o.riot_id) AS riot_id, MAX(o.champion_id) AS champion_id,
+                  SUM(o.ally) AS together, SUM(1 - o.ally) AS against
+             FROM game_players o JOIN game_players m ON m.game_id = o.game_id AND m.me = 1 AND m.puuid <> o.puuid
+            WHERE o.me = 0
+            GROUP BY o.puuid ORDER BY COUNT(*) DESC LIMIT ?`
+        )
+        .all(Math.max(1, Math.round(limit))) as unknown as {
+        puuid: string
+        riot_id: string
+        champion_id: number
+        together: number
+        against: number
+      }[]
+    ).map((row) => ({ puuid: row.puuid, riotId: row.riot_id, championId: row.champion_id, together: row.together, against: row.against }))
+  }
+
+  /** Ids of the saved games you played with or against this player, newest first. */
+  gamesWith(puuid: string): number[] {
+    const rows = this.db
+      .prepare(
+        `SELECT o.game_id AS game_id FROM game_players o
+           JOIN game_players m ON m.game_id = o.game_id AND m.me = 1 AND m.puuid <> o.puuid
+           JOIN games g ON g.game_id = o.game_id
+          WHERE o.puuid = ? AND o.me = 0
+          ORDER BY g.created_at DESC`
+      )
+      .all(puuid) as unknown as { game_id: number }[]
+    return rows.map((row) => row.game_id)
   }
 
   /**

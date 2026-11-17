@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { Crown, History, Info, Orbit, Skull, Sparkles, Trophy } from 'lucide-react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Crown, History, Info, Orbit, Skull, Sparkles, Trophy, X } from 'lucide-react'
 import type { GameListEntry } from '@shared/types'
 import { explainImpact, teamBlame, type GameSummary, type SummaryPlayer } from '@shared/summary'
 import { augmentTiersForChampion } from '@shared/mayhem'
@@ -35,12 +35,29 @@ export function Games() {
   const [list, setList] = useState<GameListEntry[] | null>(null)
   const [filter, setFilter] = useState<ResultFilter>('all')
   const [shown, setShown] = useState(PAGE)
+  // '/games?with=<puuid>' (from a profile): only the games you shared with that player
+  const [params, setParams] = useSearchParams()
+  const withPuuid = params.get('with')
+  const [withGames, setWithGames] = useState<{ ids: Set<number>; name: string } | null>(null)
   useEffect(() => {
     const load = () => void api.listGames().then(setList)
     load()
     return api.on('gameSummary', load)
   }, [])
-  const filtered = (list ?? []).filter((game) => filter === 'all' || game.win === (filter === 'wins'))
+  useEffect(() => {
+    setWithGames(null)
+    if (!withPuuid) return
+    // the player's name comes from the newest shared game
+    void api.getPlayerHistory(withPuuid).then(async (history) => {
+      const newest = history?.gameIds[0]
+      const summary = newest !== undefined ? await api.getGame(newest) : null
+      const name = summary?.players.find((player) => player.puuid === withPuuid)?.riotId.split('#')[0] ?? ''
+      setWithGames({ ids: new Set(history?.gameIds ?? []), name })
+    })
+  }, [withPuuid])
+  const filtered = (list ?? []).filter(
+    (game) => (filter === 'all' || game.win === (filter === 'wins')) && (!withPuuid || !!withGames?.ids.has(game.gameId))
+  )
   const wins = (list ?? []).filter((game) => game.win).length
   return (
     <div className="page-enter mx-auto max-w-6xl p-8">
@@ -65,6 +82,11 @@ export function Games() {
             </button>
           ))}
         </div>
+        {withPuuid && (
+          <button className="btn btn-ghost" onClick={() => setParams({})} title="Show all games">
+            with {withGames?.name || 'this player'} <X size={14} />
+          </button>
+        )}
         <Link to="/games/leaderboard" className="btn btn-ghost">
           <Trophy size={15} /> Leaderboard
         </Link>

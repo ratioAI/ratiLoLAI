@@ -16,6 +16,7 @@ import {
 } from '@shared/mayhem'
 import { buildSummary, teamBlame, type GameSummary } from '@shared/summary'
 import { leaderboardFromSummaries } from '@shared/leaderboard'
+import { encounterStatsFromSummaries, toEncounter } from '@shared/encounters'
 import type {
   AdminApi,
   AdminMinimapSnapshot,
@@ -375,7 +376,8 @@ function demoProfile(data: StaticData, riotId: string): ProfileData {
     summary.set(match.championId, totals)
   }
   return {
-    puuid: 'demo',
+    // other players of the demo history (e.g. "simwai#EUW") keep their puuid, so the profile finds your shared games
+    puuid: demoHistory()[0].players.find((player) => player.riotId.toLowerCase() === riotId.toLowerCase())?.puuid ?? 'demo',
     gameName,
     tagLine,
     platform: 'euw1',
@@ -625,6 +627,16 @@ export function createMockApi(): RcApi {
       }),
     getGame: async (gameId) => demoHistory().find((summary) => summary.gameId === gameId) ?? demoHistory()[0],
     getLeaderboard: async () => leaderboardFromSummaries(demoHistory()),
+    getPlayerHistory: async (puuid, riotId) => {
+      const stats = encounterStatsFromSummaries(demoHistory(), 'p0', [puuid]).get(puuid)
+      if (!stats) return null
+      return {
+        encounter: toEncounter(stats, riotId ?? ''),
+        gameIds: demoHistory()
+          .filter((summary) => summary.players.some((player) => player.puuid === puuid))
+          .map((summary) => summary.gameId)
+      }
+    },
     // minimap timers only exist in the '#...demo-live' preview
     getMapTimers: async () =>
       window.location.hash.includes('demo-live')
@@ -969,6 +981,7 @@ function mockAdmin(emit: <K extends keyof RcEvents>(event: K, payload: RcEvents[
     showMinimapDemo: desktopOnly,
     showFrames: desktopOnly,
     showLoading: desktopOnly,
+    showHistoryLobby: desktopOnly,
     hideOverlays: async () => undefined,
     saveTestGame: desktopOnly,
     deleteTestGames: async () => 0,

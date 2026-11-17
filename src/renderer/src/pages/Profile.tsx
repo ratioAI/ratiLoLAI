@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Loader2, Search } from 'lucide-react'
-import type { MatchSummary, Platform, ProfileData, RankedEntry } from '@shared/types'
+import { Link } from 'react-router-dom'
+import { ChevronRight, Loader2, Search } from 'lucide-react'
+import type { MatchSummary, Platform, PlayerHistory, ProfileData, RankedEntry } from '@shared/types'
+import { ENCOUNTER_LABELS, encounterLine } from '@shared/encounters'
 import { PLATFORMS } from '@shared/types'
 import { api } from '@/lib/api'
 import { duration, num, pct, QUEUES, RANK_COLORS, timeAgo, wrColor } from '@/lib/format'
@@ -8,6 +10,7 @@ import { img } from '@/lib/img'
 import { useApp } from '@/lib/store'
 import { ChampIcon, GameImage, ItemIcon, RuneIcon, SpellIcon } from '@/components/icons'
 import { EmptyState, PageHeader, Spinner } from '@/components/Layout'
+import { ENCOUNTER_STYLE, EncounterIcon, encounterTitle } from '@/components/EncounterBadge'
 
 export function Profile() {
   const { client, settings } = useApp()
@@ -99,6 +102,8 @@ function ProfileView({ p }: { p: ProfileData }) {
           </div>
         </div>
 
+        <SharedHistory p={p} />
+
         {['RANKED_SOLO_5x5', 'RANKED_FLEX_SR'].map((queue) => (
           <RankCard key={queue} queue={queue} entry={p.ranked.find((entry) => entry.queueType === queue)} />
         ))}
@@ -150,6 +155,58 @@ function ProfileView({ p }: { p: ProfileData }) {
           <MatchRow key={match.matchId} m={match} puuid={p.puuid} />
         ))}
       </div>
+    </div>
+  )
+}
+
+/** "Your history with this player": what your saved games say about you and them. */
+function SharedHistory({ p }: { p: ProfileData }) {
+  const { data, client } = useApp()
+  const [history, setHistory] = useState<PlayerHistory | null>(null)
+  const isMe = client.summoner?.puuid === p.puuid
+  useEffect(() => {
+    setHistory(null)
+    if (isMe) return
+    let active = true
+    void api
+      .getPlayerHistory(p.puuid, `${p.gameName}#${p.tagLine}`)
+      .then((result) => active && setHistory(result))
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [p.puuid, p.gameName, p.tagLine, isMe])
+  const encounter = history?.encounter
+  if (!history || !encounter) return null
+  const { color } = ENCOUNTER_STYLE[encounter.kind]
+  const champName = (id: number): string => data?.champions[id]?.name ?? ''
+  const record = (label: string, count: { games: number; wins: number }) =>
+    count.games > 0 && (
+      <div className="flex items-baseline justify-between text-sm">
+        <span className="text-muted">{label}</span>
+        <span className="font-semibold tabular-nums">
+          <span className="text-win">{count.wins}W</span> <span className="text-loss">{count.games - count.wins}L</span>
+        </span>
+      </div>
+    )
+  return (
+    <div className="panel p-5" style={{ borderColor: `${color}55`, background: `linear-gradient(135deg, ${color}14, transparent 70%)` }}>
+      <h3 className="mb-3 text-xs font-bold tracking-wide text-muted uppercase">Your history with this player</h3>
+      <div className="mb-3 flex items-center gap-2" title={encounterTitle(encounter)}>
+        <EncounterIcon kind={encounter.kind} size={18} />
+        <span className="font-display text-lg font-extrabold" style={{ color }}>
+          {ENCOUNTER_LABELS[encounter.kind]}
+        </span>
+      </div>
+      <p className="mb-3 text-sm text-text italic">{encounterLine(encounter, { champName })}</p>
+      <div className="space-y-1">
+        {record('Together', encounter.together)}
+        {record('Against', encounter.against)}
+      </div>
+      {encounter.formerRiotId && <p className="mt-2 text-xs text-muted">Back then: {encounter.formerRiotId}</p>}
+      <Link to={`/games?with=${encodeURIComponent(p.puuid)}`} className="mt-3 inline-flex items-center gap-1 text-sm text-accent">
+        {history.gameIds.length} shared {history.gameIds.length === 1 ? 'game' : 'games'} <ChevronRight size={14} />
+      </Link>
     </div>
   )
 }

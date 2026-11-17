@@ -29,6 +29,7 @@ import type { GameStore } from './games'
 import type { OverlayManager } from './overlay'
 import type { MinimapWatcher } from './minimap/watcher'
 import { validPads, writeMeasuredPads } from './minimap/store'
+import { toEncounter } from '@shared/encounters'
 import {
   firstSpawn,
   INHIBITOR_POS,
@@ -345,6 +346,42 @@ export function registerAdmin(ctx: AdminContext): void {
     log(`loading panel on display ${display.id} (${state.players.length} players)`)
     overlay.showLoading(display.id)
     void overlay.loading.send('loading', { ...state, seed: ctx.cosmosSeed() })
+  })
+
+  // the loading panel with the strangers you met most often, through the real encounter query
+  handle('admin:showHistoryLobby', () => {
+    const met = ctx.games.mostMet(9)
+    if (!met.length) throw new Error('No saved games with other players yet – save a test game first.')
+    const allies = met.filter((player) => player.together >= player.against).slice(0, 4)
+    const enemies = met.filter((player) => !allies.includes(player)).slice(0, 5)
+    const stats = ctx.games.encounters(
+      null,
+      [...allies, ...enemies].map((player) => player.puuid)
+    )
+    const row = (player: (typeof met)[number], ally: boolean): LoadingState['players'][number] => ({
+      puuid: player.puuid,
+      riotId: player.riotId,
+      championId: player.championId,
+      ally,
+      me: false,
+      premade: false,
+      record: null,
+      loading: false,
+      encounter: toEncounter(stats.get(player.puuid), player.riotId)
+    })
+    const state: LoadingState = {
+      mode: 'mayhem',
+      players: [
+        { puuid: 'admin-me', riotId: 'You#DEV', championId: 99, ally: true, me: true, premade: false, record: null, loading: false },
+        ...allies.map((player) => row(player, true)),
+        ...enemies.map((player) => row(player, false))
+      ]
+    }
+    const display = ctx.gameDisplay()
+    log(`loading panel from the history: ${state.players.length - 1} players you met`)
+    overlay.showLoading(display.id)
+    void overlay.loading.send('loading', { ...state, seed: ctx.cosmosSeed() })
+    return state.players.length - 1
   })
 
   handle('admin:hideOverlays', () => {
