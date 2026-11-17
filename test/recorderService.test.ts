@@ -304,8 +304,10 @@ describe('RecorderService', () => {
     ctx.clock.now += 180_000
     ffmpeg.segments(100) // 200 s
     ctx.service.onLive([], live(190))
-    await tick(60)
-    const left = readdirSync(ffmpeg.dir).filter((name) => name.startsWith('seg_')).sort()
+    // deleting ~70 files takes a moment (longer on Windows): wait until the ring has settled
+    const segmentFiles = (): string[] => readdirSync(ffmpeg.dir).filter((name) => name.startsWith('seg_')).sort()
+    for (let i = 0; i < 100 && segmentFiles().includes('seg_000078.mp4'); i++) await tick(50)
+    const left = segmentFiles()
     // ring: 200 - 30 - 12 = 158 s → segments from 158 s on, plus 0–23 s for the bookmark
     expect(left).toContain('seg_000000.mp4')
     expect(left).toContain('seg_000011.mp4')

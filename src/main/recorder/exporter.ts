@@ -197,6 +197,8 @@ export class Exporter {
           if (palette.code !== 0) throw new Error(`The GIF palette failed: ${palette.stderr.trim().slice(-300)}`)
           result = await runFfmpeg(ffmpeg, gif.encode, (seconds) => progress(seconds, 0.3, 0.7), this.handle)
         } else {
+          // cancelled or paused while the files were being prepared: do not start FFmpeg at all
+          if (this.stopped()) throw new Error('stopped')
           result = await runFfmpeg(ffmpeg, ffmpegExportArgs(project, plan, target, this.encoderFor(plan, available)), (seconds) => progress(seconds), this.handle)
         }
         if (this.stopped()) throw new Error('stopped')

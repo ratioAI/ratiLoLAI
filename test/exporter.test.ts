@@ -75,12 +75,17 @@ function setup(options: { sizes?: number[]; available?: string[] } = {}) {
 
 const project = (clipId: number, patch: Partial<EditProject> = {}): EditProject => ({ ...newProject(clipId, 30), ...patch })
 const finished = async (ctx: ReturnType<typeof setup>): Promise<ExportJob> => {
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 2000; i++) {
     const job = ctx.exporter.status()
     if (job && job.state !== 'running') return job
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   throw new Error('export did not finish')
+}
+
+/** Waits until the export's FFmpeg has been started (preparing the files takes longer on Windows). */
+const encoding = async (ctx: ReturnType<typeof setup>): Promise<void> => {
+  for (let i = 0; i < 400 && ctx.encodes.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 10))
 }
 
 describe('Exporter', () => {
@@ -153,11 +158,12 @@ describe('Exporter', () => {
   it('pauses a running export when a game starts and runs it again afterwards', async () => {
     const ctx = setup({ wait: true } as never)
     ctx.exporter.start({ clipId: ctx.clip.id, project: project(ctx.clip.id), title: '', images: {} })
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await encoding(ctx)
     expect(ctx.exporter.status()?.state).toBe('running')
     ctx.state.inGame = true
     ctx.exporter.onGameStart()
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    for (let i = 0; i < 200 && ctx.exporter.status()?.state !== 'paused'; i++) await new Promise((resolve) => setTimeout(resolve, 10))
+    await new Promise((resolve) => setTimeout(resolve, 50))
     expect(ctx.exporter.status()).toMatchObject({ state: 'paused', progress: 0 })
     expect(ctx.store.list()).toHaveLength(1)
     ctx.state.inGame = false
@@ -169,7 +175,7 @@ describe('Exporter', () => {
   it('can be cancelled, refuses a second export and reports failures', async () => {
     const ctx = setup({ wait: true } as never)
     ctx.exporter.start({ clipId: ctx.clip.id, project: project(ctx.clip.id), title: '', images: {} })
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await encoding(ctx)
     expect(() => ctx.exporter.start({ clipId: ctx.clip.id, project: project(ctx.clip.id), title: '', images: {} })).toThrow(/still running/)
     ctx.exporter.cancel()
     expect((await finished(ctx)).state).toBe('cancelled')
