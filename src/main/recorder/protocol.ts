@@ -34,7 +34,8 @@ export async function serveFile(file: string | null, rangeHeader: string | null)
   if (!info?.isFile()) return new Response('Not found', { status: 404 })
   const range = parseRange(rangeHeader, info.size)
   if (range === 'invalid') return new Response('Range not satisfiable', { status: 416, headers: { 'Content-Range': `bytes */${info.size}` } })
-  const headers: Record<string, string> = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache' }
+  // readable by the window's own scripts too (the editor decodes the sound for the waveform and draws stickers)
+  const headers: Record<string, string> = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*' }
   if (!range) {
     headers['Content-Length'] = String(info.size)
     return new Response(info.size ? (Readable.toWeb(createReadStream(file)) as ReadableStream) : null, { status: 200, headers })

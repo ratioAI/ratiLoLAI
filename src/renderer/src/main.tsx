@@ -29,7 +29,8 @@ const pages = {
   Data: () => import('./pages/Data').then((mod) => ({ default: mod.Data })),
   Settings: () => import('./pages/Settings').then((mod) => ({ default: mod.Settings })),
   Mayhem: () => import('./pages/Mayhem').then((mod) => ({ default: mod.Mayhem })),
-  Clips: () => import('./pages/Clips').then((mod) => ({ default: mod.Clips }))
+  Clips: () => import('./pages/Clips').then((mod) => ({ default: mod.Clips })),
+  ClipEditor: () => import('./pages/ClipEditor').then((mod) => ({ default: mod.ClipEditor }))
 }
 const Home = lazy(pages.Home)
 const TierList = lazy(pages.TierList)
@@ -46,6 +47,7 @@ const Data = lazy(pages.Data)
 const Settings = lazy(pages.Settings)
 const Mayhem = lazy(pages.Mayhem)
 const Clips = lazy(pages.Clips)
+const ClipEditor = lazy(pages.ClipEditor)
 // The admin tool only exists in `npm run dev`; builds leave the page out completely.
 const Admin = import.meta.env.DEV ? lazy(() => import('./pages/Admin').then((mod) => ({ default: mod.Admin }))) : null
 import { Overlay } from './pages/Overlay'
@@ -341,6 +343,7 @@ function MainShell() {
           <Route path="/games/:id" element={<GameDetail />} />
           <Route path="/mayhem" element={<Mayhem />} />
           <Route path="/clips" element={<Clips />} />
+          <Route path="/clips/edit/:id" element={<ClipEditor />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/data" element={<Data />} />
           <Route path="/settings" element={<Settings />} />

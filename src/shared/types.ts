@@ -3,6 +3,7 @@ import type { Encounter } from './encounters'
 import type { AchievementCategory, AchievementRank } from './achievements'
 import type { Announcement, Trigger } from './announcer'
 import type { ClipKind, EncoderProbe, RecorderMode, RecorderSettings } from './recorder'
+import type { EditProject, ExportPresetId } from './editProject'
 // Types shared between the Electron main process and the React renderer.
 
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
@@ -501,6 +502,41 @@ export interface CleanupPreview {
   overQuota: boolean
 }
 
+/** What the editor sends to export a project. */
+export interface ExportRequest {
+  /** the clip the project belongs to (the export shows up next to it in the library) */
+  clipId: number
+  project: EditProject
+  title: string
+  /**
+   * Pictures the window drew for the export, as PNG data URLs: one per sticker id (emoji and
+   * imported pictures alike) and 'stats' for the stats overlay at output size.
+   */
+  images: Record<string, string>
+}
+
+/** An export in progress or finished. One runs at a time, never during a game. */
+export interface ExportJob {
+  id: number
+  /** paused = a game started; it starts again from the beginning when the game is over */
+  state: 'running' | 'paused' | 'done' | 'error' | 'cancelled'
+  /** 0 to 1 */
+  progress: number
+  preset: ExportPresetId
+  title: string
+  message: string | null
+  bytes: number
+  /** the finished export as a clip of the library */
+  clip: Clip | null
+}
+
+/** A file the user picked for the editor (music or a picture); the window plays it through `url`. */
+export interface PickedMedia {
+  url: string
+  path: string
+  name: string
+}
+
 /** What the recorder is doing, for the header of the main window and the Clips settings. */
 export interface RecorderStatus {
   /** off = switched off or something is missing (see message), error = recording failed */
@@ -854,6 +890,21 @@ export interface RcApi {
   deleteRecording(id: number): Promise<void>
   /** cuts a clip out of a whole-game recording (stream copy) */
   clipFromRecording(id: number, startMs: number, endMs: number): Promise<Clip | null>
+  /** the editor's saved project of a clip, null when there is none yet */
+  getEdit(clipId: number): Promise<EditProject | null>
+  saveEdit(clipId: number, project: EditProject): Promise<void>
+  /** asks for a music file or a picture from the disk */
+  pickMedia(kind: 'music' | 'image'): Promise<PickedMedia | null>
+  /** a playable URL for a file a saved project names (music, picture); null when it is gone */
+  mediaUrl(path: string): Promise<string | null>
+  /** starts an export in the background; progress comes as 'exportProgress' events */
+  exportStart(request: ExportRequest): Promise<ExportJob>
+  exportCancel(): Promise<void>
+  exportStatus(): Promise<ExportJob | null>
+  /** puts a clip's file on the clipboard, ready to paste into Discord or a folder */
+  copyClipFile(id: number): Promise<boolean>
+  /** "Save as…": copies a clip's file to a place of your choice; false when cancelled */
+  saveClipAs(id: number): Promise<boolean>
   /** opens the folder with your clips (creates it if needed) */
   openClipFolder(): Promise<void>
   /** asks for another storage folder; null when cancelled */
@@ -1057,6 +1108,7 @@ export interface RcEvents {
   recorder: RecorderStatus
   /** a clip was saved (hotkey, automatic, bookmark) */
   clipSaved: Clip
+  exportProgress: ExportJob
   /** map timers for the main window (the minimap overlay gets its own copy with positions) */
   mapTimers: MinimapState | null
   minimap: MinimapState | null

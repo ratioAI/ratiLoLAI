@@ -22,6 +22,7 @@ import { makeTierLookup, summaryAugmentTiers } from '@shared/mayhem'
 import { UNIVERSE } from '@shared/universe'
 import { isDiscordWebhook } from '@shared/discordPayload'
 import { TRIGGERS } from '@shared/announcer'
+import { estimateExportMb, planExport, projectDuration, type EditProject } from '@shared/editProject'
 import { DEFAULT_RECORDER, ENCODERS, mergeRecorderSettings, type EncoderProbe } from '@shared/recorder'
 import type {
   AchievementState,
@@ -31,6 +32,7 @@ import type {
   ChampSelectState,
   CleanupPreview,
   Clip,
+  ExportJob,
   ClipGame,
   ClientStatus,
   SessionRecording,
@@ -690,6 +692,67 @@ export function createMockApi(): RcApi {
       emit('clipSaved', clip)
       return clip
     },
+    getEdit: async (clipId) => demoEdits.get(clipId) ?? null,
+    saveEdit: async (clipId, project) => {
+      demoEdits.set(clipId, project)
+    },
+    // in the browser a file input stands in for the system dialog; the file never leaves the page
+    pickMedia: (kind) =>
+      new Promise((resolve) => {
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = kind === 'music' ? 'audio/*' : 'image/*'
+        input.onchange = () => {
+          const file = input.files?.[0]
+          resolve(file ? { url: URL.createObjectURL(file), path: file.name, name: file.name.replace(/\.[^.]+$/, '') } : null)
+        }
+        input.oncancel = () => resolve(null)
+        input.click()
+      }),
+    mediaUrl: async (path) => (/^(blob:|data:)/.test(path) ? path : null),
+    exportStart: async (request) => {
+      // the demo plays an export: the progress bar runs, then a clip "Edited" appears in the library
+      const source = demoClips().find((clip) => clip.id === request.clipId) ?? demoClips()[0]
+      const seconds = projectDuration(request.project)
+      const plan = planExport(request.project)
+      const bytes = Math.round((estimateExportMb(request.project, plan) ?? seconds * 1.4) * 1024 * 1024)
+      demoJob = { id: (demoJob?.id ?? 0) + 1, state: 'running', progress: 0, preset: request.project.output.preset, title: request.title, message: null, bytes: 0, clip: null }
+      const job = demoJob
+      const timer = setInterval(() => {
+        if (demoJob !== job || job.state !== 'running') return clearInterval(timer)
+        job.progress = Math.min(1, job.progress + 0.07)
+        if (job.progress >= 1) {
+          clearInterval(timer)
+          const clip: Clip = {
+            ...source,
+            id: Math.max(0, ...demoClips().map((entry) => entry.id)) + 1,
+            createdAt: Date.now(),
+            startMs: 0,
+            endMs: seconds * 1000,
+            durationMs: seconds * 1000,
+            kind: 'export',
+            title: request.title || source.title,
+            favorite: false,
+            bytes
+          }
+          demoClipList = [clip, ...demoClips()]
+          Object.assign(job, { state: 'done', bytes, clip })
+          emit('clipSaved', clip)
+        }
+        emit('exportProgress', { ...job })
+      }, 180)
+      return { ...job }
+    },
+    exportCancel: async () => {
+      if (demoJob?.state === 'running') {
+        demoJob.state = 'cancelled'
+        demoJob.message = 'Cancelled.'
+        emit('exportProgress', { ...demoJob })
+      }
+    },
+    exportStatus: async () => (demoJob ? { ...demoJob } : null),
+    copyClipFile: async () => false,
+    saveClipAs: async () => false,
     openClipFolder: async () => undefined,
     chooseClipFolder: async () => null,
     getPatches: async (mode) => {
@@ -1060,6 +1123,8 @@ function demoClips(): Clip[] {
   return demoClipList
 }
 
+const demoEdits = new Map<number, EditProject>()
+let demoJob: ExportJob | null = null
 let demoSessions: SessionRecording[] = []
 function initDemoSessions(): void {
   if (demoSessions.length) return

@@ -4,7 +4,7 @@
  * storage overview. Everything here runs in the main window only, never in the game.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   Check,
   Clapperboard,
@@ -170,6 +170,7 @@ export function ClipPlayer({
   onDeleted?: () => void
 }) {
   const video = useRef<HTMLVideoElement>(null)
+  const navigate = useNavigate()
   const [title, setTitle] = useState(clip?.title ?? '')
   const [renaming, setRenaming] = useState(false)
   const [favorite, setFavorite] = useState(!!clip?.favorite)
@@ -265,6 +266,9 @@ export function ClipPlayer({
               </button>
               <button className="btn btn-ghost" onClick={() => setRenaming(true)}>
                 <Pencil size={15} /> Rename
+              </button>
+              <button className="btn btn-primary" onClick={() => navigate(`/clips/edit/${clip.id}`)}>
+                <Scissors size={15} /> Edit
               </button>
             </>
           )}

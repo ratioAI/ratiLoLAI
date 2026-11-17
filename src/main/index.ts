@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { copyFile, readFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { basename, extname } from 'node:path'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type {
   ChampionBuild,
@@ -51,7 +54,10 @@ import { SettingsStore } from './settings'
 import { RecorderEnv } from './recorder/setup'
 import { RecorderService } from './recorder/service'
 import { ClipStore } from './recorder/clipStore'
-import { clipProtocolHandler } from './recorder/protocol'
+import { clipProtocolHandler, mediaTypeOf } from './recorder/protocol'
+import { Exporter } from './recorder/exporter'
+import { normalizeProject, type EditProject } from '@shared/editProject'
+import type { ExportRequest } from '@shared/types'
 
 // The app used to be called "Rift Companion". Move its data (settings, encrypted API key, crawled
 // stats, caches) to the new folder once, or keep using the old folder if the move fails.
@@ -481,6 +487,27 @@ const recorder = new RecorderService({
 
 /** Files the user picked for the editor (music, stickers), by the token the window gets instead of the path. */
 const pickedMedia = new Map<string, string>()
+/** A playable rcclip:// URL for a music or picture file; null for anything else or a file that is gone. */
+function registerMedia(path: string): string | null {
+  const type = mediaTypeOf(path)
+  if (!type || type.startsWith('video/') || !existsSync(path)) return null
+  const known = [...pickedMedia].find(([, file]) => file === path)?.[0]
+  const token = known ?? randomBytes(12).toString('hex')
+  pickedMedia.set(token, path)
+  return `rcclip://media/${token}`
+}
+
+const exporter = new Exporter({
+  env: recorderEnv,
+  store: clips,
+  inGame: () => inGame || recorder.recording,
+  emit: (job) => emit('exportProgress', job),
+  clipSaved: (clip) => emit('clipSaved', clip),
+  font: join(__dirname, '../../resources/fonts/Anton-Regular.ttf').replace('app.asar', 'app.asar.unpacked'),
+  // the built-in loops are part of the window's files (inside the app archive, which FFmpeg cannot read)
+  builtinMusic: (file) => readFile(join(__dirname, '../renderer', file)),
+  log: (message) => diag.log(message)
+})
 
 function registerClipProtocol(): void {
   protocol.handle(
@@ -616,7 +643,12 @@ const lcu = new LcuManager({
     // automatic clips hang on this poll too: the recorder has no loop of its own
     recorder.onLive(events, state)
   },
-  phase: (phase) => recorder.onPhase(phase),
+  phase: (phase) => {
+    recorder.onPhase(phase)
+    // exports never run next to a game
+    if (phase === 'InProgress' || phase === 'GameStart') exporter.onGameStart()
+    else if (!['Reconnect'].includes(phase)) setTimeout(() => exporter.onGameEnd(), 5000)
+  },
   log: (message) => diag.log(message),
   settings: () => settings.get(),
   staticData: () => ddragon.get(),
@@ -782,6 +814,55 @@ function registerIpc(): void {
   handle('keepRecording', (id: number, keep: boolean) => recorder.keepSession(Number(id), !!keep))
   handle('deleteRecording', (id: number) => recorder.deleteSession(Number(id)))
   handle('clipFromRecording', (id: number, startMs: number, endMs: number) => recorder.clipFromSession(Number(id), Number(startMs), Number(endMs)))
+  handle('getEdit', (clipId: number) => {
+    const edit = clips.edit(Number(clipId))
+    if (!edit) return null
+    try {
+      return normalizeProject(JSON.parse(edit.projectJson))
+    } catch {
+      return null
+    }
+  })
+  handle('saveEdit', (clipId: number, project: EditProject) => {
+    const clean = normalizeProject(project)
+    if (clean && clips.clip(Number(clipId))) clips.saveEdit(Number(clipId), JSON.stringify(clean), Date.now())
+  })
+  handle('pickMedia', async (kind: 'music' | 'image') => {
+    const options = {
+      title: kind === 'music' ? 'Choose a music file' : 'Choose a picture',
+      properties: ['openFile'] as 'openFile'[],
+      filters: [
+        kind === 'music'
+          ? { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac'] }
+          : { name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }
+      ]
+    }
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+    const path = result.canceled ? null : result.filePaths[0]
+    const url = path ? registerMedia(path) : null
+    return path && url ? { url, path, name: basename(path, extname(path)) } : null
+  })
+  handle('mediaUrl', (path: string) => registerMedia(String(path)))
+  handle('exportStart', (request: ExportRequest) => exporter.start(request))
+  handle('exportCancel', () => exporter.cancel())
+  handle('exportStatus', () => exporter.status())
+  handle('copyClipFile', (id: number) => {
+    const file = clips.files(Number(id))?.file
+    if (!file || !existsSync(file)) return false
+    // Windows: a file list on the clipboard, so Ctrl+V in Discord or Explorer pastes the file itself
+    if (process.platform === 'win32') clipboard.writeBuffer('FileNameW', Buffer.from(`${file}\0`, 'ucs2'))
+    else clipboard.writeText(file)
+    return true
+  })
+  handle('saveClipAs', async (id: number) => {
+    const file = clips.files(Number(id))?.file
+    if (!file || !existsSync(file)) return false
+    const options = { title: 'Save as', defaultPath: join(app.getPath('downloads'), basename(file)) }
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return false
+    await copyFile(file, result.filePath)
+    return true
+  })
   handle('openClipFolder', async () => {
     mkdirSync(recorderEnv.folder(), { recursive: true })
     await shell.openPath(recorderEnv.folder())
