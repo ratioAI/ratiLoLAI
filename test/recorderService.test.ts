@@ -149,10 +149,24 @@ const live = (gameTime: number): LiveGameState => ({
   events: []
 })
 
+/** Waits until the check holds (polling), so slow file systems (Windows CI) do not break timing-based tests. */
+async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<boolean> {
+  const end = Date.now() + timeoutMs
+  while (!check()) {
+    if (Date.now() > end) return false
+    await tick(5)
+  }
+  return true
+}
+
 /** Starts a recording whose second 0 is exactly at clock.now. */
 async function started(ctx: ReturnType<typeof setup>): Promise<FakeFfmpeg> {
+  const before = ctx.spawned.length
   ctx.service.onPhase('InProgress')
-  await tick()
+  // the start runs through findWindow, the sound helper and mkdir: on a cold CI runner that takes longer than one tick
+  if (!(await waitFor(() => ctx.spawned.length > before))) {
+    throw new Error(`FFmpeg was not started: ${JSON.stringify(ctx.service.status())}\n${ctx.logs.join('\n')}`)
+  }
   const ffmpeg = ctx.spawned[ctx.spawned.length - 1]
   ffmpeg.progress(0)
   await tick()
