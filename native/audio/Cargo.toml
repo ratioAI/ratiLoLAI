@@ -2,7 +2,7 @@
 name = "ratio-audio"
 version = "1.3.0"
 edition = "2021"
-description = "Records the sound of one process (WASAPI process loopback) for ratioAI's Clips and finds the game window"
+description = "Records the PC sound but ratioAI, or one process only (WASAPI process loopback), for ratioAI's Clips and finds the game window"
 license = "MIT"
 publish = false
 

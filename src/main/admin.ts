@@ -35,7 +35,7 @@ import type { OverlayManager } from './overlay'
 import type { MinimapWatcher } from './minimap/watcher'
 import { validPads, writeMeasuredPads } from './minimap/store'
 import { toEncounter } from '@shared/encounters'
-import { TRIGGERS, type LiveEvent, type Trigger } from '@shared/announcer'
+import type { LiveEvent } from '@shared/liveEvents'
 import {
   firstSpawn,
   INHIBITOR_POS,
@@ -57,7 +57,7 @@ export interface AdminContext {
   emit: <K extends keyof RcEvents>(event: K, payload: RcEvents[K]) => void
   /** what happens when a match is accepted in the client */
   acceptMatch: () => void
-  /** the path the live data of a real game takes (main window + overlays + announcer) */
+  /** the path the live data of a real game takes (main window + overlays + recorder) */
   feedLive: (live: LiveGameState | null, events?: LiveEvent[]) => void
   realLive: () => LiveGameState | null
   /** puts the real overlays back after a preview */
@@ -108,9 +108,9 @@ export class SimGame {
   private readonly scheduled: InhibitorEvent[] = []
   readonly takenAt = new Map<string, number>()
   readonly feed: LiveGameState['events'] = []
-  /** the raw event feed with ids, like the Live Client Data API has it (announcer) */
+  /** the raw event feed with ids, like the Live Client Data API has it (automatic clips) */
   readonly liveEvents: LiveEvent[] = [{ EventID: 0, EventName: 'GameStart', EventTime: 0 }]
-  /** a random fight every this many seconds, so the announcer has something to do */
+  /** a random fight every this many seconds, so the automatic clips have something to do */
   static readonly FIGHT_EVERY = 45
 
   constructor(
@@ -469,18 +469,6 @@ export function registerAdmin(ctx: AdminContext): void {
     log(`test game ${summary.gameId} saved`)
     ctx.emit('gameSummary', saved)
     void ctx.achievements.onGame(saved)
-  })
-
-  // straight to the main window, no game needed
-  handle('admin:announce', (trigger: Trigger) => {
-    if (!(TRIGGERS as readonly string[]).includes(trigger)) throw new Error(`unknown trigger ${String(trigger)}`)
-    log(`announce ${trigger}`)
-    ctx.emit('announce', {
-      trigger,
-      time: 0,
-      deaths: trigger === 'myDeathMilestone' ? 10 : undefined,
-      name: trigger === 'premadePenta' ? 'blackbird' : undefined
-    })
   })
 
   handle('admin:discordPreview', async () => {

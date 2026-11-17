@@ -1,4 +1,5 @@
-//! ratio-audio: records the sound of one process through WASAPI process loopback and writes it as
+//! ratio-audio: records sound through WASAPI process loopback – either everything the PC plays
+//! except ratioAI itself (game, Discord voice, music) or only the game process – and writes it as
 //! 48 kHz stereo 16-bit PCM into a named pipe for FFmpeg. Also finds the game window.
 //! See README.md for the protocol. Operating system interfaces only: the game process is never
 //! opened, read or touched.
@@ -178,9 +179,19 @@ fn format() -> WaveFormat {
     WaveFormat::new(16, 16, &SampleType::Int, SAMPLE_RATE as usize, 2, None)
 }
 
-/// What one process (and its children) plays, and nothing else on the system.
-fn open_game(pid: u32) -> Res<(Source, wasapi::Handle)> {
-    let mut client = AudioClient::new_application_loopback_client(pid, true)?;
+/// Which sound the loopback records.
+#[derive(Clone, Copy, PartialEq)]
+enum Scope {
+    /// what process `pid` (and its children) plays, nothing else
+    Only,
+    /// everything the PC plays except process `pid` and its children (ratioAI itself, so clip
+    /// previews and its sounds never end up in a recording)
+    AllBut,
+}
+
+/// The loopback stream: Windows mixes the sound of the chosen processes for us.
+fn open_loopback(pid: u32, scope: Scope) -> Res<(Source, wasapi::Handle)> {
+    let mut client = AudioClient::new_application_loopback_client(pid, scope == Scope::Only)?;
     let mode = StreamMode::EventsShared { autoconvert: true, buffer_duration_hns: 0 };
     client.initialize_client(&format(), &Direction::Capture, &mode)?;
     let event = client.set_get_eventhandle()?;
@@ -202,7 +213,9 @@ fn open_mic() -> Res<Source> {
 
 struct Job {
     pid: u32,
+    scope: Scope,
     pipe: String,
+    /// record the loopback at all (false: microphone only)
     game: bool,
     mic: bool,
     mic_volume: f32,
@@ -231,7 +244,7 @@ fn write_sound(job: &Job, pipe: Handle, stop: &AtomicBool) -> Res<u64> {
     let mut game = None;
     let mut event = None;
     if job.game {
-        let (source, handle) = open_game(job.pid)?;
+        let (source, handle) = open_loopback(job.pid, job.scope)?;
         game = Some(source);
         event = Some(handle);
     }
@@ -252,7 +265,7 @@ fn write_sound(job: &Job, pipe: Handle, stop: &AtomicBool) -> Res<u64> {
     let mut written: u64 = 0;
     let mut chunk: Vec<u8> = Vec::with_capacity(SAMPLE_RATE as usize * BLOCK / 10);
     while !stop.load(Ordering::SeqCst) {
-        // the loopback event fires when the game plays something; otherwise this is a 10 ms nap
+        // the loopback event fires when something is played; otherwise this is a 10 ms nap
         match &event {
             Some(handle) => {
                 let _ = handle.wait_for_event(10);
@@ -340,13 +353,15 @@ fn main() {
                 stop_running(&mut running);
                 let job = Job {
                     pid: command["pid"].as_u64().unwrap_or(0) as u32,
+                    // "all": everything but process `pid` (ratioAI); "game" (default for older callers): only `pid`
+                    scope: if command["source"].as_str() == Some("all") { Scope::AllBut } else { Scope::Only },
                     pipe: command["pipe"].as_str().unwrap_or("").to_string(),
                     game: command["game"].as_bool().unwrap_or(true),
                     mic: command["mic"].as_bool().unwrap_or(false),
                     mic_volume: command["micVolume"].as_f64().unwrap_or(0.8).clamp(0.0, 1.0) as f32,
                 };
                 if !job.pipe.starts_with(r"\\.\pipe\") || (job.game && job.pid == 0) {
-                    fail("start needs a pipe name and the process id of the game");
+                    fail("start needs a pipe name and a process id (the game, or ratioAI to leave out)");
                     continue;
                 }
                 let stop = Arc::new(AtomicBool::new(false));

@@ -85,8 +85,8 @@ function setup(options: { probe?: EncoderProbe | null; settings?: Partial<Record
         options.window === false
           ? null
           : { pid: 77, hwnd: 132456, x: 0, y: 0, width: 2560, height: 1440, minimized: false, monitor: 1, monitorX: 0, monitorY: 0, monitorWidth: 2560, monitorHeight: 1440 },
-      start: async (startOptions: { pid: number; mic: boolean }) => {
-        helperCalls.push(`start pid=${startOptions.pid} mic=${startOptions.mic}`)
+      start: async (startOptions: { pid: number; source: string; mic: boolean }) => {
+        helperCalls.push(`start ${startOptions.source} pid=${startOptions.pid} mic=${startOptions.mic}`)
         return '\\\\.\\pipe\\ratio-audio-test'
       },
       stop: () => helperCalls.push('stop'),
@@ -174,7 +174,7 @@ async function started(ctx: ReturnType<typeof setup>): Promise<FakeFfmpeg> {
 }
 
 describe('RecorderService', () => {
-  it('starts with the game: window by handle, sound of the game process only, hotkeys held while recording', async () => {
+  it('starts with the game: window by handle, the whole PC sound (game, Discord, music), hotkeys held while recording', async () => {
     const ctx = setup()
     expect(ctx.service.status().state).toBe('idle')
     ctx.service.onPhase('ChampSelect')
@@ -187,10 +187,24 @@ describe('RecorderService', () => {
     expect(args).toContain('width=1920:height=1080')
     expect(args).toContain('-c:v hevc_nvenc')
     expect(args).toContain('\\\\.\\pipe\\ratio-audio-test')
-    expect(ctx.helperCalls).toEqual(['start pid=77 mic=false'])
+    expect(ctx.helperCalls).toEqual(['start all pid=77 mic=false'])
     expect(ctx.hotkeys().map((binding) => binding.accelerator)).toEqual(['Alt+F9', 'Alt+F10', 'Alt+F11'])
     expect(ctx.service.status()).toMatchObject({ state: 'recording', encoder: 'NVIDIA HEVC', mode: 'replay' })
     expect(ctx.store.recordings()).toHaveLength(1)
+  })
+
+  it('records only the game process when the sound source is set to the game', async () => {
+    const ctx = setup({ settings: { audio: { ...DEFAULT_RECORDER.audio, source: 'game', mic: true } } })
+    await started(ctx)
+    expect(ctx.helperCalls).toEqual(['start game pid=77 mic=true'])
+    expect(ctx.logs.join('\n')).toMatch(/sound game only \+ mic/)
+  })
+
+  it('records no sound when sound and microphone are off', async () => {
+    const ctx = setup({ settings: { audio: { ...DEFAULT_RECORDER.audio, game: false, mic: false } } })
+    const ffmpeg = await started(ctx)
+    expect(ctx.helperCalls).toEqual([])
+    expect(ffmpeg.args.join(' ')).not.toContain('ratio-audio')
   })
 
   it('does not record when it is switched off, without a hardware encoder or without the game window', async () => {

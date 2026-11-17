@@ -24,7 +24,8 @@ const qsvH264 = encoderById('h264_qsv')!
 describe('recorder settings', () => {
   it('is off by default', () => {
     expect(DEFAULT_RECORDER.enabled).toBe(false)
-    expect(DEFAULT_RECORDER.audio).toEqual({ game: true, mic: false, micVolume: 0.8 })
+    // the whole PC sound by default: game, Discord voice and music, like the moment sounded
+    expect(DEFAULT_RECORDER.audio).toEqual({ game: true, source: 'all', mic: false, micVolume: 0.8 })
     expect(DEFAULT_RECORDER.clipSound).toBe(false)
   })
 
@@ -42,11 +43,18 @@ describe('recorder settings', () => {
     expect(merged.replaySeconds).toBe(300)
     expect(merged.fps).toBe(60)
     expect(merged.quality).toBe('compact')
-    expect(merged.audio).toEqual({ game: true, mic: true, micVolume: 0.8 })
+    expect(merged.audio).toEqual({ game: true, source: 'all', mic: true, micVolume: 0.8 })
     expect(merged.autoClips.death).toBe(true)
     expect(merged.autoClips.penta).toBe(true)
     expect(merged.storage).toEqual({ folder: '', maxGb: 30, keepSessionsDays: 7 })
     expect(mergeRecorderSettings(DEFAULT_RECORDER, undefined)).toEqual(DEFAULT_RECORDER)
+  })
+
+  it('keeps the sound source valid and moves stored 1.3 settings (no source yet) to the whole PC sound', () => {
+    const stored = { audio: { game: true, mic: false, micVolume: 0.5 } } as Parameters<typeof mergeRecorderSettings>[1]
+    expect(mergeRecorderSettings(DEFAULT_RECORDER, stored).audio).toEqual({ game: true, source: 'all', mic: false, micVolume: 0.5 })
+    expect(mergeRecorderSettings(DEFAULT_RECORDER, { audio: { source: 'game' } }).audio.source).toBe('game')
+    expect(mergeRecorderSettings(DEFAULT_RECORDER, { audio: { source: 'desktop' as 'all' } }).audio.source).toBe('all')
   })
 
   it('finds hotkey conflicts with the augment hotkey and among themselves', () => {

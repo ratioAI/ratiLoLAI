@@ -2,7 +2,6 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
 import type { EditableSettings, Settings } from '@shared/types'
-import { TRIGGERS, type Trigger } from '@shared/announcer'
 import { DEFAULT_RECORDER, mergeRecorderSettings } from '@shared/recorder'
 import { DISCORD_UPLOAD_MB } from '@shared/discordPayload'
 
@@ -21,8 +20,9 @@ type Stored = EditableSettings & {
  * 4: the tier list panel is gone (its setting is dropped).
  * 5: Discord webhook and hype announcer (1.2).
  * 6: Clips, the gameplay recorder (1.3). New block `recorder`, off by default.
+ * 7: the hype announcer is gone (its block `announcer` is dropped); the recorder records the whole PC sound.
  */
-const SCHEMA = 6
+const SCHEMA = 7
 
 export const DEFAULT_SETTINGS: EditableSettings = {
   platform: 'euw1',
@@ -72,14 +72,6 @@ export const DEFAULT_SETTINGS: EditableSettings = {
     attachBestClip: false,
     uploadLimitMb: DISCORD_UPLOAD_MB
   },
-  // off by default, so nobody is surprised by sounds after an update
-  announcer: {
-    enabled: false,
-    volume: 0.6,
-    voice: true,
-    cooldownS: 6,
-    triggers: Object.fromEntries(TRIGGERS.map((trigger) => [trigger, true])) as Record<Trigger, boolean>
-  },
   // off by default: recording starts only after you turned it on (and FFmpeg was downloaded)
   recorder: DEFAULT_RECORDER
 }
@@ -107,16 +99,13 @@ export class SettingsStore {
       ui: { ...DEFAULT_SETTINGS.ui, ...loaded.ui },
       client: { ...DEFAULT_SETTINGS.client, ...loaded.client },
       discord: { ...DEFAULT_SETTINGS.discord, ...loaded.discord },
-      announcer: {
-        ...DEFAULT_SETTINGS.announcer,
-        ...loaded.announcer,
-        triggers: { ...DEFAULT_SETTINGS.announcer.triggers, ...loaded.announcer?.triggers }
-      },
       recorder: mergeRecorderSettings(DEFAULT_SETTINGS.recorder, loaded.recorder)
     }
     if ((loaded.schema ?? 1) < 2) this.data.language = 'en_US'
     // the tier list panel next to the cards was removed in 1.0.5
     delete (this.data.overlay as Partial<Record<'autoExpand', unknown>>).autoExpand
+    // the hype announcer was removed in 1.3
+    delete (this.data as Partial<Record<'announcer', unknown>>).announcer
     this.data.schema = SCHEMA
   }
 
@@ -136,11 +125,6 @@ export class SettingsStore {
       ui: { ...this.data.ui, ...patch.ui },
       client: { ...this.data.client, ...patch.client },
       discord: { ...this.data.discord, ...patch.discord },
-      announcer: {
-        ...this.data.announcer,
-        ...patch.announcer,
-        triggers: { ...this.data.announcer.triggers, ...patch.announcer?.triggers }
-      },
       recorder: mergeRecorderSettings(this.data.recorder, patch.recorder)
     }
     this.save()

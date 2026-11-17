@@ -5,7 +5,8 @@
 **Clips** – a free replacement for Medal inside ratioAI. Games are recorded in full quality without a paywall or a watermark, clips are made by hotkey or on their own, an editor turns them into montages, GIFs and memes, and you share them through your Discord webhook or keep them on disk. Everything runs locally: no servers, no cloud, no running costs. Off by default.
 
 ### Recorder
-- Records only through Windows' own interfaces: Windows Graphics Capture for the League window (Desktop Duplication as the fallback), WASAPI process loopback for the game's sound. No hook, no injection, no memory reading. Only the game window and only the game's sound are captured – no desktop, no Discord voice; the microphone is optional.
+- Records only through Windows' own interfaces: Windows Graphics Capture for the League window (Desktop Duplication as the fallback), WASAPI process loopback for the sound. No hook, no injection, no memory reading. Only the game window is captured, never the desktop.
+- **The whole sound of the moment**: by default a clip has everything your PC plays – the game, your friends on Discord, your music – so it sounds like it did when it happened. Only ratioAI's own sounds are left out (clip previews, the click). *Only the game* is still available in Settings › Clips; the microphone (your own voice) is optional.
 - Hardware encoders only (AV1 → HEVC → H.264 on NVIDIA, AMD, Intel), frames stay on the GPU, FFmpeg and the sound helper run at below-normal priority, and a busy encoder drops frames in the recording, never in the game. Without a hardware encoder the recorder stays off.
 - **Instant replay** (the last 10–300 seconds, saved by hotkey) or **whole game** (kept as one file; *Keep* or *Delete* on the game page, deleted after a week otherwise).
 - Hotkeys: clip (<kbd>Alt</kbd>+<kbd>F9</kbd>), bookmark for a clip after the game (<kbd>Alt</kbd>+<kbd>F10</kbd>), screenshot (<kbd>Alt</kbd>+<kbd>F11</kbd>). They are only held while a recording runs and may not collide with the augment hotkey.
@@ -33,9 +34,12 @@
 - Option: add the game's best automatic clip under the game summary (off by default).
 
 ### Under the hood
-- `games.db` version 4: tables `recordings`, `clips`, `edits` and `clip_posts`. Settings schema 6 with the new block `recorder`.
-- `native/audio`: a small Rust helper for the game's sound (`npm run build:audio`); built by the release workflow and checked by CI on Windows.
+- `games.db` version 4: tables `recordings`, `clips`, `edits` and `clip_posts`. Settings schema 7 with the new block `recorder` (sound source `all` or `game`).
+- `native/audio`: a small Rust helper for the sound (`npm run build:audio`), process loopback of everything but ratioAI or of the game only; built by the release workflow and checked by CI on Windows.
 - Admin tab (development builds only): encoder test, reload FFmpeg, record without a game, a test recording for the simulated game's automatic clips, the ring buffer and *Clip now*.
+
+### Removed
+- The **hype announcer** (1.2) is gone, with its settings, sound folder and admin card. Its stored settings are dropped on the first start.
 
 ## 1.2.0
 

@@ -1,7 +1,6 @@
 import type { GameSummary } from './summary'
 import type { Encounter } from './encounters'
 import type { AchievementCategory, AchievementRank } from './achievements'
-import type { Announcement, Trigger } from './announcer'
 import type { ClipKind, EncoderProbe, RecorderMode, RecorderSettings } from './recorder'
 import type { EditProject, ExportPresetId } from './editProject'
 // Types shared between the Electron main process and the React renderer.
@@ -327,17 +326,6 @@ export interface Settings {
     attachBestClip: boolean
     /** files above this many MB are exported smaller before they are sent (Discord: 20; boosted servers 50 or 100) */
     uploadLimitMb: number
-  }
-  /** sounds for multikills, aces, many deaths … during a game (main window, audio only) */
-  announcer: {
-    enabled: boolean
-    /** 0 to 1 */
-    volume: number
-    /** a spoken line after the sound (the system's offline voice) */
-    voice: boolean
-    /** seconds between two sounds (pentakills, victory and defeat always play) */
-    cooldownS: number
-    triggers: Record<Trigger, boolean>
   }
   /** Clips: records your games through Windows' own capture interfaces (off by default) */
   recorder: RecorderSettings
@@ -864,10 +852,6 @@ export interface RcApi {
   markAchievementsSeen(ids: string[]): Promise<void>
   /** a flight to the next galaxy was shown (wormhole or slingshot), for the cosmos achievements */
   recordFlight(variant: 'wormhole' | 'slingshot', seed: number): Promise<void>
-  /** your own sound for a trigger from the sounds folder, null for the built-in one */
-  getAnnouncerSound(trigger: Trigger): Promise<{ data: Uint8Array; mime: string } | null>
-  /** opens the folder for your own announcer sounds (creates it if needed) */
-  openSoundFolder(): Promise<void>
   /** FFmpeg, encoders and helper of the recorder */
   recorderSetup(): Promise<RecorderSetup>
   /** downloads and verifies the FFmpeg build (progress comes as 'ffmpeg' events) */
@@ -960,7 +944,7 @@ export type AdminSimAction =
   | { type: 'inhibitor'; team: 'ORDER' | 'CHAOS'; event: 'killed' | 'soon' | 'respawned' }
   | { type: 'relicTaken'; padId: string }
   | { type: 'skip'; seconds: number }
-  /** a fight in the simulated game's event feed (goes through the announcer like a real one) */
+  /** a fight in the simulated game's event feed (goes through the automatic clips like a real one) */
   | { type: 'fight'; kind: AdminSimFight }
 
 export type AdminSimFight =
@@ -1017,8 +1001,6 @@ export interface AdminApi {
   deleteTestGames(): Promise<number>
   /** unlocks an achievement now (as if the newest game did it) and sends the unlock event */
   unlockAchievement(id: string): Promise<void>
-  /** plays an announcer trigger in the main window as if it came from a game */
-  announce(trigger: Trigger): Promise<void>
   /** the Discord message the newest saved game would get, and why it would not be posted automatically */
   discordPreview(): Promise<{ gameId: number | null; payload: unknown; skip: string | null }>
   /** starts or stops a recording of a test picture, so the simulated game has something to cut clips from */
@@ -1105,8 +1087,6 @@ export interface RcEvents {
   gameSummary: GameSummary
   /** ids of achievements that were just unlocked */
   achievementsUnlocked: string[]
-  /** something worth a sound happened in the game (hype announcer) */
-  announce: Announcement
   loading: LoadingState | null
   /** download progress and state of the recorder's FFmpeg */
   ffmpeg: FfmpegState

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { setPriority, constants } from 'node:os'
+import type { AudioSource } from '@shared/recorder'
 
 /** The game window as the helper found it (the picture without title bar and border, in pixels). */
 export interface GameWindow {
@@ -32,9 +33,10 @@ export function lowerPriority(pid: number | undefined): void {
 }
 
 /**
- * Talks to ratio-audio.exe (native/audio): JSON lines in, JSON lines out. The helper records the
- * sound of the game process only (WASAPI process loopback) into a named pipe that FFmpeg reads,
- * and finds the game window. It is started when a recording begins and ends with it.
+ * Talks to ratio-audio.exe (native/audio): JSON lines in, JSON lines out. The helper records sound
+ * through WASAPI process loopback – everything the PC plays except ratioAI (game, Discord voice,
+ * music), or only the game process – into a named pipe that FFmpeg reads, and finds the game window.
+ * It is started when a recording begins and ends with it.
  */
 export class AudioHelper {
   private child: ChildProcessWithoutNullStreams | null = null
@@ -127,13 +129,16 @@ export class AudioHelper {
   }
 
   /**
-   * Starts recording the sound of process `pid` into a new named pipe. Resolves with the pipe's
-   * name once it exists (FFmpeg opens it as its audio input), null when the helper cannot do it.
+   * Starts recording sound into a new named pipe: with source 'all' everything the PC plays except
+   * ratioAI's own processes (this one and its children – the window, FFmpeg, the helper), with
+   * 'game' only process `pid`. Resolves with the pipe's name once it exists (FFmpeg opens it as its
+   * audio input), null when the helper cannot do it.
    */
-  async start(options: { pid: number; game: boolean; mic: boolean; micVolume: number }): Promise<string | null> {
+  async start(options: { pid: number; source: AudioSource; game: boolean; mic: boolean; micVolume: number }): Promise<string | null> {
     const pipe = `\\\\.\\pipe\\ratio-audio-${process.pid}-${Date.now().toString(36)}`
     const answer = this.wait((event) => event.event === 'listening' || event.event === 'error', 4000)
-    if (!this.send({ cmd: 'start', pipe, ...options })) return null
+    const { source, ...rest } = options
+    if (!this.send({ cmd: 'start', pipe, ...rest, source, pid: source === 'all' ? process.pid : options.pid })) return null
     const event = await answer
     return event?.event === 'listening' ? pipe : null
   }

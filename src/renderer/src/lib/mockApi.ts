@@ -21,7 +21,6 @@ import { ACHIEVEMENTS, evaluateAchievements, goalOf } from '@shared/achievements
 import { makeTierLookup, summaryAugmentTiers } from '@shared/mayhem'
 import { UNIVERSE } from '@shared/universe'
 import { isDiscordWebhook } from '@shared/discordPayload'
-import { TRIGGERS } from '@shared/announcer'
 import { estimateExportMb, planExport, projectDuration, type EditProject } from '@shared/editProject'
 import { DEFAULT_RECORDER, ENCODERS, mergeRecorderSettings, type EncoderProbe } from '@shared/recorder'
 import type {
@@ -528,13 +527,6 @@ export function createMockApi(): RcApi {
       attachBestClip: false,
       uploadLimitMb: 20
     },
-    announcer: {
-      enabled: false,
-      volume: 0.6,
-      voice: true,
-      cooldownS: 6,
-      triggers: Object.fromEntries(TRIGGERS.map((trigger) => [trigger, true])) as Settings['announcer']['triggers']
-    },
     // the demo shows Clips switched on, with a library of test clips
     recorder: { ...DEFAULT_RECORDER, enabled: true }
   }
@@ -584,7 +576,6 @@ export function createMockApi(): RcApi {
         crawler: { ...settings.crawler, ...patch.crawler },
         client: { ...settings.client, ...patch.client },
         discord: { ...settings.discord, ...patch.discord },
-        announcer: { ...settings.announcer, ...patch.announcer, triggers: { ...settings.announcer.triggers, ...patch.announcer?.triggers } },
         recorder: mergeRecorderSettings(settings.recorder, patch.recorder)
       }
       return settings
@@ -869,8 +860,6 @@ export function createMockApi(): RcApi {
         }
       })
     },
-    getAnnouncerSound: async () => null,
-    openSoundFolder: async () => undefined,
     markAchievementsSeen: async (ids) => ids.forEach((id) => demoAchievements.seen.add(id)),
     recordFlight: async (variant) => {
       demoAchievements.flights[variant] = (demoAchievements.flights[variant] ?? 0) + 1
@@ -1350,7 +1339,6 @@ function mockAdmin(emit: <K extends keyof RcEvents>(event: K, payload: RcEvents[
       demoAchievements.seen.delete(id)
       emit('achievementsUnlocked', [id])
     },
-    announce: async (trigger) => emit('announce', { trigger, time: 0, deaths: 10, name: 'blackbird' }),
     discordPreview: async () => ({ gameId: null, payload: null, skip: 'Only in the desktop app (npm run dev).' }),
     resetAchievements: async () => {
       demoAchievements.manual.clear()

@@ -35,7 +35,6 @@ import {
   Swords,
   Trash2,
   Users,
-  Volume2,
   X
 } from 'lucide-react'
 import type {
@@ -47,7 +46,6 @@ import type {
   AdminSimState,
   MinimapState
 } from '@shared/types'
-import { TRIGGERS, TRIGGER_LABELS } from '@shared/announcer'
 import { FLIGHT_VARIANTS, type FlightVariant } from '@shared/journey'
 import { GALAXY_TYPES, TYPE_NAMES, UNIVERSE, cosmicSeed, galaxyKind, galaxyOf, type GalaxyType } from '@shared/universe'
 import { api } from '@/lib/api'
@@ -652,7 +650,7 @@ function AchievementsCard() {
 }
 
 // ---------------------------------------------------------------------------
-// Hype announcer
+// Fights (feed the automatic clips of the simulated game)
 // ---------------------------------------------------------------------------
 
 const FIGHTS: [AdminSimFight, string][] = [
@@ -668,28 +666,13 @@ const FIGHTS: [AdminSimFight, string][] = [
   ['defeat', 'Defeat']
 ]
 
-function AnnouncerCard() {
+function FightsCard() {
   const admin = api.admin
   const action = useAction()
   return (
-    <Card icon={<Volume2 size={18} />} title="Hype announcer" action={action}>
+    <Card icon={<Swords size={18} />} title="Fights" action={action}>
       <div>
-        <Label>Play a trigger (straight to this window)</Label>
-        <div className="flex flex-wrap gap-1.5">
-          {TRIGGERS.map((trigger) => (
-            <button
-              key={trigger}
-              className="admin-chip"
-              title={TRIGGER_LABELS[trigger]}
-              onClick={() => action.run(`Announcing ${trigger}`, async () => void (await admin?.announce(trigger)))}
-            >
-              {trigger}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div>
-        <Label>Fight in the simulated game (through the event feed, cooldown and settings)</Label>
+        <Label>Fight in the simulated game (through the event feed, like a real one: automatic clips)</Label>
         <div className="flex flex-wrap gap-1.5">
           {FIGHTS.map(([kind, label]) => (
             <button
@@ -1610,7 +1593,7 @@ export function Admin() {
         <OverlaysCard />
         <AchievementsCard />
         <DiscordCard />
-        <AnnouncerCard />
+        <FightsCard />
         <RecorderCard />
         <SimCard />
         <CalibrationCard />

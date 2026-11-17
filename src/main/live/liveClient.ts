@@ -1,6 +1,6 @@
 import https from 'node:https'
 import type { LiveGameState, LivePlayer } from '@shared/types'
-import type { LiveEvent } from '@shared/announcer'
+import type { LiveEvent } from '@shared/liveEvents'
 
 // the game serves this API with a self-signed certificate on localhost
 const agent = new https.Agent({ rejectUnauthorized: false })
@@ -153,7 +153,7 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
 }
 
 /**
- * Every event of the feed with its id (the announcer needs all of them and the ids; the Live tab
+ * Every event of the feed with its id (the automatic clips need all of them and the ids; the Live tab
  * only gets the newest twelve as text). Events without an id are dropped.
  */
 export function parseLiveEvents(raw: unknown): LiveEvent[] {

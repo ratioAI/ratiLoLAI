@@ -42,8 +42,6 @@ import { cardRects, WINDOWS, type NameCandidate } from './scanner/detect'
 import { augmentTiersForChampion, makeTierLookup, type TierLookup } from '@shared/mayhem'
 import { AchievementService } from './achievements'
 import { DiscordPoster } from './discord'
-import { AnnouncerFeed, customSound, ensureSoundFolder } from './announcer'
-import type { Trigger } from '@shared/announcer'
 import { isDiscordWebhook } from '@shared/discordPayload'
 import { demoGame } from '@shared/demoGame'
 import { ProfileService } from './profile'
@@ -82,7 +80,7 @@ if (!app.requestSingleInstanceLock()) app.quit()
 // rcclip:// plays clips in the window (read-only, ids instead of paths; see recorder/protocol.ts).
 // Must be declared before the app is ready; "stream" lets the video player seek.
 protocol.registerSchemesAsPrivileged([{ scheme: 'rcclip', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }])
-// the announcer plays sounds when a game event comes in, not after a click in the window
+// the "clip saved" sound plays when a hotkey was pressed in the game, not after a click in the window
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 const userData = app.getPath('userData')
@@ -439,16 +437,6 @@ const achievements = new AchievementService({
   unlocked: (ids) => emit('achievementsUnlocked', ids),
   log: (message) => diag.log(message)
 })
-// --- Hype announcer: sounds for multikills, aces, … (played by the main window) ---
-const soundsDir = join(userData, 'sounds')
-const announcer = new AnnouncerFeed({
-  settings: () => settings.get().announcer,
-  announce: (announcement) => {
-    diag.log(`announcer: ${announcement.trigger} at ${Math.round(announcement.time)} s`)
-    emit('announce', announcement)
-  }
-})
-
 // --- Discord: a summary of each game in your friends' channel (your own webhook) ---
 const discord = new DiscordPoster({
   db: games.database,
@@ -676,7 +664,6 @@ const lcu = new LcuManager({
   },
   encounters: async (me, puuids, excludeGameId) => games.encounters(me, puuids, excludeGameId),
   liveEvents: (events, state) => {
-    announcer.tick(events, state)
     // automatic clips hang on this poll too: the recorder has no loop of its own
     recorder.onLive(events, state)
   },
@@ -828,10 +815,6 @@ function registerIpc(): void {
     const summary = games.get(Number(gameId))
     if (!summary) return { ok: false, message: 'Game not found.' }
     return discord.post(summary)
-  })
-  handle('getAnnouncerSound', (trigger: Trigger) => customSound(soundsDir, String(trigger)))
-  handle('openSoundFolder', async () => {
-    await shell.openPath(await ensureSoundFolder(soundsDir))
   })
   handle('recorderSetup', () => recorderEnv.setup())
   handle('installFfmpeg', () => recorderEnv.install())
@@ -1026,7 +1009,6 @@ function registerIpc(): void {
         feedLive: (live, events = []) => {
           emit('live', live)
           updateOverlay(live)
-          announcer.tick(events, live)
           recorder.onLive(events, live)
         },
         realLive: () => lcu.getLive(),

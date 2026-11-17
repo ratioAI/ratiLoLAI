@@ -1,11 +1,15 @@
 # ratio-audio
 
-A small helper for ratioAI's Clips. FFmpeg cannot record what a single program plays on Windows,
-so this does it and hands the sound to FFmpeg:
+A small helper for ratioAI's Clips. FFmpeg cannot leave programs out of (or pick them from) what
+Windows plays, so this does it and hands the sound to FFmpeg:
 
-- **Sound of one process only.** WASAPI *process loopback* (Windows 10 2004 or newer) records what
-  the game process plays and nothing else: no Discord voice, no browser, no notifications.
-  Optionally the default microphone is mixed in.
+- **Everything but ratioAI** (`"source":"all"`, the default in the app). WASAPI *process loopback*
+  (Windows 10 2004 or newer) in exclude mode records everything the PC plays – the game, Discord
+  voice, music – except process `pid` and its children, which is ratioAI itself, so its clip
+  previews and sounds never end up in a recording.
+- **One process only** (`"source":"game"`, or no `source`). Process loopback in include mode
+  records what the game process plays and nothing else.
+- Optionally the default microphone is mixed in.
 - **Finding the game window.** Title, process id, position and size of the League window, so
   FFmpeg captures exactly that window.
 
@@ -21,13 +25,13 @@ a named pipe the helper creates and FFmpeg opens as its audio input.
 | stdin | stdout |
 |---|---|
 | `{"cmd":"find"}` | `{"event":"window","found":true,"pid":1234,"hwnd":65552,"x":0,"y":0,"width":1920,"height":1080,"monitor":0,"minimized":false}` |
-| `{"cmd":"start","pid":1234,"pipe":"\\\\.\\pipe\\ratio-audio-1","game":true,"mic":false,"micVolume":0.8}` | `{"event":"listening","pipe":"…"}`, then `{"event":"started"}` once FFmpeg connected, `{"event":"stopped","frames":123}` at the end |
+| `{"cmd":"start","source":"all","pid":1234,"pipe":"\\\\.\\pipe\\ratio-audio-1","game":true,"mic":false,"micVolume":0.8}` – `pid` is the process to leave out (`all`) or the only one to record (`game`) | `{"event":"listening","pipe":"…"}`, then `{"event":"started"}` once FFmpeg connected, `{"event":"stopped","frames":123}` at the end |
 | `{"cmd":"stop"}` | `{"event":"stopped",…}` |
 | `{"cmd":"quit"}` (or closing stdin) | the helper exits |
 
 Errors come as `{"event":"error","message":"…"}`.
 
-The stream is driven by the clock: when the game is silent (process loopback delivers nothing
+The stream is driven by the clock: when nothing is played (process loopback delivers nothing
 then), silence is written, so the sound never falls behind the picture.
 
 ## Build

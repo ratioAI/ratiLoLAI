@@ -31,6 +31,7 @@ export type ClipKind = 'manual' | 'bookmark' | `auto:${AutoClipKind}`
 
 export type RecorderMode = 'replay' | 'session'
 export type RecorderQuality = 'compact' | 'high' | 'original'
+export type AudioSource = 'all' | 'game'
 
 export interface RecorderSettings {
   /** record games at all (off by default) */
@@ -43,8 +44,13 @@ export interface RecorderSettings {
   /** 'auto' or the id of a hardware encoder ("hevc_nvenc") */
   encoder: string
   audio: {
-    /** the game's own sound (never Discord or the rest of the desktop) */
+    /** record sound at all (what `source` says) */
     game: boolean
+    /**
+     * all = everything the PC plays except ratioAI itself: the game, your friends on Discord, music –
+     * the clip sounds like the moment did. game = only the League process.
+     */
+    source: AudioSource
     mic: boolean
     /** 0 to 1 */
     micVolume: number
@@ -70,7 +76,7 @@ export const DEFAULT_RECORDER: RecorderSettings = {
   quality: 'compact',
   fps: 60,
   encoder: 'auto',
-  audio: { game: true, mic: false, micVolume: 0.8 },
+  audio: { game: true, source: 'all', mic: false, micVolume: 0.8 },
   hotkeys: { clip: 'Alt+F9', bookmark: 'Alt+F10', screenshot: 'Alt+F11' },
   autoClips: { penta: true, quadra: true, triple: true, firstBlood: true, ace: true, death: false, gameEnd: false },
   storage: { folder: '', maxGb: 30, keepSessionsDays: 7 },
@@ -91,6 +97,7 @@ export function mergeRecorderSettings(base: RecorderSettings, patch: DeepPartial
   merged.quality = (['compact', 'high', 'original'] as const).includes(merged.quality) ? merged.quality : 'compact'
   merged.fps = merged.fps === 30 ? 30 : 60
   merged.replaySeconds = clamp(Math.round(Number(merged.replaySeconds) || 30), 10, 300)
+  merged.audio.source = merged.audio.source === 'game' ? 'game' : 'all'
   merged.audio.micVolume = clamp(Number(merged.audio.micVolume) || 0, 0, 1)
   merged.storage.maxGb = clamp(Math.round(Number(merged.storage.maxGb) || 30), 2, 2000)
   merged.storage.keepSessionsDays = clamp(Math.round(Number(merged.storage.keepSessionsDays) || 7), 1, 365)

@@ -95,6 +95,12 @@ export const FULLSCREEN_HINT = 'If League runs in exclusive fullscreen, switch i
 
 const stamp = (time: number): string => new Date(time).toISOString().replace(/[:.]/g, '-').slice(0, 19)
 
+/** what the recording's sound holds, for the log */
+const soundLabel = (settings: RecorderSettings): string =>
+  [settings.audio.game ? (settings.audio.source === 'all' ? 'whole PC but ratioAI' : 'game only') : null, settings.audio.mic ? 'mic' : null]
+    .filter(Boolean)
+    .join(' + ')
+
 async function dirSize(dir: string): Promise<number> {
   let bytes = 0
   for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
@@ -320,7 +326,13 @@ export class RecorderService {
                 crop: fullScreen ? null : { x: window.x - window.monitorX, y: window.y - window.monitorY, width: window.width, height: window.height }
               }
         if (settings.audio.game || settings.audio.mic)
-          audioPipe = await env.helper.start({ pid: window.pid, game: settings.audio.game, mic: settings.audio.mic, micVolume: settings.audio.micVolume })
+          audioPipe = await env.helper.start({
+            pid: window.pid,
+            source: settings.audio.source,
+            game: settings.audio.game,
+            mic: settings.audio.mic,
+            micVolume: settings.audio.micVolume
+          })
       } else {
         // without the helper the window can still be found by its program name, but only by Windows Graphics Capture;
         // Desktop Duplication would record the whole screen, and that is never done
@@ -374,7 +386,7 @@ export class RecorderService {
     this.message = null
     this.state = 'recording'
     this.deps.log(
-      `recorder: recording started (${test ? 'test picture' : source.kind}, ${encoder.id}, ${profile.width ?? '?'}x${profile.height ?? '?'}@${profile.fps}, ${settings.mode}, sound ${audioPipe ? 'game only' : 'none'})`
+      `recorder: recording started (${test ? 'test picture' : source.kind}, ${encoder.id}, ${profile.width ?? '?'}x${profile.height ?? '?'}@${profile.fps}, ${settings.mode}, sound ${audioPipe ? soundLabel(settings) : 'none'})`
     )
     this.registerHotkeys(settings)
     this.emit()
