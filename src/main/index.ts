@@ -1,6 +1,6 @@
-import { existsSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type {
   ChampionBuild,
@@ -48,6 +48,7 @@ import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
 import { RiotClient, regionalOf } from './riot/client'
 import type { GameResults, RecordMode } from './records'
 import { SettingsStore } from './settings'
+import { RecorderEnv } from './recorder/setup'
 
 // The app used to be called "Rift Companion". Move its data (settings, encrypted API key, crawled
 // stats, caches) to the new folder once, or keep using the old folder if the move fails.
@@ -443,6 +444,19 @@ const discord = new DiscordPoster({
   log: (message) => diag.log(message)
 })
 
+// --- Clips: the gameplay recorder (FFmpeg as its own program, Windows capture interfaces only) ---
+const recorderEnv = new RecorderEnv({
+  userData,
+  // resources/ is unpacked next to the asar archive in the installed app
+  helperExe: join(__dirname, '../../resources/bin/ratio-audio.exe').replace('app.asar', 'app.asar.unpacked'),
+  videosDir: app.getPath('videos'),
+  settings: () => settings.get().recorder,
+  onFfmpeg: (state) => emit('ffmpeg', state),
+  inGame: () => inGame,
+  log: (message) => diag.log(message),
+  ffmpegOverride: app.isPackaged ? null : (process.env.RATIO_FFMPEG ?? null)
+})
+
 /** The first full evaluation reads every saved game, so it waits until no game is running. */
 function startAchievements(): void {
   if (inGame) {
@@ -698,6 +712,18 @@ function registerIpc(): void {
   handle('openSoundFolder', async () => {
     await shell.openPath(await ensureSoundFolder(soundsDir))
   })
+  handle('recorderSetup', () => recorderEnv.setup())
+  handle('installFfmpeg', () => recorderEnv.install())
+  handle('testEncoders', () => recorderEnv.testEncoders(true))
+  handle('openClipFolder', async () => {
+    mkdirSync(recorderEnv.folder(), { recursive: true })
+    await shell.openPath(recorderEnv.folder())
+  })
+  handle('chooseClipFolder', async () => {
+    const options = { title: 'Folder for clips and recordings', defaultPath: recorderEnv.folder(), properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] }
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
   handle('getPatches', (mode: GameMode) => store.patches(assertMode(mode)))
   handle('getTierList', (patch: string, mode: GameMode) => tierList(patch, assertMode(mode)))
   handle('getChampionBuild', (patch: string, championId: number, role: StatRole | undefined, mode: GameMode) =>
@@ -821,6 +847,7 @@ function registerIpc(): void {
         games,
         achievements,
         discord,
+        recorderEnv,
         diag,
         padsFile: minimapPadsFile
       })
@@ -1003,6 +1030,7 @@ void app.whenReady().then(async () => {
   app.setAppUserModelId('dev.riftcompanion.app')
   registerIpc()
   createWindow()
+  void recorderEnv.init().catch((error) => diag.log(`recorder: init failed – ${String(error)}`))
   lcu.start()
   overlay.setHotkey(settings.get().overlay.hotkey)
   overlay.setVisibleInCapture(settings.get().overlay.showInCapture)

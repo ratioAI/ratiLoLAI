@@ -19,6 +19,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Build the sound helper of Clips (Rust, resources/bin/ratio-audio.exe)
+        run: npm run build:audio
       - name: Build installer (incl. latest.yml for auto-update)
         run: npm run build && npx electron-builder --win --publish never
       - uses: actions/upload-artifact@v4

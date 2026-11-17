@@ -2,6 +2,7 @@ import type { GameSummary } from './summary'
 import type { Encounter } from './encounters'
 import type { AchievementCategory, AchievementRank } from './achievements'
 import type { Announcement, Trigger } from './announcer'
+import type { EncoderProbe, RecorderSettings } from './recorder'
 // Types shared between the Electron main process and the React renderer.
 
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
@@ -333,6 +334,8 @@ export interface Settings {
     cooldownS: number
     triggers: Record<Trigger, boolean>
   }
+  /** Clips: records your games through Windows' own capture interfaces (off by default) */
+  recorder: RecorderSettings
 }
 
 /** The settings the renderer can change (the flags about stored secrets are read-only). */
@@ -418,6 +421,32 @@ export interface LeaderboardEntry {
 }
 
 export type AcceptDelay = 'instant' | 'human' | 'slow'
+
+// ---------------------------------------------------------------------------
+// Clips (gameplay recorder)
+// ---------------------------------------------------------------------------
+
+/** The FFmpeg build the recorder uses (downloaded once into userData/ffmpeg, never bundled). */
+export interface FfmpegState {
+  status: 'missing' | 'downloading' | 'verifying' | 'unpacking' | 'ready' | 'error'
+  /** 0 to 1 while downloading */
+  progress?: number
+  version?: string
+  message?: string
+}
+
+/** What the recorder needs before it can run, for the Clips settings. */
+export interface RecorderSetup {
+  ffmpeg: FfmpegState
+  /** null until the encoders were tested (needs FFmpeg) */
+  encoders: EncoderProbe | null
+  /** the small helper that records the game's sound (ratio-audio.exe) is there */
+  audioHelper: boolean
+  /** the storage folder in use */
+  folder: string
+  /** recording only works on Windows 10 2004 or newer */
+  supported: boolean
+}
 
 /** Timers shown on the minimap (all times are game time in seconds). */
 export interface MinimapState {
@@ -714,6 +743,16 @@ export interface RcApi {
   getAnnouncerSound(trigger: Trigger): Promise<{ data: Uint8Array; mime: string } | null>
   /** opens the folder for your own announcer sounds (creates it if needed) */
   openSoundFolder(): Promise<void>
+  /** FFmpeg, encoders and helper of the recorder */
+  recorderSetup(): Promise<RecorderSetup>
+  /** downloads and verifies the FFmpeg build (progress comes as 'ffmpeg' events) */
+  installFfmpeg(): Promise<FfmpegState>
+  /** tests the GPU encoders again (never during a game) */
+  testEncoders(): Promise<EncoderProbe | null>
+  /** opens the folder with your clips (creates it if needed) */
+  openClipFolder(): Promise<void>
+  /** asks for another storage folder; null when cancelled */
+  chooseClipFolder(): Promise<string | null>
   /** your saved games with or against a player; null when you never met */
   getPlayerHistory(puuid: string, riotId?: string): Promise<PlayerHistory | null>
   setOwnedAugments(ids: number[]): Promise<void>
@@ -820,6 +859,10 @@ export interface AdminApi {
   announce(trigger: Trigger): Promise<void>
   /** the Discord message the newest saved game would get, and why it would not be posted automatically */
   discordPreview(): Promise<{ gameId: number | null; payload: unknown; skip: string | null }>
+  /** downloads FFmpeg again and tests the encoders from scratch */
+  recorderReloadFfmpeg(): Promise<RecorderSetup>
+  /** records 20 s of a test picture or of the main screen through the real pipeline; returns the folder and what FFmpeg said */
+  recorderTestCapture(source: 'testsrc' | 'screen'): Promise<{ ok: boolean; dir: string; segments: number; bytes: number; log: string[] }>
   /** locks every achievement again (they are worked out anew from the history), returns the unlocked ones after that */
   resetAchievements(): Promise<number>
   log(lines: number): Promise<string[]>
@@ -899,6 +942,8 @@ export interface RcEvents {
   /** something worth a sound happened in the game (hype announcer) */
   announce: Announcement
   loading: LoadingState | null
+  /** download progress and state of the recorder's FFmpeg */
+  ffmpeg: FfmpegState
   /** map timers for the main window (the minimap overlay gets its own copy with positions) */
   mapTimers: MinimapState | null
   minimap: MinimapState | null

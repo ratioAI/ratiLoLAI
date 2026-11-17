@@ -22,6 +22,7 @@ import { makeTierLookup, summaryAugmentTiers } from '@shared/mayhem'
 import { UNIVERSE } from '@shared/universe'
 import { isDiscordWebhook } from '@shared/discordPayload'
 import { TRIGGERS } from '@shared/announcer'
+import { DEFAULT_RECORDER, ENCODERS, mergeRecorderSettings, type EncoderProbe } from '@shared/recorder'
 import type {
   AchievementState,
   AdminApi,
@@ -525,7 +526,16 @@ export function createMockApi(): RcApi {
       voice: true,
       cooldownS: 6,
       triggers: Object.fromEntries(TRIGGERS.map((trigger) => [trigger, true])) as Settings['announcer']['triggers']
-    }
+    },
+    // the demo shows Clips switched on, with a library of test clips
+    recorder: { ...DEFAULT_RECORDER, enabled: true }
+  }
+  // the web demo pretends to run on a PC with an RTX 40 card
+  const demoEncoders: EncoderProbe = {
+    available: ENCODERS.filter((encoder) => encoder.vendor === 'nvenc').map((encoder) => encoder.id),
+    capture: 'gfxcapture',
+    ffmpegVersion: 'n8.1 (web demo)',
+    testedAt: Date.now()
   }
 
   let crawler: CrawlerStatus = {
@@ -565,7 +575,8 @@ export function createMockApi(): RcApi {
         crawler: { ...settings.crawler, ...patch.crawler },
         client: { ...settings.client, ...patch.client },
         discord: { ...settings.discord, ...patch.discord },
-        announcer: { ...settings.announcer, ...patch.announcer, triggers: { ...settings.announcer.triggers, ...patch.announcer?.triggers } }
+        announcer: { ...settings.announcer, ...patch.announcer, triggers: { ...settings.announcer.triggers, ...patch.announcer?.triggers } },
+        recorder: mergeRecorderSettings(settings.recorder, patch.recorder)
       }
       return settings
     },
@@ -578,6 +589,25 @@ export function createMockApi(): RcApi {
     },
     testDiscordWebhook: async () => ({ ok: true, message: 'Web demo: nothing is sent to Discord.' }),
     postGameToDiscord: async () => ({ ok: true, message: 'Web demo: nothing is sent to Discord.' }),
+    recorderSetup: async () => ({
+      ffmpeg: { status: 'ready', version: '8.1' },
+      encoders: demoEncoders,
+      audioHelper: true,
+      folder: 'C:\\Users\\you\\Videos\\ratioAI',
+      supported: true
+    }),
+    installFfmpeg: async () => {
+      // the demo plays the download once, so the progress bar can be seen
+      for (let step = 0; step <= 10; step++) {
+        emit('ffmpeg', { status: 'downloading', progress: step / 10, version: '8.1' })
+        await new Promise((resolve) => setTimeout(resolve, 120))
+      }
+      emit('ffmpeg', { status: 'ready', version: '8.1' })
+      return { status: 'ready', version: '8.1' }
+    },
+    testEncoders: async () => demoEncoders,
+    openClipFolder: async () => undefined,
+    chooseClipFolder: async () => null,
     getPatches: async (mode) => {
       const stats = await getStats(mode)
       return [{ patch: stats.patch, matches: stats.matches, updatedAt: stats.updatedAt }]
@@ -1073,6 +1103,8 @@ function mockAdmin(emit: <K extends keyof RcEvents>(event: K, payload: RcEvents[
       demoAchievements.seen.clear()
       return 0
     },
+    recorderReloadFfmpeg: desktopOnly,
+    recorderTestCapture: desktopOnly,
     log: async () => ['12:00:00.000 admin: web demo – the log is only kept by the desktop app'],
     minimapSnapshot: snapshot,
     classifyPads: async (pads) => pads.map(() => null),

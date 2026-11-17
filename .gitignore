@@ -153,3 +153,7 @@ out/
 release/
 dist/
 dist-web/
+
+# Clips: the sound helper is built from native/audio (npm run build:audio)
+native/audio/target
+resources/bin/

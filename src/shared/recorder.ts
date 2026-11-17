@@ -1,0 +1,423 @@
+/**
+ * Clips: everything the gameplay recorder decides without touching the system. Which encoder to
+ * use, the quality profiles, the FFmpeg arguments of a recording, which segments a clip needs,
+ * which moments of a game become clips on their own and what gets deleted when the disk fills up.
+ * Pure; the main process (main/recorder) runs FFmpeg and the files.
+ *
+ * Recording only goes through operating system interfaces: Windows Graphics Capture (FFmpeg's
+ * gfxcapture) or Desktop Duplication (ddagrab) for the picture and WASAPI process loopback for the
+ * sound. Nothing is injected into the game and its memory is never read.
+ */
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export const AUTO_CLIP_KINDS = ['penta', 'quadra', 'triple', 'firstBlood', 'ace', 'death', 'gameEnd'] as const
+export type AutoClipKind = (typeof AUTO_CLIP_KINDS)[number]
+
+export const AUTO_CLIP_LABELS: Record<AutoClipKind, string> = {
+  penta: 'Your pentakill',
+  quadra: 'Your quadra kill',
+  triple: 'Your triple kill',
+  firstBlood: 'Your first blood',
+  ace: 'Your team aces',
+  death: 'Your death after a long fight',
+  gameEnd: 'The end of the game'
+}
+
+/** How a clip came to be. */
+export type ClipKind = 'manual' | 'bookmark' | `auto:${AutoClipKind}`
+
+export type RecorderMode = 'replay' | 'session'
+export type RecorderQuality = 'compact' | 'high' | 'original'
+
+export interface RecorderSettings {
+  /** record games at all (off by default) */
+  enabled: boolean
+  /** replay = only the last `replaySeconds` are kept, session = the whole game */
+  mode: RecorderMode
+  replaySeconds: number
+  quality: RecorderQuality
+  fps: 60 | 30
+  /** 'auto' or the id of a hardware encoder ("hevc_nvenc") */
+  encoder: string
+  audio: {
+    /** the game's own sound (never Discord or the rest of the desktop) */
+    game: boolean
+    mic: boolean
+    /** 0 to 1 */
+    micVolume: number
+  }
+  /** Electron accelerators */
+  hotkeys: { clip: string; bookmark: string; screenshot: string }
+  autoClips: Record<AutoClipKind, boolean>
+  storage: {
+    /** '' = Videos/ratioAI */
+    folder: string
+    maxGb: number
+    /** session recordings older than this are deleted unless kept */
+    keepSessionsDays: number
+  }
+  /** a short click from the main window when a clip was saved */
+  clipSound: boolean
+}
+
+export const DEFAULT_RECORDER: RecorderSettings = {
+  enabled: false,
+  mode: 'replay',
+  replaySeconds: 30,
+  quality: 'compact',
+  fps: 60,
+  encoder: 'auto',
+  audio: { game: true, mic: false, micVolume: 0.8 },
+  hotkeys: { clip: 'Alt+F9', bookmark: 'Alt+F10', screenshot: 'Alt+F11' },
+  autoClips: { penta: true, quadra: true, triple: true, firstBlood: true, ace: true, death: false, gameEnd: false },
+  storage: { folder: '', maxGb: 30, keepSessionsDays: 7 },
+  clipSound: false
+}
+
+/** Settings from disk (or a patch from the window) merged over a complete set, with sane bounds. */
+export function mergeRecorderSettings(base: RecorderSettings, patch: DeepPartial<RecorderSettings> | undefined): RecorderSettings {
+  const merged: RecorderSettings = {
+    ...base,
+    ...(patch as Partial<RecorderSettings>),
+    audio: { ...base.audio, ...patch?.audio },
+    hotkeys: { ...base.hotkeys, ...patch?.hotkeys },
+    autoClips: { ...base.autoClips, ...patch?.autoClips },
+    storage: { ...base.storage, ...patch?.storage }
+  }
+  merged.mode = merged.mode === 'session' ? 'session' : 'replay'
+  merged.quality = (['compact', 'high', 'original'] as const).includes(merged.quality) ? merged.quality : 'compact'
+  merged.fps = merged.fps === 30 ? 30 : 60
+  merged.replaySeconds = clamp(Math.round(Number(merged.replaySeconds) || 30), 10, 300)
+  merged.audio.micVolume = clamp(Number(merged.audio.micVolume) || 0, 0, 1)
+  merged.storage.maxGb = clamp(Math.round(Number(merged.storage.maxGb) || 30), 2, 2000)
+  merged.storage.keepSessionsDays = clamp(Math.round(Number(merged.storage.keepSessionsDays) || 7), 1, 365)
+  return merged
+}
+
+export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }
+
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
+/** even and at least 2: encoders want even picture sizes */
+const even = (value: number): number => Math.max(2, Math.round(value / 2) * 2)
+
+/**
+ * Hotkeys that cannot be used: the same key twice, or one the app already uses (the augment
+ * hotkey). Returns one message per problem, empty when everything is fine.
+ */
+export function hotkeyConflicts(hotkeys: RecorderSettings['hotkeys'], taken: Record<string, string>): string[] {
+  const norm = (accelerator: string): string =>
+    accelerator
+      .split('+')
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean)
+      .sort()
+      .join('+')
+  const problems: string[] = []
+  const entries = Object.entries(hotkeys).filter(([, key]) => key.trim())
+  for (const [name, key] of entries) {
+    for (const [other, otherKey] of Object.entries(taken)) {
+      if (otherKey.trim() && norm(key) === norm(otherKey)) problems.push(`${name}: ${key} is already the ${other} hotkey`)
+    }
+  }
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      if (norm(entries[i][1]) === norm(entries[j][1])) problems.push(`${entries[i][0]} and ${entries[j][0]} use the same key (${entries[i][1]})`)
+    }
+  }
+  return problems
+}
+
+// ---------------------------------------------------------------------------
+// Hardware encoders
+// ---------------------------------------------------------------------------
+
+export type VideoCodec = 'av1' | 'hevc' | 'h264'
+export type EncoderVendor = 'nvenc' | 'amf' | 'qsv'
+
+export interface EncoderInfo {
+  /** FFmpeg encoder name */
+  id: string
+  codec: VideoCodec
+  vendor: EncoderVendor
+  /** "NVIDIA AV1" */
+  label: string
+}
+
+const VENDOR_LABEL: Record<EncoderVendor, string> = { nvenc: 'NVIDIA', amf: 'AMD', qsv: 'Intel' }
+const CODEC_LABEL: Record<VideoCodec, string> = { av1: 'AV1', hevc: 'HEVC', h264: 'H.264' }
+
+/**
+ * Every hardware encoder the app can use, best first: AV1 (RTX 40/50, RX 7000+, Arc), then HEVC,
+ * then H.264. There is no software encoder on purpose: x264 during a game costs frames (and would
+ * need a GPL build of FFmpeg).
+ */
+export const ENCODERS: readonly EncoderInfo[] = (['av1', 'hevc', 'h264'] as const).flatMap((codec) =>
+  (['nvenc', 'amf', 'qsv'] as const).map((vendor) => ({
+    id: `${codec}_${vendor}`,
+    codec,
+    vendor,
+    label: `${VENDOR_LABEL[vendor]} ${CODEC_LABEL[codec]}`
+  }))
+)
+
+export const encoderById = (id: string): EncoderInfo | null => ENCODERS.find((encoder) => encoder.id === id) ?? null
+
+/** A tiny encode of a test picture: exits with 0 when this encoder works on this machine. */
+export function encoderProbeArgs(id: string): string[] {
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=1280x720:rate=30',
+    '-frames:v',
+    '10',
+    '-vf',
+    'format=nv12',
+    '-c:v',
+    id,
+    '-f',
+    'null',
+    '-'
+  ]
+}
+
+/**
+ * The encoder to record with: the wanted one when it works here, otherwise the best that does
+ * (`available` are the ids that passed the probe). null = no hardware encoder, so no recording.
+ */
+export function pickEncoder(available: readonly string[], wanted: string = 'auto'): EncoderInfo | null {
+  const usable = ENCODERS.filter((encoder) => available.includes(encoder.id))
+  return (wanted !== 'auto' && usable.find((encoder) => encoder.id === wanted)) || usable[0] || null
+}
+
+/** The encoder for files that must play everywhere (Discord, phones): H.264 first. */
+export function pickCompatEncoder(available: readonly string[]): EncoderInfo | null {
+  const usable = ENCODERS.filter((encoder) => available.includes(encoder.id))
+  return usable.find((encoder) => encoder.codec === 'h264') ?? usable.find((encoder) => encoder.codec === 'hevc') ?? usable[0] ?? null
+}
+
+/** What the encoder test found on this machine. */
+export interface EncoderProbe {
+  /** ids of the encoders that work, in the order of ENCODERS */
+  available: string[]
+  /** how the picture is captured with this FFmpeg: Windows Graphics Capture, Desktop Duplication or not at all */
+  capture: 'gfxcapture' | 'ddagrab' | null
+  ffmpegVersion: string | null
+  testedAt: number
+}
+
+// ---------------------------------------------------------------------------
+// Quality profiles
+// ---------------------------------------------------------------------------
+
+export interface QualityProfile {
+  id: RecorderQuality
+  label: string
+  /** the picture is scaled down to this height when the game is larger (null = never) */
+  maxHeight: number | null
+  /** constant quality value per codec (lower = better) */
+  cq: Record<VideoCodec, number>
+  /** typical bitrate of League at 1080p60 with this quality, in Mbit/s (to estimate file sizes) */
+  mbit: Record<VideoCodec, number>
+}
+
+export const QUALITY_PROFILES: Record<RecorderQuality, QualityProfile> = {
+  compact: { id: 'compact', label: 'Compact', maxHeight: 1080, cq: { av1: 34, hevc: 29, h264: 26 }, mbit: { av1: 6, hevc: 7.5, h264: 11 } },
+  high: { id: 'high', label: 'High', maxHeight: 1440, cq: { av1: 30, hevc: 25, h264: 23 }, mbit: { av1: 8, hevc: 10, h264: 15 } },
+  original: { id: 'original', label: 'Original', maxHeight: null, cq: { av1: 26, hevc: 22, h264: 20 }, mbit: { av1: 12, hevc: 15, h264: 22 } }
+}
+
+export const AUDIO_KBPS = 160
+
+/** A profile worked out for one encoder and one picture size. */
+export interface ResolvedProfile {
+  quality: RecorderQuality
+  encoder: EncoderInfo
+  /** output picture; null = whatever the source has (size unknown) */
+  width: number | null
+  height: number | null
+  fps: number
+  /** encoder options, without -c:v */
+  videoArgs: string[]
+  audioKbps: number
+  /** estimate for the settings page */
+  mbPerMinute: number
+}
+
+/** Size of the recorded picture: the game's size, scaled down to the profile's height when larger. */
+export function outputSize(
+  quality: RecorderQuality,
+  source: { width: number; height: number } | null
+): { width: number; height: number } | null {
+  if (!source || !(source.width > 0) || !(source.height > 0)) return null
+  const maxHeight = QUALITY_PROFILES[quality].maxHeight
+  if (maxHeight === null || source.height <= maxHeight) return { width: even(source.width), height: even(source.height) }
+  return { width: even((source.width * maxHeight) / source.height), height: even(maxHeight) }
+}
+
+/**
+ * Megabytes per minute a recording takes, roughly. Bitrate grows slower than the pixel count
+ * (exponent 0.75) and 30 fps needs about two thirds of 60 fps.
+ */
+export function estimateMbPerMinute(quality: RecorderQuality, codec: VideoCodec, fps: number, size: { width: number; height: number } | null): number {
+  const profile = QUALITY_PROFILES[quality]
+  const assumed = size ?? outputSize(quality, quality === 'high' ? { width: 2560, height: 1440 } : { width: 1920, height: 1080 })!
+  const pixels = (assumed.width * assumed.height) / (1920 * 1080)
+  const mbit = profile.mbit[codec] * Math.pow(pixels, 0.75) * (fps <= 30 ? 0.65 : 1) + AUDIO_KBPS / 1000
+  return Math.round((mbit * 60) / 8)
+}
+
+/**
+ * Encoder options for a constant-quality recording with a keyframe every second, so clips can be
+ * cut to the second without encoding again. The presets are the vendors' middle ones: the encoder
+ * shares the GPU with the game.
+ */
+export function encoderArgs(encoder: EncoderInfo, quality: RecorderQuality, fps: number): string[] {
+  const cq = String(QUALITY_PROFILES[quality].cq[encoder.codec])
+  const gop = ['-g', String(fps)]
+  switch (encoder.vendor) {
+    case 'nvenc':
+      return ['-preset', 'p4', '-tune', 'hq', '-rc', 'vbr', '-cq', cq, '-b:v', '0', ...gop]
+    case 'amf':
+      return ['-usage', 'transcoding', '-quality', 'balanced', '-rc', 'qvbr', '-qvbr_quality_level', cq, ...gop]
+    case 'qsv':
+      return ['-preset', 'medium', '-global_quality', cq, ...gop]
+  }
+}
+
+export function resolveProfile(
+  quality: RecorderQuality,
+  fps: number,
+  encoder: EncoderInfo,
+  source: { width: number; height: number } | null
+): ResolvedProfile {
+  const size = outputSize(quality, source)
+  return {
+    quality,
+    encoder,
+    width: size?.width ?? null,
+    height: size?.height ?? null,
+    fps,
+    videoArgs: encoderArgs(encoder, quality, fps),
+    audioKbps: AUDIO_KBPS,
+    mbPerMinute: estimateMbPerMinute(quality, encoder.codec, fps, size)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Recording
+// ---------------------------------------------------------------------------
+
+/** Where the picture comes from. Only the game window, never the whole desktop. */
+export type CaptureSource =
+  | {
+      kind: 'gfxcapture'
+      /** window handle of the game; without it the window is found by its executable */
+      hwnd?: number | null
+      exe?: string
+      /** admin tool only: a whole screen instead of the game window */
+      monitorIdx?: number
+    }
+  | {
+      kind: 'ddagrab'
+      /** index of the screen the game is on */
+      outputIdx: number
+      /** the game window on that screen, in pixels (null = the whole screen, borderless) */
+      crop: { x: number; y: number; width: number; height: number } | null
+    }
+  /** a moving test picture (admin tool: checks the pipeline without a game) */
+  | { kind: 'testsrc'; width: number; height: number }
+
+export const GAME_EXE = 'League of Legends.exe'
+export const GAME_WINDOW_TITLE = 'League of Legends (TM) Client'
+
+/** Length of one recording segment in seconds. Clips are put together from whole segments. */
+export const SEGMENT_SECONDS = 2
+export const SEGMENT_LIST = 'segments.csv'
+export const SEGMENT_PATTERN = 'seg_%06d.mp4'
+
+/** Escapes a value inside an FFmpeg filter description. */
+const filterValue = (value: string): string => `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+
+/** The capture part of the filter graph: frames stay on the GPU (D3D11) all the way to the encoder. */
+export function captureFilter(source: CaptureSource, profile: ResolvedProfile): string {
+  const tail = profile.encoder.vendor === 'qsv' ? ',hwmap=derive_device=qsv,format=qsv' : ''
+  if (source.kind === 'gfxcapture') {
+    const target =
+      source.monitorIdx !== undefined
+        ? `monitor_idx=${source.monitorIdx}`
+        : source.hwnd
+          ? `hwnd=${source.hwnd}`
+          : `window_exe=${filterValue(`^${(source.exe ?? GAME_EXE).replace(/\./g, '\\.')}$`)}`
+    // negative sizes round the source size down to an even number
+    const size =
+      profile.width && profile.height
+        ? `width=${profile.width}:height=${profile.height}:resize_mode=scale_aspect:scale_mode=bilinear`
+        : 'width=-2:height=-2'
+    return `gfxcapture=${target}:capture_cursor=1:max_framerate=${profile.fps}:${size},fps=${profile.fps}${tail}`
+  }
+  if (source.kind === 'ddagrab') {
+    const crop = source.crop
+      ? `:video_size=${even(source.crop.width)}x${even(source.crop.height)}:offset_x=${Math.max(0, Math.round(source.crop.x))}:offset_y=${Math.max(0, Math.round(source.crop.y))}`
+      : ''
+    return `ddagrab=output_idx=${source.outputIdx}:framerate=${profile.fps}:draw_mouse=1${crop}${tail}`
+  }
+  return `testsrc2=size=${even(source.width)}x${even(source.height)}:rate=${profile.fps},format=nv12`
+}
+
+/**
+ * FFmpeg arguments for a recording: the game window (GPU frames) plus the sound from the helper's
+ * named pipe, encoded on the GPU and written as 2-second segments of fragmented MP4 into `outDir`.
+ * FFmpeg lists every finished segment in segments.csv. Paths use forward slashes.
+ */
+export function ffmpegRecordArgs(
+  profile: ResolvedProfile,
+  source: CaptureSource,
+  audioPipe: string | null,
+  outDir: string,
+  /** stop on its own after this many seconds (admin test) */
+  limitS?: number
+): string[] {
+  const dir = outDir.replace(/\\/g, '/').replace(/\/$/, '')
+  const args = ['-hide_banner', '-loglevel', 'warning', '-stats_period', '2', '-y']
+  if (profile.encoder.vendor === 'qsv' && source.kind !== 'testsrc')
+    args.push('-init_hw_device', 'd3d11va=dx', '-init_hw_device', 'qsv=qs@dx', '-filter_hw_device', 'dx')
+  if (audioPipe) {
+    // 48 kHz stereo PCM; the helper pads silence, so the sound never falls behind the picture
+    args.push('-f', 's16le', '-ar', '48000', '-ac', '2', '-thread_queue_size', '1024', '-i', audioPipe)
+  } else if (source.kind === 'testsrc') {
+    args.push('-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000')
+  }
+  const hasAudio = !!audioPipe || source.kind === 'testsrc'
+  args.push('-filter_complex', `${captureFilter(source, profile)}[v]`, '-map', '[v]')
+  if (hasAudio) args.push('-map', '0:a')
+  args.push('-c:v', profile.encoder.id, ...profile.videoArgs)
+  if (hasAudio) args.push('-c:a', 'aac', '-b:a', `${profile.audioKbps}k`, '-ac', '2')
+  if (limitS) args.push('-t', String(limitS))
+  args.push(
+    '-f',
+    'segment',
+    '-segment_time',
+    String(SEGMENT_SECONDS),
+    '-segment_format',
+    'mp4',
+    '-segment_format_options',
+    'movflags=+frag_keyframe+empty_moov+default_base_moof',
+    '-segment_list',
+    `${dir}/${SEGMENT_LIST}`,
+    '-segment_list_type',
+    'csv',
+    '-segment_list_flags',
+    '+live',
+    '-reset_timestamps',
+    '0',
+    `${dir}/${SEGMENT_PATTERN}`
+  )
+  return args
+}

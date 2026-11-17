@@ -18,6 +18,7 @@
     "dist:win": "npm run build && electron-builder --win",
     "build:web": "vite build -c vite.web.config.ts",
     "screenshots": "electron scripts/screenshots.cjs",
+    "build:audio": "node scripts/build-audio.cjs",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {

@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Camera,
   Check,
+  Clapperboard,
   Copy,
   Crosshair,
   Diamond,
@@ -55,7 +56,7 @@ import { demoChampSelect, demoSummary } from '@/lib/mockApi'
 import { PageHeader } from '@/components/Layout'
 import { DEMO_LOBBY } from './OverlayLoading'
 import { DiscoveryCard } from '@/components/AchievementToast'
-import type { AchievementState } from '@shared/types'
+import type { AchievementState, RecorderSetup } from '@shared/types'
 import { clearBadShaders, currentBadShaders, testFlightShaders } from '@/components/flightGl'
 import { NIGHT_SKY_FRAG } from '@/components/CosmosBackground'
 import { VERT } from '@/components/spaceGlsl'
@@ -772,6 +773,80 @@ function DiscordCard() {
 }
 
 // ---------------------------------------------------------------------------
+// Clips: the recorder without a game
+// ---------------------------------------------------------------------------
+
+function RecorderCard() {
+  const admin = api.admin
+  const action = useAction()
+  const [setup, setSetup] = useState<RecorderSetup | null>(null)
+  const [lines, setLines] = useState<string[]>([])
+  useEffect(() => {
+    void api.recorderSetup().then(setSetup)
+    return api.on('ffmpeg', (ffmpeg) => setSetup((current) => (current ? { ...current, ffmpeg } : current)))
+  }, [])
+  const capture = (source: 'testsrc' | 'screen') =>
+    action.run(`Recording 20 s (${source === 'testsrc' ? 'test picture' : 'main screen'})`, async () => {
+      const result = await admin!.recorderTestCapture(source)
+      setLines(result.log)
+      if (!result.ok) throw new Error(`FFmpeg failed – see the output below (${result.segments} segments)`)
+      return `${result.segments} segments, ${(result.bytes / 1e6).toFixed(1)} MB (${Math.round((result.bytes / 1e6) * 3)} MB/min) in ${result.dir}`
+    })
+  return (
+    <Card icon={<Clapperboard size={18} />} title="Clips: recorder" action={action}>
+      <div className="admin-events text-[11px]">
+        <div>
+          FFmpeg: {setup?.ffmpeg.status ?? '…'} {setup?.ffmpeg.version ?? ''}{' '}
+          {setup?.ffmpeg.status === 'downloading' ? `${Math.round((setup.ffmpeg.progress ?? 0) * 100)} %` : ''} {setup?.ffmpeg.message ?? ''}
+        </div>
+        <div>Encoders: {setup?.encoders ? setup.encoders.available.join(', ') || 'none' : 'not tested'}</div>
+        <div>
+          Capture: {setup?.encoders?.capture ?? '?'} · sound helper: {setup?.audioHelper ? 'yes' : 'no'} · Windows ok: {setup?.supported ? 'yes' : 'no'}
+        </div>
+        <div className="truncate">Folder: {setup?.folder}</div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Btn
+          icon={<Gauge size={15} />}
+          onClick={() =>
+            action.run('Testing encoders', async () => {
+              const probe = await api.testEncoders()
+              setSetup(await api.recorderSetup())
+              return probe ? `Working: ${probe.available.join(', ') || 'none'} · capture ${probe.capture ?? 'none'}` : 'FFmpeg is not installed'
+            })
+          }
+        >
+          Encoder test
+        </Btn>
+        <Btn
+          icon={<RotateCcw size={15} />}
+          onClick={() =>
+            action.run('Downloading FFmpeg again', async () => {
+              const next = await admin!.recorderReloadFfmpeg()
+              setSetup(next)
+              if (next.ffmpeg.status !== 'ready') throw new Error(next.ffmpeg.message ?? next.ffmpeg.status)
+              return `FFmpeg ${next.ffmpeg.version} ready`
+            })
+          }
+        >
+          Reload FFmpeg
+        </Btn>
+        <Btn icon={<Play size={15} />} onClick={() => capture('testsrc')}>
+          Record without a game
+        </Btn>
+        <Btn icon={<Camera size={15} />} onClick={() => capture('screen')}>
+          Record the main screen
+        </Btn>
+        <Btn icon={<FolderOpen size={15} />} onClick={() => void api.openClipFolder()}>
+          Open folder
+        </Btn>
+      </div>
+      {lines.length > 0 && <pre className="admin-events max-h-56 overflow-auto text-[11px] whitespace-pre-wrap">{lines.join('\n')}</pre>}
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Simulated client and game
 // ---------------------------------------------------------------------------
 
@@ -1476,6 +1551,7 @@ export function Admin() {
         <AchievementsCard />
         <DiscordCard />
         <AnnouncerCard />
+        <RecorderCard />
         <SimCard />
         <CalibrationCard />
         <LogCard />
