@@ -42,7 +42,7 @@ CREATE INDEX IF NOT EXISTS game_players_puuid ON game_players (puuid);
 `
 
 /** Version of the database layout, kept in `PRAGMA user_version`. Databases from 1.0 and 1.1 are version 1 (or 0). */
-export const DB_VERSION = 2
+export const DB_VERSION = 3
 
 /** Columns one migration adds to an existing table (skipped when they are already there). */
 type AddColumns = { table: string; columns: [name: string, definition: string][] }
@@ -79,6 +79,16 @@ const MIGRATIONS: Record<number, { add?: AddColumns[]; sql?: string; after?: (db
         posted_at INTEGER NOT NULL
       );`,
     after: backfillPlayerStats
+  },
+  // 1.2: the flights you watched (cosmos achievements)
+  3: {
+    sql: `
+      CREATE TABLE IF NOT EXISTS flights (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        at      INTEGER NOT NULL,
+        variant TEXT    NOT NULL,
+        galaxy  INTEGER NOT NULL
+      );`
   }
 }
 

@@ -247,6 +247,49 @@ void main(){
   gl_FragColor = vec4(u_colour * (0.6 + head) + vec3(0.9, 0.95, 1.0) * pow(p, 40.0) * 0.8, 1.0);
 }`
 
+// Constellations of the achievements (star map): soft points for the stars, plain lines between them.
+// From outside the sky sphere (zoomed far out) the ones on the near side fade, so they don't cover the universe.
+const CONSTELLATION_VERT = `
+attribute vec3 a_pos;
+attribute vec3 a_col;
+attribute float a_size;
+uniform vec3 u_eye;
+uniform float u_dpr;
+uniform float u_time;
+uniform float u_sky;
+varying vec3 v_col;
+${CAMERA}
+void main(){
+  gl_Position = project(a_pos - u_eye);
+  float twinkle = 1.0 + 0.22 * sin(u_time * (1.7 + fract(a_pos.x * 0.173) * 2.0) + a_pos.y * 0.71);
+  gl_PointSize = a_size * u_dpr * twinkle;
+  float outside = smoothstep(0.9, 1.15, length(u_eye) / u_sky);
+  float facing = dot(normalize(a_pos), normalize(u_eye + vec3(1e-4)));
+  v_col = a_col * twinkle * mix(1.0, 1.0 - 0.8 * smoothstep(-0.1, 0.5, facing), outside);
+}`
+const CONSTELLATION_FRAG = `
+precision highp float;
+varying vec3 v_col;
+uniform float u_point;
+${TONE}
+void main(){
+  float a = 1.0;
+  if (u_point > 0.5) {
+    vec2 d = gl_PointCoord - 0.5;
+    float r2 = dot(d, d);
+    a = max(0.0, exp(-r2 * 16.0) + 0.9 * exp(-r2 * 110.0) - 0.02);
+  }
+  gl_FragColor = vec4(tone(v_col * a), 1.0);
+}`
+
+/** Stars and lines of the constellations, uploaded once per change: x, y, z, r, g, b, size per vertex. */
+export interface ConstellationMesh {
+  points: WebGLBuffer
+  pointCount: number
+  lines: WebGLBuffer
+  lineCount: number
+}
+
 // Faint background: far galaxies too small to be more than a point, and a whisper of nebula. Its
 // stars sit on a sphere around the camera, so they turn with the view but never come closer.
 const BACKDROP_VERT = `attribute vec2 p; varying vec2 v_p; void main(){ v_p = p; gl_Position = vec4(p, 0.0, 1.0); }`
@@ -659,6 +702,52 @@ export class UniverseGl {
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW)
     return buffer
+  }
+
+  private constellationProgram: Program | null | undefined
+
+  /** Uploads the constellations' stars (points) and lines (pairs of vertices), 7 floats each. */
+  createConstellations(points: Float32Array, lines: Float32Array, old?: ConstellationMesh | null): ConstellationMesh {
+    const gl = this.gl
+    if (old) {
+      gl.deleteBuffer(old.points)
+      gl.deleteBuffer(old.lines)
+    }
+    return {
+      points: this.createBuffer(points),
+      pointCount: points.length / 7,
+      lines: this.createBuffer(lines),
+      lineCount: lines.length / 7
+    }
+  }
+
+  /** The constellations of the achievements (built the first time it is needed). */
+  drawConstellations(mesh: ConstellationMesh, skyRadius: number, time = 0, pointScale = 1): void {
+    if (this.constellationProgram === undefined) this.constellationProgram = createProgram(this.gl, CONSTELLATION_VERT, CONSTELLATION_FRAG)
+    const program = this.constellationProgram
+    if (!program) return
+    const gl = this.gl
+    const layout: [string, number][] = [
+      ['a_pos', 3],
+      ['a_col', 3],
+      ['a_size', 1]
+    ]
+    const uniforms = (point: number) => {
+      gl.uniform1f(program.uniform('u_point'), point)
+      gl.uniform1f(program.uniform('u_time'), time)
+      gl.uniform1f(program.uniform('u_dpr'), pointScale)
+      gl.uniform1f(program.uniform('u_sky'), skyRadius)
+    }
+    if (mesh.lineCount) {
+      this.use(program, mesh.lines, 7, layout)
+      uniforms(0)
+      gl.drawArrays(gl.LINES, 0, mesh.lineCount)
+    }
+    if (mesh.pointCount) {
+      this.use(program, mesh.points, 7, layout)
+      uniforms(1)
+      gl.drawArrays(gl.POINTS, 0, mesh.pointCount)
+    }
   }
 
   /** A line through the given positions, in order, with light pulses flowing from the first to the last. */

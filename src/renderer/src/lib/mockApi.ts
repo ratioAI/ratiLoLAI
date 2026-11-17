@@ -17,7 +17,11 @@ import {
 import { buildSummary, teamBlame, type GameSummary } from '@shared/summary'
 import { leaderboardFromSummaries } from '@shared/leaderboard'
 import { encounterStatsFromSummaries, toEncounter } from '@shared/encounters'
+import { ACHIEVEMENTS, evaluateAchievements, goalOf } from '@shared/achievements'
+import { makeTierLookup, summaryAugmentTiers } from '@shared/mayhem'
+import { UNIVERSE } from '@shared/universe'
 import type {
+  AchievementState,
   AdminApi,
   AdminMinimapSnapshot,
   ChampionRoleStats,
@@ -627,6 +631,39 @@ export function createMockApi(): RcApi {
       }),
     getGame: async (gameId) => demoHistory().find((summary) => summary.gameId === gameId) ?? demoHistory()[0],
     getLeaderboard: async () => leaderboardFromSummaries(demoHistory()),
+    getAchievements: async (): Promise<AchievementState[]> => {
+      const [mayhem, statics] = await Promise.all([getMayhem(), getStatic()]).catch(() => [null, null] as const)
+      const tierOf = mayhem && statics ? makeTierLookup(mayhem, statics) : null
+      const results = evaluateAchievements(
+        demoHistory(),
+        // the demo has been around: a few flights and 30 galaxies
+        { flights: { ...demoAchievements.flights }, galaxiesVisited: UNIVERSE.slice(0, 30).map((galaxy) => galaxy.id) },
+        { augTiers: tierOf ? (summary) => summaryAugmentTiers(summary, tierOf) : undefined }
+      )
+      return ACHIEVEMENTS.map((def, i) => {
+        const result = results[i]
+        const manual = demoAchievements.manual.get(def.id)
+        const unlocked = result.unlocked || manual !== undefined
+        return {
+          id: def.id,
+          name: def.name,
+          description: def.description,
+          category: def.category,
+          rank: def.rank,
+          secret: !!def.secret,
+          unlocked,
+          unlockedAt: manual ?? result.at ?? (unlocked ? Date.now() - 3 * 86_400_000 : null),
+          gameId: manual !== undefined ? demoHistory()[0].gameId : (result.gameId ?? null),
+          seen: !unlocked || demoAchievements.seen.has(def.id) || manual === undefined,
+          progress: unlocked ? goalOf(def) : result.progress,
+          goal: goalOf(def)
+        }
+      })
+    },
+    markAchievementsSeen: async (ids) => ids.forEach((id) => demoAchievements.seen.add(id)),
+    recordFlight: async (variant) => {
+      demoAchievements.flights[variant] = (demoAchievements.flights[variant] ?? 0) + 1
+    },
     getPlayerHistory: async (puuid, riotId) => {
       const stats = encounterStatsFromSummaries(demoHistory(), 'p0', [puuid]).get(puuid)
       if (!stats) return null
@@ -812,6 +849,14 @@ export function createMockApi(): RcApi {
   return api
 }
 
+/** Achievement state of the web demo (only lives as long as the page). */
+const demoAchievements = {
+  flights: { wormhole: 2, slingshot: 1 } as Partial<Record<'wormhole' | 'slingshot', number>>,
+  seen: new Set<string>(),
+  /** unlocked by hand in the admin tool, with the time */
+  manual: new Map<string, number>()
+}
+
 let history: GameSummary[] | null = null
 /** Made-up game history for the demo: the thrown game below plus older games with shuffled stats. */
 function demoHistory(): GameSummary[] {
@@ -985,6 +1030,16 @@ function mockAdmin(emit: <K extends keyof RcEvents>(event: K, payload: RcEvents[
     hideOverlays: async () => undefined,
     saveTestGame: desktopOnly,
     deleteTestGames: async () => 0,
+    unlockAchievement: async (id) => {
+      demoAchievements.manual.set(id, Date.now())
+      demoAchievements.seen.delete(id)
+      emit('achievementsUnlocked', [id])
+    },
+    resetAchievements: async () => {
+      demoAchievements.manual.clear()
+      demoAchievements.seen.clear()
+      return 0
+    },
     log: async () => ['12:00:00.000 admin: web demo – the log is only kept by the desktop app'],
     minimapSnapshot: snapshot,
     classifyPads: async (pads) => pads.map(() => null),

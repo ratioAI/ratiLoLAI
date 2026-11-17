@@ -24,6 +24,7 @@ const pages = {
   GameDetail: () => import('./pages/Games').then((mod) => ({ default: mod.GameDetail })),
   Leaderboard: () => import('./pages/Leaderboard').then((mod) => ({ default: mod.Leaderboard })),
   StarMap: () => import('./pages/StarMap').then((mod) => ({ default: mod.StarMap })),
+  Achievements: () => import('./pages/Achievements').then((mod) => ({ default: mod.Achievements })),
   Profile: () => import('./pages/Profile').then((mod) => ({ default: mod.Profile })),
   Data: () => import('./pages/Data').then((mod) => ({ default: mod.Data })),
   Settings: () => import('./pages/Settings').then((mod) => ({ default: mod.Settings })),
@@ -38,6 +39,7 @@ const Games = lazy(pages.Games)
 const GameDetail = lazy(pages.GameDetail)
 const Leaderboard = lazy(pages.Leaderboard)
 const StarMap = lazy(pages.StarMap)
+const Achievements = lazy(pages.Achievements)
 const Profile = lazy(pages.Profile)
 const Data = lazy(pages.Data)
 const Settings = lazy(pages.Settings)
@@ -164,6 +166,13 @@ const smoothstep = (edge0: number, edge1: number, x: number): number => {
 function JourneyOverlay({ journey, onArrive, onClose }: { journey: Journey; onArrive: () => void; onClose: () => void }) {
   const { live } = useApp()
   const [variant] = useState(() => journey.variant ?? nextVariant(journey.to))
+  // the cosmos achievements count the flights you saw (once per flight, StrictMode runs effects twice)
+  const recorded = useRef(false)
+  useEffect(() => {
+    if (recorded.current) return
+    recorded.current = true
+    void api.recordFlight(variant, journey.to).catch(() => undefined)
+  }, [variant, journey.to])
   const [leaving, setLeaving] = useState(false)
   // false while the shaders are being compiled (the film starts with its first frame)
   const [ready, setReady] = useState(false)
@@ -326,6 +335,7 @@ function MainShell() {
           <Route path="/games" element={<Games />} />
           <Route path="/games/leaderboard" element={<Leaderboard />} />
           <Route path="/games/map" element={<StarMap />} />
+          <Route path="/games/achievements" element={<Achievements />} />
           <Route path="/games/:id" element={<GameDetail />} />
           <Route path="/mayhem" element={<Mayhem />} />
           <Route path="/profile" element={<Profile />} />

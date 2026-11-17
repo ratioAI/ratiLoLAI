@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { LocateFixed } from 'lucide-react'
-import type { GameListEntry } from '@shared/types'
+import { Link, useNavigate } from 'react-router-dom'
+import { LocateFixed, Sparkles } from 'lucide-react'
+import type { AchievementState, GameListEntry } from '@shared/types'
+import { SKY_RADIUS, constellationOf, rankColor } from '@shared/achievements'
 import {
   GALAXY_COUNT,
   TYPE_NAMES,
@@ -20,7 +21,8 @@ import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { ChampIcon } from '@/components/icons'
 import { PageHeader } from '@/components/Layout'
-import { UniverseGl, projectPoint, type Camera, type StarCloud } from '@/components/universeGl'
+import { UniverseGl, projectPoint, type Camera, type ConstellationMesh, type StarCloud } from '@/components/universeGl'
+import { RankChip } from './Achievements'
 import { freshCanvas } from '@/lib/glCanvas'
 
 interface Visit {
@@ -35,6 +37,33 @@ const LABEL_DEPTH = 120
 const FOV = 0.85
 /** frame rate of the idle animation (turning galaxies, twinkling, the flow along the route) */
 const IDLE_FPS = 30
+
+const CONSTELLATIONS_KEY = 'rc.constellations'
+
+/**
+ * Vertex data of the constellations (7 floats per vertex: position, colour, point size). Unlocked
+ * ones shine in their rank's colour with their lines, locked ones are a few faint stars without
+ * lines, locked secret ones aren't there at all.
+ */
+function constellationData(achievements: AchievementState[]): { points: Float32Array; lines: Float32Array } {
+  const points: number[] = []
+  const lines: number[] = []
+  for (const achievement of achievements) {
+    if (achievement.secret && !achievement.unlocked) continue
+    const { stars, mags, lines: edges } = constellationOf(achievement.id)
+    const colourOf = (i: number): Vec3 => rankColor(achievement.rank, stars.length > 1 ? i / (stars.length - 1) : 0)
+    stars.forEach((star, i) => {
+      if (achievement.unlocked) points.push(...star, ...colourOf(i).map((c) => c * (0.75 + 0.5 * mags[i])), 5 + 6 * mags[i])
+      else points.push(...star, 0.5 * mags[i], 0.52 * mags[i], 0.68 * mags[i], 3 + 2 * mags[i])
+    })
+    if (achievement.unlocked)
+      for (const [a, b] of edges) {
+        lines.push(...stars[a], ...colourOf(a).map((c) => c * 0.42), 1)
+        lines.push(...stars[b], ...colourOf(b).map((c) => c * 0.42), 1)
+      }
+  }
+  return { points: new Float32Array(points), lines: new Float32Array(lines) }
+}
 
 /** The galaxy the app is in right now (where the last flight went). */
 function currentGalaxy(): Galaxy | null {
@@ -54,7 +83,18 @@ function currentGalaxy(): Galaxy | null {
  */
 export function StarMap() {
   const { live, settings } = useApp()
+  const navigate = useNavigate()
   const [games, setGames] = useState<GameListEntry[]>([])
+  const [achievements, setAchievements] = useState<AchievementState[]>([])
+  const [showSky, setShowSky] = useState(() => {
+    try {
+      return localStorage.getItem(CONSTELLATIONS_KEY) !== 'off'
+    } catch {
+      return true
+    }
+  })
+  /** the constellation under the mouse, with where to put its label */
+  const [hovered, setHovered] = useState<{ id: string; x: number; y: number } | null>(null)
   const [selected, setSelected] = useState<Galaxy | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const markerRefs = useRef(new Map<number, HTMLDivElement>())
@@ -70,6 +110,28 @@ export function StarMap() {
     load()
     return api.on('gameSummary', load)
   }, [])
+  useEffect(() => {
+    const load = () => void api.getAchievements().then(setAchievements)
+    load()
+    return api.on('achievementsUnlocked', load)
+  }, [])
+  const sky = useMemo(() => ({ ...constellationData(showSky ? achievements : []), version: Date.now() }), [achievements, showSky])
+  // what can be hovered: the stars of every constellation that is drawn
+  const skyTargets = useMemo(
+    () => (showSky ? achievements.filter((achievement) => achievement.unlocked || !achievement.secret) : []),
+    [achievements, showSky]
+  )
+  const toggleSky = () => {
+    setShowSky((on) => {
+      try {
+        localStorage.setItem(CONSTELLATIONS_KEY, on ? 'off' : 'on')
+      } catch {
+        /* private mode */
+      }
+      return !on
+    })
+    setHovered(null)
+  }
 
   const visits = useMemo(() => {
     const byGalaxy = new Map<number, Visit>()
@@ -94,11 +156,11 @@ export function StarMap() {
     [games]
   )
 
-  const latest = useRef({ marked, route, selected, inGame, animated })
-  latest.current = { marked, route, selected, inGame, animated }
+  const latest = useRef({ marked, route, selected, inGame, animated, sky, skyTargets, hovered, navigate })
+  latest.current = { marked, route, selected, inGame, animated, sky, skyTargets, hovered, navigate }
   useEffect(() => {
     view.current.dirty = true
-  }, [marked, route, selected, animated])
+  }, [marked, route, selected, animated, sky])
 
   const focus = (galaxy: Galaxy | null) => {
     setSelected(galaxy)
@@ -115,6 +177,8 @@ export function StarMap() {
     const universe = gl && UniverseGl.create(gl)
     if (!gl || !universe) return () => canvas.remove()
     let cloud: StarCloud | null = null
+    let skyMesh: ConstellationMesh | null = null
+    let skyVersion = -1
     const state = view.current
 
     const camera = (): Camera => {
@@ -172,6 +236,13 @@ export function StarMap() {
       universe.drawBackdrop(time)
       universe.drawGalaxies(time, 1.25, moving ? 1 : 0)
       universe.drawRoute(path, [0.34, 0.22, 0.5], time)
+      // the achievements' constellations on the sky sphere around everything
+      const skyData = latest.current.sky
+      if (skyData.version !== skyVersion) {
+        skyMesh = universe.createConstellations(skyData.points, skyData.lines, skyMesh)
+        skyVersion = skyData.version
+      }
+      if (skyMesh) universe.drawConstellations(skyMesh, SKY_RADIUS, time, canvas.height / 720)
       // close to the selected galaxy its single stars come out, turning with their galaxy
       if (picked) {
         if (cloud?.galaxy.id !== picked.id) cloud = universe.createStars(picked, 24_000)
@@ -199,8 +270,31 @@ export function StarMap() {
       drag = { x: event.clientX, y: event.clientY, moved: 0 }
       canvas.setPointerCapture(event.pointerId)
     }
+    /** The constellation with a star closest to the pointer (within a few pixels), and where that star is. */
+    const constellationAt = (clientX: number, clientY: number): { id: string; x: number; y: number } | null => {
+      const rect = canvas.getBoundingClientRect()
+      const cam = camera()
+      const aspect = rect.width / rect.height
+      let best: { id: string; x: number; y: number; pixels: number } | null = null
+      for (const achievement of latest.current.skyTargets) {
+        for (const star of constellationOf(achievement.id).stars) {
+          const point = projectPoint(cam, aspect, star)
+          if (!point) continue
+          const x = point.x * rect.width
+          const y = point.y * rect.height
+          const pixels = Math.hypot(x - (clientX - rect.left), y - (clientY - rect.top))
+          if (pixels < 14 && (!best || pixels < best.pixels)) best = { id: achievement.id, x, y, pixels }
+        }
+      }
+      return best && { id: best.id, x: best.x, y: best.y }
+    }
     const move = (event: PointerEvent) => {
-      if (!drag) return
+      if (!drag) {
+        const over = constellationAt(event.clientX, event.clientY)
+        const current = latest.current.hovered
+        if (over?.id !== current?.id || (over && current && Math.hypot(over.x - current.x, over.y - current.y) > 3)) setHovered(over)
+        return
+      }
       const dx = event.clientX - drag.x
       const dy = event.clientY - drag.y
       drag = { x: event.clientX, y: event.clientY, moved: drag.moved + Math.abs(dx) + Math.abs(dy) }
@@ -213,6 +307,13 @@ export function StarMap() {
       const clicked = drag && drag.moved < 5
       drag = null
       if (!clicked) return
+      // a lit constellation opens the game that unlocked it
+      const over = constellationAt(event.clientX, event.clientY)
+      const achievement = over && latest.current.skyTargets.find((candidate) => candidate.id === over.id)
+      if (achievement?.unlocked && achievement.gameId !== null) {
+        latest.current.navigate(`/games/${achievement.gameId}`)
+        return
+      }
       const rect = canvas.getBoundingClientRect()
       const cam = camera()
       const aspect = rect.width / rect.height
@@ -239,6 +340,8 @@ export function StarMap() {
     canvas.addEventListener('pointermove', move)
     canvas.addEventListener('pointerup', up)
     canvas.addEventListener('wheel', wheel, { passive: false })
+    const leave = () => setHovered(null)
+    canvas.addEventListener('pointerleave', leave)
     window.addEventListener('resize', resize)
     return () => {
       cancelAnimationFrame(rafId)
@@ -246,6 +349,7 @@ export function StarMap() {
       canvas.removeEventListener('pointermove', move)
       canvas.removeEventListener('pointerup', up)
       canvas.removeEventListener('wheel', wheel)
+      canvas.removeEventListener('pointerleave', leave)
       window.removeEventListener('resize', resize)
       gl.getExtension('WEBGL_lose_context')?.loseContext()
       canvas.remove()
@@ -261,6 +365,14 @@ export function StarMap() {
         <span className="text-sm text-muted tabular-nums">
           {visits.length} / {GALAXY_COUNT} galaxies visited
         </span>
+        <button
+          className={`btn btn-ghost ${showSky ? 'text-accent' : ''}`}
+          onClick={toggleSky}
+          aria-pressed={showSky}
+          title="Your achievements as constellations in the sky"
+        >
+          <Sparkles size={15} /> Constellations
+        </button>
         <button className="btn btn-ghost" onClick={() => focus(null)}>
           Overview
         </button>
@@ -277,6 +389,7 @@ export function StarMap() {
         <div className="relative min-w-0 flex-1 overflow-hidden rounded-2xl border border-line bg-black">
           {/* the canvas is created by the effect (see freshCanvas) */}
           <div ref={hostRef} className="h-full w-full" />
+          {hovered && <ConstellationLabel achievement={achievements.find((achievement) => achievement.id === hovered.id)} at={hovered} />}
           {/* markers follow their galaxy; the frame loop moves them */}
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
             {marked.map((galaxy) => {
@@ -388,6 +501,35 @@ export function StarMap() {
           )}
         </aside>
       </div>
+    </div>
+  )
+}
+
+/** Name, description and date (or progress) of the constellation under the mouse. */
+function ConstellationLabel({ achievement, at }: { achievement?: AchievementState; at: { x: number; y: number } }) {
+  if (!achievement) return null
+  return (
+    <div
+      className="pointer-events-none absolute z-10 w-64 rounded-xl border border-white/15 bg-[#0d0820]/90 p-3 text-xs shadow-[0_14px_40px_-10px_rgb(0_0_0/0.9)] backdrop-blur"
+      style={{ left: Math.max(8, at.x + 16), top: Math.max(8, at.y - 12) }}
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <span className="font-display text-sm font-extrabold">{achievement.name}</span>
+        <RankChip rank={achievement.rank} />
+      </div>
+      <p className="leading-snug text-muted">{achievement.description}</p>
+      <p className="mt-1.5 font-semibold">
+        {achievement.unlocked ? (
+          <span className="text-text">
+            Discovered {achievement.unlockedAt ? new Date(achievement.unlockedAt).toLocaleDateString() : ''}
+            {achievement.gameId !== null && <span className="text-accent"> · click to open the game</span>}
+          </span>
+        ) : (
+          <span className="text-muted">
+            Not discovered yet{achievement.goal > 1 ? ` · ${achievement.progress}/${achievement.goal}` : ''}
+          </span>
+        )}
+      </p>
     </div>
   )
 }

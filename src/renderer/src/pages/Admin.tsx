@@ -27,6 +27,7 @@ import {
   Rocket,
   Save,
   ScrollText,
+  Sparkles,
   Square,
   Swords,
   Trash2,
@@ -42,6 +43,8 @@ import { sendCosmos } from '@/lib/cosmosControl'
 import { demoChampSelect, demoSummary } from '@/lib/mockApi'
 import { PageHeader } from '@/components/Layout'
 import { DEMO_LOBBY } from './OverlayLoading'
+import { DiscoveryCard } from '@/components/AchievementToast'
+import type { AchievementState } from '@shared/types'
 import { clearBadShaders, currentBadShaders, testFlightShaders } from '@/components/flightGl'
 import { NIGHT_SKY_FRAG } from '@/components/CosmosBackground'
 import { VERT } from '@/components/spaceGlsl'
@@ -550,6 +553,87 @@ function OverlaysCard() {
           Hide all overlays
         </Btn>
       </div>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Achievements
+// ---------------------------------------------------------------------------
+
+function AchievementsCard() {
+  const admin = api.admin
+  const action = useAction()
+  const [list, setList] = useState<AchievementState[]>([])
+  const [id, setId] = useState('penta')
+  const [preview, setPreview] = useState(0)
+  useEffect(() => {
+    const load = () => void api.getAchievements().then(setList)
+    load()
+    return api.on('achievementsUnlocked', load)
+  }, [])
+  const selected = list.find((achievement) => achievement.id === id)
+  const unlocked = list.filter((achievement) => achievement.unlocked).length
+  return (
+    <Card icon={<Sparkles size={18} />} title="Achievements" action={action}>
+      <div>
+        <Label
+          right={
+            <span className="text-xs text-muted tabular-nums">
+              {unlocked} / {list.length} unlocked
+            </span>
+          }
+        >
+          Achievement
+        </Label>
+        <div className="flex gap-2">
+          <select className="input min-w-0 flex-1" value={id} onChange={(event) => setId(event.target.value)}>
+            {list.map((achievement) => (
+              <option key={achievement.id} value={achievement.id}>
+                {achievement.unlocked ? '★ ' : ''}
+                {achievement.name} ({achievement.rank}
+                {achievement.secret ? ', secret' : ''})
+              </option>
+            ))}
+          </select>
+          <Btn
+            primary
+            icon={<Check size={15} />}
+            disabled={!selected || selected.unlocked}
+            onClick={() =>
+              action.run('Unlocking', async () => {
+                await admin?.unlockAchievement(id)
+                return 'Unlocked – the toast and the star map should show it'
+              })
+            }
+          >
+            Unlock
+          </Btn>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Btn icon={<Play size={15} />} disabled={!selected} onClick={() => setPreview((n) => n + 1)}>
+          Play animation
+        </Btn>
+        <Btn
+          danger
+          icon={<RotateCcw size={15} />}
+          onClick={() =>
+            action.run('Resetting', async () => {
+              const left = (await admin?.resetAchievements()) ?? 0
+              setList(await api.getAchievements())
+              return `Reset – ${left} unlocked again straight from the game history`
+            })
+          }
+        >
+          Reset all
+        </Btn>
+      </div>
+      {selected && preview > 0 && (
+        <div className="admin-subpanel">
+          <DiscoveryCard key={preview} achievement={selected} />
+        </div>
+      )}
     </Card>
   )
 }
@@ -1256,6 +1340,7 @@ export function Admin() {
       <div className="grid gap-5 xl:grid-cols-2">
         <FlightsCard />
         <OverlaysCard />
+        <AchievementsCard />
         <SimCard />
         <CalibrationCard />
         <LogCard />

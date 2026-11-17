@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { Crown, History, Info, Orbit, Skull, Sparkles, Trophy, X } from 'lucide-react'
-import type { GameListEntry } from '@shared/types'
+import type { AchievementState, GameListEntry } from '@shared/types'
 import { explainImpact, teamBlame, type GameSummary, type SummaryPlayer } from '@shared/summary'
-import { augmentTiersForChampion } from '@shared/mayhem'
+import { makeTierLookup, summaryAugmentTiers, type TierLookup } from '@shared/mayhem'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { duration } from '@/lib/format'
@@ -14,6 +14,7 @@ import { useMayhemData } from '@/components/mayhem'
 import { WinCurve } from '@/components/WinCurve'
 import { quips, ratioApproved } from '@shared/quips'
 import { cosmicSeed, galaxyOf } from '@shared/universe'
+import { DiscoveryCard } from '@/components/AchievementToast'
 
 const MODE: Record<string, string> = { KIWI: 'ARAM: Mayhem', ARAM: 'ARAM', CLASSIC: "Summoner's Rift" }
 const ago = (timestamp: number): string => {
@@ -87,6 +88,9 @@ export function Games() {
             with {withGames?.name || 'this player'} <X size={14} />
           </button>
         )}
+        <Link to="/games/achievements" className="btn btn-ghost">
+          <Sparkles size={15} /> Achievements
+        </Link>
         <Link to="/games/leaderboard" className="btn btn-ghost">
           <Trophy size={15} /> Leaderboard
         </Link>
@@ -220,7 +224,7 @@ function ApprovedBadge() {
   )
 }
 
-type TierOf = (championId: number, augmentId: number) => ReturnType<typeof augmentTiersForChampion>[number] | undefined
+type TierOf = TierLookup
 
 const PHRASE: Record<string, [string, string]> = {
   'Damage to champions': ['dealt {v} of the team’s damage', 'dealt only {v} of the team’s damage'],
@@ -304,6 +308,33 @@ function VerdictCard({ kind, p, s }: { kind: 'mvp' | 'blame'; p: SummaryPlayer; 
   )
 }
 
+/** The achievements this game unlocked; new ones draw their constellation once, then count as seen. */
+function GameDiscoveries({ gameId }: { gameId: number }) {
+  const [found, setFound] = useState<AchievementState[]>([])
+  // which ones animate is decided when they first show up, so marking them seen doesn't stop the animation
+  const [animated] = useState(() => new Set<string>())
+  useEffect(() => {
+    const load = () =>
+      void api.getAchievements().then((all) => {
+        const mine = all.filter((achievement) => achievement.unlocked && achievement.gameId === gameId)
+        for (const achievement of mine) if (!achievement.seen) animated.add(achievement.id)
+        setFound(mine)
+        const unseen = mine.filter((achievement) => !achievement.seen).map((achievement) => achievement.id)
+        if (unseen.length) void api.markAchievementsSeen(unseen)
+      })
+    load()
+    return api.on('achievementsUnlocked', load)
+  }, [gameId, animated])
+  if (!found.length) return null
+  return (
+    <div className="panel mb-3 flex flex-wrap gap-x-8 gap-y-3 px-4 py-3">
+      {found.map((achievement) => (
+        <DiscoveryCard key={achievement.id} achievement={achievement} animate={animated.has(achievement.id)} compact />
+      ))}
+    </div>
+  )
+}
+
 /** One game on a single screen: result, gold curve, MVP and blame, both teams with their augments. */
 export function GameDetail() {
   const { id } = useParams()
@@ -313,19 +344,13 @@ export function GameDetail() {
   useEffect(() => {
     void api.getGame(Number(id)).then(setSummary)
   }, [id])
-  // Lazily filled per champion, reset whenever the augment or static data changes
-  const tierCache = useMemo(() => new Map<number, ReturnType<typeof augmentTiersForChampion>>(), [mayhem, statics])
-  const tierOf: TierOf = (championId, augmentId) => {
-    if (!mayhem || !statics) return undefined
-    if (!tierCache.has(championId)) tierCache.set(championId, augmentTiersForChampion(mayhem, statics, championId))
-    return tierCache.get(championId)!.find((entry) => entry.augment.id === augmentId)
-  }
+  // tiers are worked out per champion on first use, again whenever the augment or static data changes
+  const lookup = useMemo(() => (mayhem && statics ? makeTierLookup(mayhem, statics) : null), [mayhem, statics])
+  const tierOf: TierOf = (championId, augmentId) => lookup?.(championId, augmentId)
   if (summary === undefined) return null
   if (!summary) return <EmptyState title="Game not found" />
   const blame = teamBlame(summary)
-  const augmentTiers = Object.fromEntries(
-    summary.players.map((player) => [player.puuid, player.augments.map((id) => tierOf(player.championId, id)?.tier)])
-  )
+  const augmentTiers = summaryAugmentTiers(summary, tierOf)
   const quipsByPlayer = quips(summary, augmentTiers)
   const mvp = summary.players.find((player) => player.puuid === summary.mvp)
   return (
@@ -342,6 +367,8 @@ export function GameDetail() {
           All games
         </Link>
       </div>
+
+      <GameDiscoveries gameId={summary.gameId} />
 
       <div className="stagger grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="panel px-4 pt-3 pb-2">

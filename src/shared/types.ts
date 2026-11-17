@@ -1,5 +1,6 @@
 import type { GameSummary } from './summary'
 import type { Encounter } from './encounters'
+import type { AchievementCategory, AchievementRank } from './achievements'
 // Types shared between the Electron main process and the React renderer.
 
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
@@ -352,6 +353,25 @@ export interface GameListEntry {
   cosmos: number
 }
 
+/** An achievement as the app shows it (see shared/achievements.ts). */
+export interface AchievementState {
+  id: string
+  name: string
+  description: string
+  category: AchievementCategory
+  rank: AchievementRank
+  secret: boolean
+  unlocked: boolean
+  /** when it was unlocked (the game's end), never changes once set */
+  unlockedAt: number | null
+  /** the game that unlocked it, null when it came from flights */
+  gameId: number | null
+  /** shown to you already (the unlock animation played) */
+  seen: boolean
+  progress: number
+  goal: number
+}
+
 /** One row of the MVP / troll leaderboard: you or one of your premades, over all saved games. */
 export interface LeaderboardEntry {
   puuid: string
@@ -650,6 +670,11 @@ export interface RcApi {
   listGames(): Promise<GameListEntry[]>
   getGame(gameId: number): Promise<GameSummary | null>
   getLeaderboard(): Promise<LeaderboardEntry[]>
+  getAchievements(): Promise<AchievementState[]>
+  /** the unlock animation of these has played */
+  markAchievementsSeen(ids: string[]): Promise<void>
+  /** a flight to the next galaxy was shown (wormhole or slingshot), for the cosmos achievements */
+  recordFlight(variant: 'wormhole' | 'slingshot', seed: number): Promise<void>
   /** your saved games with or against a player; null when you never met */
   getPlayerHistory(puuid: string, riotId?: string): Promise<PlayerHistory | null>
   setOwnedAugments(ids: number[]): Promise<void>
@@ -745,6 +770,10 @@ export interface AdminApi {
   saveTestGame(summary: GameSummary): Promise<void>
   /** removes every game with a negative id, returns how many */
   deleteTestGames(): Promise<number>
+  /** unlocks an achievement now (as if the newest game did it) and sends the unlock event */
+  unlockAchievement(id: string): Promise<void>
+  /** locks every achievement again (they are worked out anew from the history), returns the unlocked ones after that */
+  resetAchievements(): Promise<number>
   log(lines: number): Promise<string[]>
   minimapSnapshot(): Promise<AdminMinimapSnapshot>
   /** what the relic detection sees at these pads in the last snapshot */
@@ -817,6 +846,8 @@ export interface RcEvents {
   journey: { seed: number }
   /** a post-game summary is ready */
   gameSummary: GameSummary
+  /** ids of achievements that were just unlocked */
+  achievementsUnlocked: string[]
   loading: LoadingState | null
   /** map timers for the main window (the minimap overlay gets its own copy with positions) */
   mapTimers: MinimapState | null

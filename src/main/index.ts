@@ -36,7 +36,8 @@ import { GameStore } from './games'
 import type { CurvePoint } from '@shared/summary'
 import { CaptureService } from './capture/captureService'
 import { cardRects, WINDOWS, type NameCandidate } from './scanner/detect'
-import { augmentTiersForChampion } from '@shared/mayhem'
+import { augmentTiersForChampion, makeTierLookup, type TierLookup } from '@shared/mayhem'
+import { AchievementService } from './achievements'
 import { ProfileService } from './profile'
 import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
 import { RiotClient, regionalOf } from './riot/client'
@@ -398,6 +399,31 @@ void games
   .importLegacy(join(userData, 'games'))
   .then((imported) => imported && diag.log(`imported ${imported} games from the old history into games.db`))
   .catch((error) => diag.log(`importing the old game history failed: ${String(error)}`))
+// --- Achievements (constellations on the star map) ---
+/** Augment tiers for the achievements, kept as long as the augment and static data stay the same. */
+let tierLookup: { data: unknown; statics: unknown; lookup: TierLookup } | null = null
+async function augmentTiers(): Promise<TierLookup | null> {
+  const [data, statics] = await Promise.all([mayhem.get(), ddragon.get()]).catch(() => [null, null] as const)
+  if (!data || !statics) return null
+  if (tierLookup?.data !== data || tierLookup.statics !== statics) tierLookup = { data, statics, lookup: makeTierLookup(data, statics) }
+  return tierLookup.lookup
+}
+const achievements = new AchievementService({
+  db: games.database,
+  history: () => games.all(),
+  tiers: augmentTiers,
+  unlocked: (ids) => emit('achievementsUnlocked', ids),
+  log: (message) => diag.log(message)
+})
+/** The first full evaluation reads every saved game, so it waits until no game is running. */
+function startAchievements(): void {
+  if (inGame) {
+    setTimeout(startAchievements, 30_000)
+    return
+  }
+  void achievements.rebuild().catch((error) => diag.log(`achievements failed: ${String(error)}`))
+}
+
 /** Gold and kill lead sampled every 15 s from the live data, used as a fallback curve for the summary. */
 let liveCurve: CurvePoint[] = []
 let liveCurveAt = -1
@@ -537,6 +563,8 @@ const lcu = new LcuManager({
         diag.log(`saving game ${summary.gameId} failed: ${String(error)}`)
       }
       emit('gameSummary', saved)
+      // after the summary is on screen; the game is over, so reading the database is fine now
+      void achievements.onGame(saved).catch((error) => diag.log(`achievements after game ${saved.gameId} failed: ${String(error)}`))
     }
   }
 })
@@ -677,6 +705,11 @@ function registerIpc(): void {
   handle('listGames', () => games.list())
   handle('getGame', (id: number) => games.get(Number(id)))
   handle('getLeaderboard', () => games.leaderboard())
+  handle('getAchievements', () => achievements.list())
+  handle('markAchievementsSeen', (ids: string[]) => achievements.store.markSeen(Array.isArray(ids) ? ids.map(String) : []))
+  handle('recordFlight', async (variant: string, seed: number) => {
+    if ((variant === 'wormhole' || variant === 'slingshot') && Number.isFinite(seed)) await achievements.onFlight(variant, Number(seed))
+  })
   handle('getPlayerHistory', (puuid: string, riotId?: string): PlayerHistory | null => {
     const id = String(puuid)
     const stats = games.encounters(lcu.getStatus().summoner?.puuid ?? null, [id]).get(id)
@@ -729,6 +762,7 @@ function registerIpc(): void {
         minimap,
         capture,
         games,
+        achievements,
         diag,
         padsFile: minimapPadsFile
       })
@@ -801,6 +835,7 @@ app.once('gpu-info-update', () => {
 
 void app.whenReady().then(async () => {
   diag.log(`app ${app.getVersion()} started`)
+  setTimeout(startAchievements, 8000)
   setTimeout(() => void autoCrawl(), AUTO_CRAWL_FIRST_MS)
   setInterval(() => void autoCrawl(), AUTO_CRAWL_EVERY_MS)
   // Developer self-tests, run headless under xvfb and controlled through environment variables.

@@ -26,6 +26,7 @@ import type { CaptureFrame } from '@shared/capture'
 import type { CaptureService } from './capture/captureService'
 import type { DiagLog } from './diag'
 import type { GameStore } from './games'
+import type { AchievementService } from './achievements'
 import type { OverlayManager } from './overlay'
 import type { MinimapWatcher } from './minimap/watcher'
 import { validPads, writeMeasuredPads } from './minimap/store'
@@ -64,6 +65,7 @@ export interface AdminContext {
   minimap: MinimapWatcher
   capture: CaptureService
   games: GameStore
+  achievements: AchievementService
   diag: DiagLog
   padsFile: string
 }
@@ -399,6 +401,21 @@ export function registerAdmin(ctx: AdminContext): void {
     ctx.games.save(saved)
     log(`test game ${summary.gameId} saved`)
     ctx.emit('gameSummary', saved)
+    void ctx.achievements.onGame(saved)
+  })
+
+  handle('admin:unlockAchievement', (id: string) => {
+    const newest = ctx.games.list()[0]?.gameId ?? null
+    if (!ctx.achievements.unlockNow(String(id), newest)) throw new Error('Already unlocked – reset first.')
+    log(`achievement ${id} unlocked by hand`)
+  })
+
+  handle('admin:resetAchievements', async () => {
+    ctx.achievements.store.reset()
+    await ctx.achievements.rebuild()
+    const unlocked = ctx.achievements.list().filter((achievement) => achievement.unlocked).length
+    log(`achievements reset, ${unlocked} unlocked again from the history`)
+    return unlocked
   })
 
   handle('admin:deleteTestGames', () => {

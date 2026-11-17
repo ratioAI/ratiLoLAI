@@ -7,6 +7,7 @@ import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { isDemo } from '@/lib/api'
 import { num } from '@/lib/format'
+import { AchievementToasts } from './AchievementToast'
 
 const NAV = [
   { to: '/', label: 'Home', icon: Gauge, end: true },
@@ -159,6 +160,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
+      <AchievementToasts />
     </div>
   )
 }

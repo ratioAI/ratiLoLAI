@@ -326,3 +326,35 @@ export function augmentTiersWithOwned(data: MayhemData, statics: StaticData, cha
     })
     .sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || (b.augment.pickRate ?? 0) - (a.augment.pickRate ?? 0))
 }
+
+// ---------------------------------------------------------------------------
+// Augment tiers of a finished game
+// ---------------------------------------------------------------------------
+
+/** Looks up an augment's tier for a champion; tiers are worked out once per champion and kept. */
+export type TierLookup = (championId: number, augmentId: number) => AugmentTier | undefined
+
+export function makeTierLookup(data: MayhemData, statics: StaticData): TierLookup {
+  const cache = new Map<number, Map<number, AugmentTier>>()
+  return (championId, augmentId) => {
+    let tiers = cache.get(championId)
+    if (!tiers) {
+      tiers = new Map(augmentTiersForChampion(data, statics, championId).map((entry) => [entry.augment.id, entry]))
+      cache.set(championId, tiers)
+    }
+    return tiers.get(augmentId)
+  }
+}
+
+/**
+ * The tier of every augment each player of a game took, for their champion, by puuid. What quips()
+ * and the achievements expect; the game page, the main process and the Discord post all use it.
+ */
+export function summaryAugmentTiers(
+  summary: { players: readonly { puuid: string; championId: number; augments: readonly number[] }[] },
+  tierOf: TierLookup
+): Record<string, (Tier | undefined)[]> {
+  return Object.fromEntries(
+    summary.players.map((player) => [player.puuid, player.augments.map((id) => tierOf(player.championId, id)?.tier)])
+  )
+}
