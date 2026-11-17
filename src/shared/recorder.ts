@@ -421,3 +421,337 @@ export function ffmpegRecordArgs(
   )
   return args
 }
+
+// ---------------------------------------------------------------------------
+// Segments and clips
+// ---------------------------------------------------------------------------
+
+/** One finished segment of a recording; times are seconds since the recording began. */
+export interface Segment {
+  file: string
+  start: number
+  end: number
+}
+
+/** segments.csv as FFmpeg's segment muxer writes it: `file,start,end` per finished segment. */
+export function parseSegmentList(csv: string): Segment[] {
+  const segments: Segment[] = []
+  for (const line of csv.split(/\r?\n/)) {
+    const parts = line.trim().split(',')
+    if (parts.length < 3) continue
+    const start = Number(parts[parts.length - 2])
+    const end = Number(parts[parts.length - 1])
+    const file = parts.slice(0, -2).join(',')
+    if (file && Number.isFinite(start) && Number.isFinite(end) && end > start) segments.push({ file, start, end })
+  }
+  return segments
+}
+
+export interface ClipCut {
+  /** the segments to join, in order */
+  segments: Segment[]
+  /** where the clip begins inside the joined segments, in whole seconds (a keyframe) */
+  offset: number
+  duration: number
+  /** what the clip really covers, in seconds since the recording began */
+  start: number
+  end: number
+}
+
+/**
+ * The segments a clip [start, end] needs and where to cut inside them. Recordings have a keyframe
+ * every second, so the cut is moved outwards to whole seconds and nothing has to be encoded again.
+ * A range that reaches beyond what was recorded is shortened to what is there; null when nothing
+ * of it was recorded.
+ */
+export function segmentsFor(range: { start: number; end: number }, segments: readonly Segment[]): ClipCut | null {
+  if (!segments.length || !(range.end > range.start)) return null
+  const sorted = [...segments].sort((a, b) => a.start - b.start)
+  const first = sorted[0].start
+  const last = sorted[sorted.length - 1].end
+  const from = Math.max(range.start, first)
+  const to = Math.min(range.end, last)
+  if (!(to > from)) return null
+  const needed = sorted.filter((segment) => segment.end > from && segment.start < to)
+  if (!needed.length) return null
+  const base = needed[0].start
+  const offset = Math.max(0, Math.floor(from - base + 1e-6))
+  const available = needed[needed.length - 1].end - base
+  const duration = Math.max(1, Math.min(Math.ceil(to - base - 1e-6) - offset, Math.ceil(available - offset - 1e-6)))
+  return { segments: needed, offset, duration, start: base + offset, end: Math.min(base + offset + duration, needed[needed.length - 1].end) }
+}
+
+/** The list file of FFmpeg's concat demuxer. */
+export function concatList(files: readonly string[]): string {
+  return files.map((file) => `file '${file.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n') + '\n'
+}
+
+/** Joins segments and cuts them without encoding again (stream copy: instant, no load on the GPU or CPU). */
+export function ffmpegClipArgs(listFile: string, offset: number, duration: number | null, out: string): string[] {
+  const args = ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', listFile]
+  if (offset > 0) args.push('-ss', String(offset))
+  if (duration !== null) args.push('-t', String(duration))
+  args.push('-c', 'copy', '-avoid_negative_ts', 'make_zero', '-movflags', '+faststart', out)
+  return args
+}
+
+/** One frame of a video as a small JPEG (seeks to a keyframe, so only one frame is decoded). */
+export function ffmpegThumbArgs(video: string, atSeconds: number, out: string, width = 480): string[] {
+  return ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(Math.max(0, Math.floor(atSeconds))), '-i', video, '-frames:v', '1', '-vf', `scale=${width}:-2`, '-q:v', '4', out]
+}
+
+/** The newest frame of a segment as a PNG (screenshot hotkey). */
+export function ffmpegScreenshotArgs(segment: string, out: string): string[] {
+  return ['-hide_banner', '-loglevel', 'error', '-y', '-sseof', '-0.25', '-i', segment, '-frames:v', '1', '-update', '1', out]
+}
+
+/** Extra seconds the ring keeps beyond the replay length, so a clip never starts in a deleted segment. */
+export const RING_BUFFER_SECONDS = 12
+
+/**
+ * Replay mode: the segments that fell out of the ring and can be deleted. `protect` are ranges
+ * (seconds since the recording began) that must stay: bookmarks and automatic clips still waiting.
+ */
+export function ringExpired(
+  segments: readonly Segment[],
+  replaySeconds: number,
+  protect: readonly { start: number; end: number }[] = []
+): Segment[] {
+  if (!segments.length) return []
+  const newest = Math.max(...segments.map((segment) => segment.end))
+  const keepFrom = newest - replaySeconds - RING_BUFFER_SECONDS
+  return segments.filter(
+    (segment) => segment.end <= keepFrom && !protect.some((range) => segment.end > range.start && segment.start < range.end)
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Automatic clips
+// ---------------------------------------------------------------------------
+
+/** One event of the Live Client Data feed (127.0.0.1:2999), with the fields the clips use. */
+export interface FeedEvent {
+  EventID: number
+  EventName: string
+  /** game time in seconds */
+  EventTime: number
+  KillerName?: string
+  VictimName?: string
+  Assisters?: string[]
+  KillStreak?: number
+  Acer?: string
+  AcingTeam?: string
+  Recipient?: string
+  Result?: string
+}
+
+/** A stretch of the game that becomes a clip, in game seconds. */
+export interface ClipWindow {
+  kind: AutoClipKind
+  start: number
+  end: number
+  title: string
+}
+
+/** Seconds before and after the moment that go into the clip. */
+export const AUTO_CLIP_TIMING: Record<AutoClipKind, { pre: number; post: number }> = {
+  penta: { pre: 25, post: 6 },
+  quadra: { pre: 20, post: 5 },
+  triple: { pre: 15, post: 5 },
+  firstBlood: { pre: 12, post: 4 },
+  ace: { pre: 18, post: 5 },
+  death: { pre: 20, post: 3 },
+  gameEnd: { pre: 20, post: 3 }
+}
+
+/** The more important kind names a clip made of several moments. */
+const AUTO_CLIP_PRIORITY: Record<AutoClipKind, number> = { penta: 7, quadra: 6, ace: 5, triple: 4, firstBlood: 3, gameEnd: 2, death: 1 }
+
+const AUTO_CLIP_TITLES: Record<AutoClipKind, string> = {
+  penta: 'Pentakill',
+  quadra: 'Quadra kill',
+  triple: 'Triple kill',
+  firstBlood: 'First blood',
+  ace: 'Ace',
+  death: 'Died in a team fight',
+  gameEnd: 'End of the game'
+}
+
+/** Your death only counts as "after a fight" when at least this many other kills happened shortly before. */
+export const FIGHT_KILLS = 2
+export const FIGHT_SECONDS = 15
+
+/** The feed names players by game name, sometimes with the tag line; compare without it, case and spaces. */
+export function samePlayer(a: string | undefined | null, b: string | undefined | null): boolean {
+  const clean = (value: string | undefined | null): string => (value ?? '').split('#')[0].replace(/\s+/g, '').toLowerCase()
+  return !!clean(a) && clean(a) === clean(b)
+}
+
+export interface AutoClipContext {
+  /** your Riot ID or name */
+  me: string
+  /** 'ORDER' or 'CHAOS' */
+  myTeam: string | null
+  /** id of the newest event already looked at; null = first look at this game */
+  lastEventId: number | null
+  enabled: Partial<Record<AutoClipKind, boolean>>
+}
+
+/**
+ * Overlapping windows become one clip: from the earliest start to the latest end, named after the
+ * most important moment in it (a triple that turns into a penta is one pentakill clip).
+ */
+export function mergeClipWindows(windows: readonly ClipWindow[]): ClipWindow[] {
+  const merged: ClipWindow[] = []
+  for (const window of [...windows].sort((a, b) => a.start - b.start || a.end - b.end)) {
+    const last = merged[merged.length - 1]
+    if (last && window.start <= last.end) {
+      last.end = Math.max(last.end, window.end)
+      if (AUTO_CLIP_PRIORITY[window.kind] > AUTO_CLIP_PRIORITY[last.kind]) {
+        last.kind = window.kind
+        last.title = window.title
+      }
+    } else merged.push({ ...window })
+  }
+  return merged
+}
+
+/**
+ * The clips the events after `lastEventId` ask for: your triple, quadra and pentakills, your first
+ * blood, an ace of your team, your death at the end of a team fight (optional) and the end of the
+ * game. On the first look at a game (`lastEventId` null, e.g. the app was started mid-game) nothing
+ * is made up for the past; only the newest id is remembered. Returns merged windows, oldest first.
+ */
+export function autoClipWindows(events: readonly FeedEvent[], ctx: AutoClipContext): { windows: ClipWindow[]; lastEventId: number | null } {
+  const sorted = [...events].filter((event) => Number.isFinite(event.EventID)).sort((a, b) => a.EventID - b.EventID)
+  const newest = sorted.length ? sorted[sorted.length - 1].EventID : ctx.lastEventId
+  if (ctx.lastEventId === null) return { windows: [], lastEventId: newest }
+  const isMe = (name?: string): boolean => samePlayer(name, ctx.me)
+  const windows: ClipWindow[] = []
+  const add = (kind: AutoClipKind, event: FeedEvent): void => {
+    if (!ctx.enabled[kind]) return
+    const { pre, post } = AUTO_CLIP_TIMING[kind]
+    windows.push({ kind, start: Math.max(0, event.EventTime - pre), end: event.EventTime + post, title: AUTO_CLIP_TITLES[kind] })
+  }
+  for (const event of sorted) {
+    if (event.EventID <= ctx.lastEventId) continue
+    switch (event.EventName) {
+      case 'Multikill': {
+        if (!isMe(event.KillerName)) break
+        const streak = event.KillStreak ?? 0
+        if (streak >= 5) add('penta', event)
+        else if (streak === 4) add('quadra', event)
+        else if (streak === 3) add('triple', event)
+        break
+      }
+      case 'FirstBlood':
+        if (isMe(event.Recipient)) add('firstBlood', event)
+        break
+      case 'Ace':
+        if (ctx.myTeam && event.AcingTeam === ctx.myTeam) add('ace', event)
+        break
+      case 'ChampionKill': {
+        if (!isMe(event.VictimName)) break
+        // a fight, not a lonely death: other kills shortly before (older events count too)
+        const kills = sorted.filter(
+          (other) =>
+            other.EventName === 'ChampionKill' &&
+            other.EventID !== event.EventID &&
+            other.EventTime <= event.EventTime &&
+            other.EventTime >= event.EventTime - FIGHT_SECONDS
+        ).length
+        if (kills >= FIGHT_KILLS) add('death', event)
+        break
+      }
+      case 'GameEnd':
+        add('gameEnd', event)
+        break
+    }
+  }
+  return { windows: mergeClipWindows(windows), lastEventId: newest }
+}
+
+// ---------------------------------------------------------------------------
+// Storage
+// ---------------------------------------------------------------------------
+
+/** Something in the clips folder that takes space. */
+export interface StoredItem {
+  /** path of the file or folder */
+  path: string
+  bytes: number
+  /** when it was made (ms) */
+  at: number
+  /**
+   * replay = what an instant-replay recording left behind, session = a whole-game recording,
+   * clip = a saved clip, screenshot or export
+   */
+  type: 'replay' | 'session' | 'clip'
+  /** session: marked "keep" */
+  kept?: boolean
+  favorite?: boolean
+  /** belongs to the recording that is running right now */
+  active?: boolean
+}
+
+export interface CleanupPlan {
+  /** what to delete, in this order */
+  delete: StoredItem[]
+  freedBytes: number
+  /** bytes in use once the plan ran */
+  usedAfter: number
+  /** still above the limit afterwards: only clips are left, and those are never deleted on their own */
+  overQuota: boolean
+}
+
+/**
+ * What gets deleted to make room. First the leftovers of instant-replay recordings (oldest first),
+ * then whole-game recordings older than `keepSessionsDays` that were not marked "keep". Clips and
+ * favorites are never deleted on their own, and neither is anything of the running recording.
+ */
+export function cleanupPlan(
+  items: readonly StoredItem[],
+  quota: { maxBytes: number; keepSessionsDays: number },
+  now: number
+): CleanupPlan {
+  const oldestFirst = (a: StoredItem, b: StoredItem): number => a.at - b.at
+  const expiredBefore = now - quota.keepSessionsDays * 86_400_000
+  const doomed = [
+    ...items.filter((item) => item.type === 'replay' && !item.active).sort(oldestFirst),
+    ...items.filter((item) => item.type === 'session' && !item.active && !item.kept && !item.favorite && item.at < expiredBefore).sort(oldestFirst)
+  ]
+  const used = items.reduce((sum, item) => sum + item.bytes, 0)
+  const freedBytes = doomed.reduce((sum, item) => sum + item.bytes, 0)
+  return { delete: doomed, freedBytes, usedAfter: used - freedBytes, overQuota: used - freedBytes > quota.maxBytes }
+}
+
+// ---------------------------------------------------------------------------
+// Playing clips in the window (rcclip://)
+// ---------------------------------------------------------------------------
+
+/**
+ * The byte range a `Range: bytes=…` header asks for in a file of `size` bytes, so the player can
+ * seek. null = no (usable) range, send the whole file; 'invalid' = cannot be satisfied (HTTP 416).
+ */
+export function parseRange(header: string | null | undefined, size: number): { start: number; end: number } | null | 'invalid' {
+  const match = /^bytes=(\d*)-(\d*)$/.exec((header ?? '').trim())
+  if (!match || (!match[1] && !match[2])) return null
+  let start: number
+  let end: number
+  if (!match[1]) {
+    // "bytes=-500": the last 500 bytes
+    start = Math.max(0, size - Number(match[2]))
+    end = size - 1
+  } else {
+    start = Number(match[1])
+    end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1
+  }
+  if (!(size > 0) || start >= size || start > end) return 'invalid'
+  return { start, end }
+}
+
+/** rcclip://clip/12 → what to serve. Only ids, never paths: the file is looked up in the database. */
+export function parseClipUrl(url: string): { kind: 'clip' | 'thumb' | 'recording' | 'media'; id: string } | null {
+  const match = /^rcclip:\/\/(clip|thumb|recording|media)\/([A-Za-z0-9_-]{1,64})(?:[?#].*)?$/.exec(url)
+  return match ? { kind: match[1] as 'clip' | 'thumb' | 'recording' | 'media', id: match[2] } : null
+}

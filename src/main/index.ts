@@ -49,6 +49,8 @@ import { RiotClient, regionalOf } from './riot/client'
 import type { GameResults, RecordMode } from './records'
 import { SettingsStore } from './settings'
 import { RecorderEnv } from './recorder/setup'
+import { RecorderService } from './recorder/service'
+import { ClipStore } from './recorder/clipStore'
 
 // The app used to be called "Rift Companion". Move its data (settings, encrypted API key, crawled
 // stats, caches) to the new folder once, or keep using the old folder if the move fails.
@@ -457,6 +459,22 @@ const recorderEnv = new RecorderEnv({
   ffmpegOverride: app.isPackaged ? null : (process.env.RATIO_FFMPEG ?? null)
 })
 
+const clips = new ClipStore(games.database)
+const recorder = new RecorderService({
+  env: recorderEnv,
+  store: clips,
+  settings: () => settings.get().recorder,
+  takenHotkeys: () => ({ augment: settings.get().overlay.hotkey }),
+  emit: (status) => emit('recorder', status),
+  clipSaved: (clip) => emit('clipSaved', clip),
+  hotkeys: (bindings) => overlay.setExtraHotkeys(bindings),
+  displaySize: () => {
+    const display = gameScreen()
+    return { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) }
+  },
+  log: (message) => diag.log(message)
+})
+
 /** The first full evaluation reads every saved game, so it waits until no game is running. */
 function startAchievements(): void {
   if (inGame) {
@@ -572,7 +590,12 @@ const lcu = new LcuManager({
     riot: riotResults
   },
   encounters: async (me, puuids, excludeGameId) => games.encounters(me, puuids, excludeGameId),
-  liveEvents: (events, state) => announcer.tick(events, state),
+  liveEvents: (events, state) => {
+    announcer.tick(events, state)
+    // automatic clips hang on this poll too: the recorder has no loop of its own
+    recorder.onLive(events, state)
+  },
+  phase: (phase) => recorder.onPhase(phase),
   log: (message) => diag.log(message),
   settings: () => settings.get(),
   staticData: () => ddragon.get(),
@@ -606,6 +629,8 @@ const lcu = new LcuManager({
         diag.log(`saving game ${summary.gameId} failed: ${String(error)}`)
       }
       emit('gameSummary', saved)
+      // the clips recorded during this game now belong to it
+      recorder.onSummary(saved.gameId)
       // after the summary is on screen; the game is over, so reading the database is fine now
       void achievements
         .onGame(saved)
@@ -672,6 +697,8 @@ function registerIpc(): void {
     overlay.setVisibleInCapture(next.overlay.showInCapture)
     updateOverlay(lcu.getLive())
     tierCache.clear()
+    recorder.settingsChanged()
+    if (patch.recorder) void recorder.refresh()
     return next
   })
   handle('setApiKey', async (key: string) => {
@@ -715,6 +742,8 @@ function registerIpc(): void {
   handle('recorderSetup', () => recorderEnv.setup())
   handle('installFfmpeg', () => recorderEnv.install())
   handle('testEncoders', () => recorderEnv.testEncoders(true))
+  handle('recorderStatus', () => recorder.status())
+  handle('clipNow', () => recorder.clipNow())
   handle('openClipFolder', async () => {
     mkdirSync(recorderEnv.folder(), { recursive: true })
     await shell.openPath(recorderEnv.folder())
@@ -830,6 +859,7 @@ function registerIpc(): void {
           emit('live', live)
           updateOverlay(live)
           announcer.tick(events, live)
+          recorder.onLive(events, live)
         },
         realLive: () => lcu.getLive(),
         restore: () => {
@@ -848,6 +878,7 @@ function registerIpc(): void {
         achievements,
         discord,
         recorderEnv,
+        recorder,
         diag,
         padsFile: minimapPadsFile
       })
@@ -1030,7 +1061,10 @@ void app.whenReady().then(async () => {
   app.setAppUserModelId('dev.riftcompanion.app')
   registerIpc()
   createWindow()
-  void recorderEnv.init().catch((error) => diag.log(`recorder: init failed – ${String(error)}`))
+  void recorderEnv
+    .init()
+    .then(() => recorder.refresh())
+    .catch((error) => diag.log(`recorder: init failed – ${String(error)}`))
   lcu.start()
   overlay.setHotkey(settings.get().overlay.hotkey)
   overlay.setVisibleInCapture(settings.get().overlay.showInCapture)
@@ -1040,7 +1074,24 @@ void app.whenReady().then(async () => {
   })
 })
 
-app.on('will-quit', () => games.close())
+// a running recording is closed properly before the app goes (FFmpeg finishes its last segment)
+let recorderClosed = false
+app.on('before-quit', (event) => {
+  if (recorderClosed || !recorder.recording) return
+  event.preventDefault()
+  void recorder
+    .shutdown()
+    .catch(() => undefined)
+    .finally(() => {
+      recorderClosed = true
+      app.quit()
+    })
+})
+
+app.on('will-quit', () => {
+  recorderEnv.helper.quit()
+  games.close()
+})
 
 app.on('window-all-closed', () => {
   scanner.stop()

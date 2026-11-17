@@ -114,6 +114,8 @@ export class OverlayManager {
   private hotkey: string | null = null
   private previewTimer: NodeJS.Timeout | null = null
   private displayId: number | null = null
+  /** hotkeys of other features (the recorder's clip, bookmark and screenshot keys) */
+  private extraKeys: string[] = []
 
   constructor(
     preload: string,
@@ -262,6 +264,23 @@ export class OverlayManager {
       if (globalShortcut.register(accelerator, () => this.onToggle())) this.hotkey = accelerator
     } catch {
       // invalid accelerator
+    }
+  }
+
+  /**
+   * Global hotkeys of other features, e.g. the recorder's. Replaces the ones set before; an empty
+   * list releases them all (a global shortcut takes the key away from every other program, so they
+   * are only held while a recording runs).
+   */
+  setExtraHotkeys(bindings: { accelerator: string; run(): void }[]): void {
+    for (const key of this.extraKeys) globalShortcut.unregister(key)
+    this.extraKeys = []
+    for (const binding of bindings) {
+      try {
+        if (globalShortcut.register(binding.accelerator, binding.run)) this.extraKeys.push(binding.accelerator)
+      } catch {
+        // invalid accelerator or taken by another program
+      }
     }
   }
 

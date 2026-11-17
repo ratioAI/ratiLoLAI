@@ -231,3 +231,29 @@ exports[`ffmpegRecordArgs > records the game window by its handle with the sound
   "C:/Videos/ratioAI/rec/42/seg_%06d.mp4",
 ]
 `;
+
+exports[`segments > builds the concat list and the stream-copy arguments 1`] = `
+[
+  "-hide_banner",
+  "-loglevel",
+  "error",
+  "-y",
+  "-f",
+  "concat",
+  "-safe",
+  "0",
+  "-i",
+  "list.txt",
+  "-ss",
+  "1",
+  "-t",
+  "6",
+  "-c",
+  "copy",
+  "-avoid_negative_ts",
+  "make_zero",
+  "-movflags",
+  "+faststart",
+  "out.mp4",
+]
+`;

@@ -606,6 +606,19 @@ export function createMockApi(): RcApi {
       return { status: 'ready', version: '8.1' }
     },
     testEncoders: async () => demoEncoders,
+    recorderStatus: async () => ({
+      state: 'idle',
+      message: null,
+      mode: settings.recorder.mode,
+      encoder: null,
+      startedAt: null,
+      bytes: 4.2e9,
+      quotaBytes: settings.recorder.storage.maxGb * 1e9,
+      ringSeconds: 0,
+      bookmarks: 0,
+      lastClip: null
+    }),
+    clipNow: async () => null,
     openClipFolder: async () => undefined,
     chooseClipFolder: async () => null,
     getPatches: async (mode) => {
@@ -1105,6 +1118,8 @@ function mockAdmin(emit: <K extends keyof RcEvents>(event: K, payload: RcEvents[
     },
     recorderReloadFfmpeg: desktopOnly,
     recorderTestCapture: desktopOnly,
+    recorderTestRecording: desktopOnly,
+    recorderRing: async () => ({ segments: 0, from: 0, to: 0, bytes: 0, pending: [], bookmarks: 0, offset: null }),
     log: async () => ['12:00:00.000 admin: web demo – the log is only kept by the desktop app'],
     minimapSnapshot: snapshot,
     classifyPads: async (pads) => pads.map(() => null),

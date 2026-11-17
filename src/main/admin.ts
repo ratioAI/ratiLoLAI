@@ -30,6 +30,7 @@ import type { GameStore } from './games'
 import type { AchievementService } from './achievements'
 import type { DiscordPoster } from './discord'
 import type { RecorderEnv } from './recorder/setup'
+import type { RecorderService } from './recorder/service'
 import type { OverlayManager } from './overlay'
 import type { MinimapWatcher } from './minimap/watcher'
 import { validPads, writeMeasuredPads } from './minimap/store'
@@ -72,6 +73,7 @@ export interface AdminContext {
   achievements: AchievementService
   discord: DiscordPoster
   recorderEnv: RecorderEnv
+  recorder: RecorderService
   diag: DiagLog
   padsFile: string
 }
@@ -513,6 +515,14 @@ export function registerAdmin(ctx: AdminContext): void {
     await ctx.recorderEnv.install(true)
     return ctx.recorderEnv.setup()
   })
+
+  handle('admin:recorderTestRecording', async (on: boolean) => {
+    const status = await ctx.recorder.testRecording(!!on)
+    log(`recorder: test recording ${on ? 'started' : 'stopped'}`)
+    return status
+  })
+
+  handle('admin:recorderRing', () => ctx.recorder.ring())
 
   handle('admin:recorderTestCapture', async (source: 'testsrc' | 'screen') => {
     const result = await ctx.recorderEnv.testCapture(source === 'screen' ? 'screen' : 'testsrc')

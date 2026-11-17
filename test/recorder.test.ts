@@ -181,3 +181,227 @@ describe('windowsSupported', () => {
     expect(windowsSupported('linux', '6.8.0')).toBe(false)
   })
 })
+
+import {
+  autoClipWindows,
+  cleanupPlan,
+  concatList,
+  ffmpegClipArgs,
+  mergeClipWindows,
+  parseClipUrl,
+  parseRange,
+  parseSegmentList,
+  ringExpired,
+  segmentsFor,
+  type FeedEvent,
+  type Segment,
+  type StoredItem
+} from '../src/shared/recorder'
+
+/** 2-second segments from 0 s on, like FFmpeg lists them. */
+const segs = (count: number, from = 0): Segment[] =>
+  Array.from({ length: count }, (_, i) => ({ file: `seg_${String(from + i).padStart(6, '0')}.mp4`, start: (from + i) * 2, end: (from + i + 1) * 2 }))
+
+describe('segments', () => {
+  it('parses segments.csv', () => {
+    expect(parseSegmentList('seg_000000.mp4,0.000000,2.021354\nseg_000001.mp4,2.021354,4.021354\n\nbroken\n')).toEqual([
+      { file: 'seg_000000.mp4', start: 0, end: 2.021354 },
+      { file: 'seg_000001.mp4', start: 2.021354, end: 4.021354 }
+    ])
+    expect(parseSegmentList('')).toEqual([])
+  })
+
+  it('picks the segments of a clip and cuts on whole seconds', () => {
+    const cut = segmentsFor({ start: 5, end: 11 }, segs(10))!
+    expect(cut.segments.map((segment) => segment.file)).toEqual(['seg_000002.mp4', 'seg_000003.mp4', 'seg_000004.mp4', 'seg_000005.mp4'])
+    expect(cut).toMatchObject({ offset: 1, duration: 6, start: 5, end: 11 })
+  })
+
+  it('handles the edges: exact segment borders', () => {
+    const cut = segmentsFor({ start: 4, end: 8 }, segs(10))!
+    expect(cut.segments.map((segment) => segment.start)).toEqual([4, 6])
+    expect(cut).toMatchObject({ offset: 0, duration: 4, start: 4, end: 8 })
+  })
+
+  it('handles the edges: a range that starts before the ring or ends after it', () => {
+    // the ring starts at 20 s (older segments are gone)
+    const ring = segs(5, 10)
+    const early = segmentsFor({ start: 3, end: 23 }, ring)!
+    expect(early).toMatchObject({ offset: 0, duration: 3, start: 20, end: 23 })
+    const late = segmentsFor({ start: 27, end: 99 }, ring)!
+    expect(late.segments.map((segment) => segment.start)).toEqual([26, 28])
+    expect(late).toMatchObject({ offset: 1, duration: 3, start: 27, end: 30 })
+  })
+
+  it('handles the edges: nothing recorded for the range', () => {
+    expect(segmentsFor({ start: 0, end: 10 }, [])).toBeNull()
+    expect(segmentsFor({ start: 40, end: 50 }, segs(5))).toBeNull()
+    expect(segmentsFor({ start: 5, end: 5 }, segs(5))).toBeNull()
+  })
+
+  it('moves a cut inside a second outwards, never inwards', () => {
+    const cut = segmentsFor({ start: 5.4, end: 9.2 }, segs(10))!
+    expect(cut.start).toBeLessThanOrEqual(5.4)
+    expect(cut.end).toBeGreaterThanOrEqual(9.2)
+    expect(cut).toMatchObject({ offset: 1, duration: 5 })
+  })
+
+  it('builds the concat list and the stream-copy arguments', () => {
+    expect(concatList(["C:\\rec\\it's\\seg_1.mp4", 'D:/b.mp4'])).toBe("file 'C:/rec/it'\\''s/seg_1.mp4'\nfile 'D:/b.mp4'\n")
+    expect(ffmpegClipArgs('list.txt', 1, 6, 'out.mp4')).toMatchSnapshot()
+    const args = ffmpegClipArgs('list.txt', 0, null, 'out.mp4')
+    expect(args).not.toContain('-ss')
+    expect(args.join(' ')).toContain('-c copy')
+  })
+
+  it('drops segments that fell out of the ring but keeps protected ranges', () => {
+    const all = segs(40) // 80 s
+    const expired = ringExpired(all, 30)
+    // newest end 80 → keep from 80 - 30 - 12 = 38
+    expect(expired.map((segment) => segment.end)).toEqual(all.filter((segment) => segment.end <= 38).map((segment) => segment.end))
+    const guarded = ringExpired(all, 30, [{ start: 9, end: 13 }])
+    expect(guarded.some((segment) => segment.start === 8 || segment.start === 10 || segment.start === 12)).toBe(false)
+    expect(guarded).toHaveLength(expired.length - 3)
+    expect(ringExpired([], 30)).toEqual([])
+  })
+})
+
+describe('autoClipWindows', () => {
+  const ctx = {
+    me: 'You#DEV',
+    myTeam: 'ORDER',
+    lastEventId: 0 as number | null,
+    enabled: { penta: true, quadra: true, triple: true, firstBlood: true, ace: true, death: true, gameEnd: true }
+  }
+  let id = 0
+  const event = (name: string, time: number, extra: Partial<FeedEvent> = {}): FeedEvent => ({ EventID: ++id, EventName: name, EventTime: time, ...extra })
+
+  it('clips your multikills with lead-in and lead-out', () => {
+    const { windows } = autoClipWindows([event('Multikill', 300, { KillerName: 'You', KillStreak: 3 })], ctx)
+    expect(windows).toEqual([{ kind: 'triple', start: 285, end: 305, title: 'Triple kill' }])
+  })
+
+  it('merges a triple that becomes a quadra and a penta into one pentakill clip', () => {
+    const { windows } = autoClipWindows(
+      [
+        event('Multikill', 400, { KillerName: 'You', KillStreak: 3 }),
+        event('Multikill', 404, { KillerName: 'You', KillStreak: 4 }),
+        event('Multikill', 409, { KillerName: 'You', KillStreak: 5 }),
+        event('Ace', 409, { AcingTeam: 'ORDER' })
+      ],
+      ctx
+    )
+    expect(windows).toEqual([{ kind: 'penta', start: 384, end: 415, title: 'Pentakill' }])
+  })
+
+  it('keeps moments that are far apart as separate clips', () => {
+    const { windows } = autoClipWindows(
+      [event('FirstBlood', 95, { Recipient: 'You' }), event('Ace', 600, { AcingTeam: 'ORDER' })],
+      ctx
+    )
+    expect(windows.map((window) => window.kind)).toEqual(['firstBlood', 'ace'])
+    expect(mergeClipWindows(windows)).toHaveLength(2)
+  })
+
+  it("ignores other players' multikills, enemy aces and switched-off kinds", () => {
+    const events = [
+      event('Multikill', 500, { KillerName: 'blackbird', KillStreak: 5 }),
+      event('Ace', 520, { AcingTeam: 'CHAOS' }),
+      event('FirstBlood', 60, { Recipient: 'Guido' }),
+      event('Multikill', 700, { KillerName: 'You', KillStreak: 2 }),
+      event('Multikill', 800, { KillerName: 'You', KillStreak: 3 })
+    ]
+    expect(autoClipWindows(events, { ...ctx, enabled: { ...ctx.enabled, triple: false } }).windows).toEqual([])
+  })
+
+  it('catches nothing up when the app starts in the middle of a game', () => {
+    const events = [event('Multikill', 300, { KillerName: 'You', KillStreak: 5 }), event('Ace', 310, { AcingTeam: 'ORDER' })]
+    const first = autoClipWindows(events, { ...ctx, lastEventId: null })
+    expect(first.windows).toEqual([])
+    expect(first.lastEventId).toBe(events[1].EventID)
+    // the next poll only sees what is new
+    const later = [...events, event('Multikill', 500, { KillerName: 'You', KillStreak: 4 })]
+    const second = autoClipWindows(later, { ...ctx, lastEventId: first.lastEventId })
+    expect(second.windows.map((window) => window.kind)).toEqual(['quadra'])
+    expect(autoClipWindows(later, { ...ctx, lastEventId: second.lastEventId }).windows).toEqual([])
+  })
+
+  it('clips your death only at the end of a team fight, and the end of the game', () => {
+    const lonely = [event('ChampionKill', 200, { KillerName: 'Guido', VictimName: 'You' })]
+    expect(autoClipWindows(lonely, ctx).windows).toEqual([])
+    const fight = [
+      event('ChampionKill', 300, { KillerName: 'You', VictimName: 'Guido' }),
+      event('ChampionKill', 305, { KillerName: 'simwai', VictimName: 'Toni' }),
+      event('ChampionKill', 310, { KillerName: 'simwai', VictimName: 'You' }),
+      event('GameEnd', 1500, { Result: 'Win' })
+    ]
+    expect(autoClipWindows(fight, ctx).windows).toEqual([
+      { kind: 'death', start: 290, end: 313, title: 'Died in a team fight' },
+      { kind: 'gameEnd', start: 1480, end: 1503, title: 'End of the game' }
+    ])
+  })
+})
+
+describe('cleanupPlan', () => {
+  const day = 86_400_000
+  const now = 100 * day
+  const item = (path: string, type: StoredItem['type'], ageDays: number, extra: Partial<StoredItem> = {}): StoredItem => ({
+    path,
+    type,
+    bytes: 1e9,
+    at: now - ageDays * day,
+    ...extra
+  })
+  const items = [
+    item('clip-old', 'clip', 300),
+    item('clip-fav', 'clip', 200, { favorite: true }),
+    item('session-new', 'session', 2),
+    item('session-old', 'session', 10),
+    item('session-older', 'session', 20),
+    item('session-kept', 'session', 50, { kept: true }),
+    item('ring-b', 'replay', 1),
+    item('ring-a', 'replay', 3),
+    item('ring-running', 'replay', 0, { active: true })
+  ]
+
+  it('deletes replay leftovers first, then expired sessions, oldest first', () => {
+    const plan = cleanupPlan(items, { maxBytes: 30e9, keepSessionsDays: 7 }, now)
+    expect(plan.delete.map((entry) => entry.path)).toEqual(['ring-a', 'ring-b', 'session-older', 'session-old'])
+    expect(plan.freedBytes).toBe(4e9)
+    expect(plan.usedAfter).toBe(5e9)
+    expect(plan.overQuota).toBe(false)
+  })
+
+  it('never deletes clips, favorites, kept sessions or the running recording, even above the limit', () => {
+    const plan = cleanupPlan(items, { maxBytes: 1e9, keepSessionsDays: 7 }, now)
+    const paths = plan.delete.map((entry) => entry.path)
+    for (const safe of ['clip-old', 'clip-fav', 'session-kept', 'session-new', 'ring-running']) expect(paths).not.toContain(safe)
+    expect(plan.overQuota).toBe(true)
+  })
+
+  it('has nothing to do in an empty folder', () => {
+    expect(cleanupPlan([], { maxBytes: 1, keepSessionsDays: 7 }, now)).toEqual({ delete: [], freedBytes: 0, usedAfter: 0, overQuota: false })
+  })
+})
+
+describe('rcclip protocol helpers', () => {
+  it('parses byte ranges', () => {
+    expect(parseRange('bytes=0-99', 1000)).toEqual({ start: 0, end: 99 })
+    expect(parseRange('bytes=500-', 1000)).toEqual({ start: 500, end: 999 })
+    expect(parseRange('bytes=-200', 1000)).toEqual({ start: 800, end: 999 })
+    expect(parseRange('bytes=900-5000', 1000)).toEqual({ start: 900, end: 999 })
+    expect(parseRange(null, 1000)).toBeNull()
+    expect(parseRange('bytes=-', 1000)).toBeNull()
+    expect(parseRange('bytes=1000-', 1000)).toBe('invalid')
+    expect(parseRange('bytes=5-2', 1000)).toBe('invalid')
+  })
+
+  it('accepts ids only, never paths', () => {
+    expect(parseClipUrl('rcclip://clip/12')).toEqual({ kind: 'clip', id: '12' })
+    expect(parseClipUrl('rcclip://thumb/7?v=3')).toEqual({ kind: 'thumb', id: '7' })
+    expect(parseClipUrl('rcclip://clip/../../windows/system32')).toBeNull()
+    expect(parseClipUrl('rcclip://clip/C:%5Csecret.mp4')).toBeNull()
+    expect(parseClipUrl('rcclip://file/1')).toBeNull()
+    expect(parseClipUrl('file:///C:/a.mp4')).toBeNull()
+  })
+})

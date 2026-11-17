@@ -3,6 +3,7 @@ import { createReadStream, createWriteStream, existsSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
+import { constants, setPriority } from 'node:os'
 import type { FfmpegState } from '@shared/types'
 import { FFMPEG_BUILD, ffmpegBuildPublished } from '@shared/ffmpegBuild'
 
@@ -41,7 +42,7 @@ export function sha256File(file: string): Promise<string> {
 export function run(
   file: string,
   args: string[],
-  options: { timeoutMs?: number; cwd?: string } = {}
+  options: { timeoutMs?: number; cwd?: string; lowPriority?: boolean } = {}
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     let stdout = ''
@@ -54,6 +55,14 @@ export function run(
       resolve({ code, stdout, stderr })
     }
     const child = spawn(file, args, { windowsHide: true, cwd: options.cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+    if (options.lowPriority && child.pid) {
+      try {
+        // below normal: work next to a running game must never take CPU time from it
+        setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL)
+      } catch {
+        // already over
+      }
+    }
     const timer = setTimeout(() => {
       child.kill()
       finish(-1)

@@ -2,7 +2,7 @@ import type { GameSummary } from './summary'
 import type { Encounter } from './encounters'
 import type { AchievementCategory, AchievementRank } from './achievements'
 import type { Announcement, Trigger } from './announcer'
-import type { EncoderProbe, RecorderSettings } from './recorder'
+import type { ClipKind, EncoderProbe, RecorderMode, RecorderSettings } from './recorder'
 // Types shared between the Electron main process and the React renderer.
 
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
@@ -435,6 +435,56 @@ export interface FfmpegState {
   message?: string
 }
 
+/** The game a clip belongs to, for the library (from the saved summary). */
+export interface ClipGame {
+  championId: number
+  kda: [number, number, number]
+  win: boolean
+  mode: string
+  queueId: number
+  createdAt: number
+}
+
+/** A saved clip. The video is served to the window as rcclip://clip/<id>. */
+export interface Clip {
+  id: number
+  gameId: number | null
+  recordingId: number | null
+  createdAt: number
+  /** position in its recording */
+  startMs: number
+  endMs: number
+  durationMs: number
+  /** manual, bookmark, auto:penta … or 'export' for something the editor made */
+  kind: ClipKind | 'export'
+  title: string
+  favorite: boolean
+  bytes: number
+  url: string
+  thumbUrl: string | null
+  /** null for clips without a saved game (tests, games whose summary never came) */
+  game: ClipGame | null
+}
+
+/** What the recorder is doing, for the header of the main window and the Clips settings. */
+export interface RecorderStatus {
+  /** off = switched off or something is missing (see message), error = recording failed */
+  state: 'off' | 'idle' | 'recording' | 'saving' | 'error'
+  message: string | null
+  mode: RecorderMode
+  /** "NVIDIA AV1" while recording */
+  encoder: string | null
+  startedAt: number | null
+  /** space used by clips and recordings */
+  bytes: number
+  quotaBytes: number
+  /** seconds of footage a clip could go back right now */
+  ringSeconds: number
+  /** bookmarks set in the running game */
+  bookmarks: number
+  lastClip: Clip | null
+}
+
 /** What the recorder needs before it can run, for the Clips settings. */
 export interface RecorderSetup {
   ffmpeg: FfmpegState
@@ -749,6 +799,9 @@ export interface RcApi {
   installFfmpeg(): Promise<FfmpegState>
   /** tests the GPU encoders again (never during a game) */
   testEncoders(): Promise<EncoderProbe | null>
+  recorderStatus(): Promise<RecorderStatus>
+  /** the same as the clip hotkey: saves the last seconds of the running recording */
+  clipNow(): Promise<Clip | null>
   /** opens the folder with your clips (creates it if needed) */
   openClipFolder(): Promise<void>
   /** asks for another storage folder; null when cancelled */
@@ -859,6 +912,10 @@ export interface AdminApi {
   announce(trigger: Trigger): Promise<void>
   /** the Discord message the newest saved game would get, and why it would not be posted automatically */
   discordPreview(): Promise<{ gameId: number | null; payload: unknown; skip: string | null }>
+  /** starts or stops a recording of a test picture, so the simulated game has something to cut clips from */
+  recorderTestRecording(on: boolean): Promise<RecorderStatus>
+  /** the segments of the running recording, pending automatic clips and bookmarks */
+  recorderRing(): Promise<{ segments: number; from: number; to: number; bytes: number; pending: string[]; bookmarks: number; offset: number | null }>
   /** downloads FFmpeg again and tests the encoders from scratch */
   recorderReloadFfmpeg(): Promise<RecorderSetup>
   /** records 20 s of a test picture or of the main screen through the real pipeline; returns the folder and what FFmpeg said */
@@ -944,6 +1001,10 @@ export interface RcEvents {
   loading: LoadingState | null
   /** download progress and state of the recorder's FFmpeg */
   ffmpeg: FfmpegState
+  /** recorder status: idle, recording, saving, space used, last clip */
+  recorder: RecorderStatus
+  /** a clip was saved (hotkey, automatic, bookmark) */
+  clipSaved: Clip
   /** map timers for the main window (the minimap overlay gets its own copy with positions) */
   mapTimers: MinimapState | null
   minimap: MinimapState | null

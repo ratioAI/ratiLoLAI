@@ -27,6 +27,7 @@ import {
   RotateCcw,
   Rocket,
   Save,
+  Scissors,
   ScrollText,
   Send,
   Sparkles,
@@ -56,7 +57,7 @@ import { demoChampSelect, demoSummary } from '@/lib/mockApi'
 import { PageHeader } from '@/components/Layout'
 import { DEMO_LOBBY } from './OverlayLoading'
 import { DiscoveryCard } from '@/components/AchievementToast'
-import type { AchievementState, RecorderSetup } from '@shared/types'
+import type { AchievementState, RecorderSetup, RecorderStatus } from '@shared/types'
 import { clearBadShaders, currentBadShaders, testFlightShaders } from '@/components/flightGl'
 import { NIGHT_SKY_FRAG } from '@/components/CosmosBackground'
 import { VERT } from '@/components/spaceGlsl'
@@ -781,10 +782,23 @@ function RecorderCard() {
   const action = useAction()
   const [setup, setSetup] = useState<RecorderSetup | null>(null)
   const [lines, setLines] = useState<string[]>([])
+  const [status, setStatus] = useState<RecorderStatus | null>(null)
+  const [ring, setRing] = useState<Awaited<ReturnType<NonNullable<typeof admin>['recorderRing']>> | null>(null)
+  const now = useSecondTick(status?.state === 'recording' || status?.state === 'saving')
   useEffect(() => {
     void api.recorderSetup().then(setSetup)
-    return api.on('ffmpeg', (ffmpeg) => setSetup((current) => (current ? { ...current, ffmpeg } : current)))
+    void api.recorderStatus().then(setStatus)
+    const unsubscribers = [
+      api.on('ffmpeg', (ffmpeg) => setSetup((current) => (current ? { ...current, ffmpeg } : current))),
+      api.on('recorder', setStatus)
+    ]
+    return () => unsubscribers.forEach((off) => off())
   }, [])
+  // the ring of the running recording, once a second
+  useEffect(() => {
+    void admin?.recorderRing().then(setRing)
+  }, [admin, now])
+  const recording = status?.state === 'recording' || status?.state === 'saving'
   const capture = (source: 'testsrc' | 'screen') =>
     action.run(`Recording 20 s (${source === 'testsrc' ? 'test picture' : 'main screen'})`, async () => {
       const result = await admin!.recorderTestCapture(source)
@@ -839,6 +853,52 @@ function RecorderCard() {
         </Btn>
         <Btn icon={<FolderOpen size={15} />} onClick={() => void api.openClipFolder()}>
           Open folder
+        </Btn>
+      </div>
+      <Label>Auto clips with the simulated game</Label>
+      <div className="admin-events text-[11px]">
+        <div>
+          Recorder: {status?.state ?? '…'} {status?.encoder ?? ''} {status?.message ?? ''}
+        </div>
+        <div>
+          Ring: {ring?.segments ?? 0} segments · {Math.round(ring?.from ?? 0)}–{Math.round(ring?.to ?? 0)} s · {((ring?.bytes ?? 0) / 1e6).toFixed(1)} MB · game
+          clock offset {ring?.offset == null ? '?' : `${ring.offset.toFixed(1)} s`}
+        </div>
+        <div>
+          Waiting: {ring?.pending.join(', ') || 'no automatic clip'} · bookmarks {ring?.bookmarks ?? 0}
+        </div>
+        {status?.lastClip && (
+          <div>
+            Last clip: #{status.lastClip.id} {status.lastClip.kind} · {Math.round(status.lastClip.durationMs / 1000)} s ·{' '}
+            {(status.lastClip.bytes / 1e6).toFixed(1)} MB
+          </div>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Btn
+          primary={!recording}
+          icon={recording ? <Square size={15} /> : <Play size={15} />}
+          onClick={() =>
+            action.run(recording ? 'Stopping' : 'Starting the test recording', async () => {
+              setStatus(await admin!.recorderTestRecording(!recording))
+              return recording ? 'Recording stopped' : 'Recording a test picture – start the simulated game below and trigger fights'
+            })
+          }
+        >
+          {recording ? 'Stop the test recording' : 'Record a test picture'}
+        </Btn>
+        <Btn
+          icon={<Scissors size={15} />}
+          disabled={!recording}
+          onClick={() =>
+            action.run('Saving a clip', async () => {
+              const clip = await api.clipNow()
+              if (!clip) throw new Error('No clip (nothing recorded yet?)')
+              return `Clip #${clip.id}: ${Math.round(clip.durationMs / 1000)} s, ${(clip.bytes / 1e6).toFixed(1)} MB`
+            })
+          }
+        >
+          Clip now
         </Btn>
       </div>
       {lines.length > 0 && <pre className="admin-events max-h-56 overflow-auto text-[11px] whitespace-pre-wrap">{lines.join('\n')}</pre>}
