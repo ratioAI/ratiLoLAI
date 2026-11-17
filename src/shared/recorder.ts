@@ -385,7 +385,8 @@ export function ffmpegRecordArgs(
   limitS?: number
 ): string[] {
   const dir = outDir.replace(/\\/g, '/').replace(/\/$/, '')
-  const args = ['-hide_banner', '-loglevel', 'warning', '-stats_period', '2', '-y']
+  // -stats: the progress line (time=…) is how the recorder learns when second 0 of the recording was
+  const args = ['-hide_banner', '-loglevel', 'warning', '-stats', '-stats_period', '2', '-y']
   if (profile.encoder.vendor === 'qsv' && source.kind !== 'testsrc')
     args.push('-init_hw_device', 'd3d11va=dx', '-init_hw_device', 'qsv=qs@dx', '-filter_hw_device', 'dx')
   if (audioPipe) {

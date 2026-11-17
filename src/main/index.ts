@@ -56,6 +56,7 @@ import { RecorderService } from './recorder/service'
 import { ClipStore } from './recorder/clipStore'
 import { clipProtocolHandler, mediaTypeOf } from './recorder/protocol'
 import { Exporter } from './recorder/exporter'
+import { run as runProgram } from './recorder/ffmpeg'
 import { ClipSharer } from './recorder/share'
 import { quips as gameQuips } from '@shared/quips'
 import { newProject } from '@shared/editProject'
@@ -889,13 +890,18 @@ function registerIpc(): void {
   handle('shareClipToDiscord', (id: number, options?: { quip?: boolean; again?: boolean }) =>
     sharer.share(Number(id), { quip: options?.quip ?? settings.get().discord.includeQuips, again: !!options?.again })
   )
-  handle('copyClipFile', (id: number) => {
+  handle('copyClipFile', async (id: number) => {
     const file = clips.files(Number(id))?.file
     if (!file || !existsSync(file)) return false
-    // Windows: a file list on the clipboard, so Ctrl+V in Discord or Explorer pastes the file itself
-    if (process.platform === 'win32') clipboard.writeBuffer('FileNameW', Buffer.from(`${file}\0`, 'ucs2'))
-    else clipboard.writeText(file)
-    return true
+    if (process.platform === 'win32') {
+      // a real file drop list on the clipboard, so Ctrl+V in Discord or Explorer pastes the file itself
+      const copied = await runProgram('powershell', ['-NoProfile', '-NonInteractive', '-Command', `Set-Clipboard -LiteralPath '${file.replace(/'/g, "''")}'`], {
+        timeoutMs: 15_000
+      })
+      if (copied.code === 0) return true
+    }
+    clipboard.writeText(file)
+    return process.platform !== 'win32'
   })
   handle('saveClipAs', async (id: number) => {
     const file = clips.files(Number(id))?.file
