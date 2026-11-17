@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+- Clips: the FFmpeg build is published now, so *Download* in Settings › Clips works (FFmpeg 8.1, LGPL build, verified by SHA-256).
+
 ## 1.3.0
 
 **Clips** – a free replacement for Medal inside ratioAI. Games are recorded in full quality without a paywall or a watermark, clips are made by hotkey or on their own, an editor turns them into montages, GIFs and memes, and you share them through your Discord webhook or keep them on disk. Everything runs locally: no servers, no cloud, no running costs. Off by default.

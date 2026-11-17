@@ -1,0 +1,40 @@
+name: Publish FFmpeg asset
+
+# Publishes the FFmpeg build that Clips downloads (src/shared/ffmpegBuild.ts) as an asset of a
+# pre-release, so the auto updater never mistakes it for an app release. The file is only
+# published when it matches the SHA-256 given here; put the same checksum into ffmpegBuild.ts.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: LGPL build to publish (zip)
+        default: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-lgpl-8.1.zip
+      sha256:
+        description: expected SHA-256 of the zip
+        required: true
+      tag:
+        description: tag of the pre-release
+        default: ffmpeg-8.1-lgpl
+      name:
+        description: file name of the asset
+        default: ffmpeg-8.1-win64-lgpl.zip
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify
+        run: |
+          curl -fsSL -o "${{ inputs.name }}" "${{ inputs.url }}"
+          echo "${{ inputs.sha256 }}  ${{ inputs.name }}" | sha256sum -c -
+          stat -c 'bytes: %s' "${{ inputs.name }}"
+      - name: Publish as a pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.tag }}" "${{ inputs.name }}" --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease \
+            --title "FFmpeg (LGPL build) for Clips" \
+            --notes "FFmpeg for Windows x64, LGPL build without x264/x265, unchanged from ${{ inputs.url }}. ratioAI downloads this file on first use of Clips and checks its SHA-256 (${{ inputs.sha256 }}). Not an app release. License: LGPL-2.1-or-later (LICENSE.txt inside the zip); source: https://ffmpeg.org/download.html"

@@ -15,9 +15,9 @@ export const FFMPEG_BUILD = {
   version: '8.1',
   url: 'https://github.com/ratioAI/ratiLoLAI/releases/download/ffmpeg-8.1-lgpl/ffmpeg-8.1-win64-lgpl.zip',
   /** hex SHA-256 of the zip; empty until the asset is published (the download is refused then) */
-  sha256: '',
+  sha256: '7947012ff7ef4fdc8b459186b456716bc2941ac41c8118f128e0a840a97b6646',
   /** size in bytes, for the progress bar when the server sends no length */
-  bytes: 0,
+  bytes: 167576152,
   license: 'LGPL-2.1-or-later',
   licenseUrl: 'https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html',
   /** where the build and its source come from */
