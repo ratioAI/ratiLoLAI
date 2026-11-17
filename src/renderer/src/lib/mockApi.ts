@@ -671,7 +671,8 @@ export function createMockApi(): RcApi {
       return ACHIEVEMENTS.map((def, i) => {
         const result = results[i]
         const manual = demoAchievements.manual.get(def.id)
-        const unlocked = result.unlocked || manual !== undefined
+        // '...?demo-unlocked' lights every constellation (screenshots of the star map)
+        const unlocked = result.unlocked || manual !== undefined || window.location.hash.includes('demo-unlocked')
         return {
           id: def.id,
           name: def.name,

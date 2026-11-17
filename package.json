@@ -1,7 +1,7 @@
 {
   "name": "rift-companion",
   "productName": "ratioAI",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Ad-free League of Legends companion app – tier lists, builds, runes, auto-import, ARAM & ARAM: Mayhem augments, live game scouting. Powered by your own Riot API crawler.",
   "main": "./out/main/index.js",
   "author": "Alexander Fink",
@@ -17,6 +17,7 @@
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
     "build:web": "vite build -c vite.web.config.ts",
+    "screenshots": "electron scripts/screenshots.cjs",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {

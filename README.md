@@ -42,6 +42,10 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. ra
 | 🏆 **Leaderboard** | *Games → Leaderboard*: two podiums showing who of you and your premades was MVP most often and who was the troll most often, plus a sortable table with games, win rate, MVP and troll rates and average impact. |
 | 🌌 **Universe & star map** | ratioAI ships with a fixed map of 640 galaxies in 3D – spirals, barred spirals, ellipticals, lenticulars, irregulars, dwarfs, ring galaxies and colliding pairs, each with its own night sky. Every accepted match plays a short film flying you from the planet of your last game to a new one: either through a wormhole (with the target galaxy already visible inside its sphere) or in a swing-by past a ray-traced black hole and its accretion disk, then down into the target galaxy and onto the planet. Click to skip. *Games → Star map* shows the same universe, animated, to turn and zoom, with the galaxies you played in, your route between them and the games played in each. |
 | 🌀 **Loading screen** | A panel over the loading screen with every player's recent win rate in ARAM: Mayhem / ARAM (from the client's match history); <kbd>Space</kbd> shows / hides it, it disappears when the game starts. |
+| 💀 **Nemesis & old friends** | On the loading screen every stranger you met before gets a small badge and a one-liner from your saved games: *Nemesis* (beat you in most of 3+ games), *Victim*, *Lucky charm* (you win with them), *Jinx*, *Rival* or just *Last time: 2/14/3 Yasuo, 12 days ago* – plus a note when they changed their Riot ID. Your premades never get one. The profile page shows your history with a player and links to your shared games. |
+| ✨ **Achievements as constellations** | 28 achievements – pentakills, untouchable wins, *Ratio Approved* augments, MVP streaks, game milestones, galaxies visited and a handful of secret ones. Each one is a constellation in the sky of the star map: locked ones are faint stars, unlocked ones light up in bronze, silver, gold or a cosmic gradient. *Games → Achievements* shows all of them with progress; a new one draws itself star by star after the game. |
+| 💬 **Discord webhook** | After every game a summary lands in your friends' Discord channel: result, both teams with K/D/A and quips, MVP and troll, the best highlights and new achievements. Your own webhook (stored encrypted), per mode, optionally only with premades, strangers anonymized by default. Or post any saved game by hand. |
+| 📣 **Hype announcer** | Sounds for your multikills, a premade's pentakill, first blood, aces, victory and defeat – and a sad trombone for your 10th death. Generated live with WebAudio (no recordings) plus an optional line from the system's offline voice, cooldown and priority so it never spams, every trigger can be switched off or replaced by your own sound file. Audio only, from the app's window; off by default. |
 | ✨ **ARAM: Mayhem** | Augment tips per champion (top combos, strong picks, *traps*), proven multi-augment combinations and the most picked augments per rarity – shown in champion select, **in game** next to the scoreboard and on a dedicated page. Items & runes come from ARAM data, and your **own** Mayhem history (augments you picked, win rate) is read from the League client. |
 | 👤 **Profiles** | op.gg-style player lookup: ranks, mastery, last 15 games with KDA, CS/min, items, runes and champion stats. |
 | 🕷️ **Own data pipeline** | Crawls Challenger/GM/Master Solo-Queue games of one or more regions, respects Riot rate limits, resumes where it stopped, keeps separate data per patch. |
@@ -57,6 +61,15 @@ Tools like Blitz, Porofessor or op.gg are great – but they are full of ads. ra
   <tr>
     <td><img src="docs/screenshots/live.png" alt="Champion select" /></td>
     <td><img src="docs/screenshots/profile.png" alt="Profile" /></td>
+  </tr>
+</table>
+
+<p align="center"><img src="docs/screenshots/loading-encounters.png" alt="Loading screen with encounter badges" width="900" /><br/><sub>Loading screen: Nemesis, Victim, Lucky charm, Jinx, Rival and familiar faces from your own games</sub></p>
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/constellations.png" alt="Achievements as constellations on the star map" /></td>
+    <td><img src="docs/screenshots/achievements.png" alt="Achievements" /></td>
   </tr>
 </table>
 
@@ -117,6 +130,9 @@ flowchart LR
     LCU[LCU manager<br/>HTTPS + WAMP websocket] --> Import[Rune / item-set / spell import]
     Live[Live Client Data poller]
     LCU --> Games[(Game history<br/>SQLite)]
+    Games --> Ach[Achievements · encounters]
+    Games --> Discord[Discord poster]
+    Live --> Announcer[Announcer triggers]
     DD[Data Dragon cache]
   end
   subgraph Renderer["Renderer (React 19 + Tailwind 4)"]
@@ -126,6 +142,7 @@ flowchart LR
   LCU -->|127.0.0.1| Client[League Client]
   Live -->|127.0.0.1:2999| Game[Running game]
   DD -->|HTTPS| DDragon[(Data Dragon CDN)]
+  Discord -->|your webhook| DiscordAPI[(Discord)]
   UI <-->|typed IPC via preload| Main
 ```
 
@@ -137,7 +154,10 @@ src/
 │  ├─ lcu/            League client discovery, websocket events, champ select, import payloads
 │  ├─ live/           Live Client Data API (in-game)
 │  ├─ ddragon.ts      static data download + cache
-│  ├─ games.ts        game history database (SQLite) + MVP / troll leaderboard
+│  ├─ games.ts        game history database (SQLite, versioned migrations) + leaderboard + encounters
+│  ├─ achievements.ts achievements: full evaluation at start, then per game; flights
+│  ├─ discord.ts      Discord webhook poster (dedupe, rate limits)
+│  ├─ announcer.ts    feeds the live event feed into the hype announcer
 │  └─ profile.ts      summoner profiles & live-game scouting
 ├─ preload/           contextBridge – exposes a typed `window.rc` API
 ├─ renderer/          React UI (also builds as a standalone web demo)
@@ -158,18 +178,21 @@ test/                 Vitest unit + integration tests (crawler against a fake Ri
 
 ```bash
 npm run dev         # Electron + Vite with hot reload
-npm test            # Vitest (148 tests)
+npm test            # Vitest (241 tests)
 npm run typecheck   # strict TypeScript for main + renderer
 npm run build:web   # standalone web demo in ./dist-web (synthetic data)
+npm run screenshots # README screenshots of the 1.2 features from the built web demo (needs internet)
 ```
 
-`npm run dev` also adds an **Admin** tab with developer tools: flights to any galaxy type (wormhole or black hole), the in-game overlays without a game, a simulated League client and ARAM game (inhibitor and relic events), test games for the post-game summary, the live overlay log and a relic pad calibration for maps the timers don't know yet. Builds leave all of it out (`import.meta.env.DEV`), so it is never part of the installer.
+`npm run dev` also adds an **Admin** tab with developer tools: flights to any galaxy type (wormhole or black hole), the in-game overlays without a game (including loading-screen lobbies with every kind of encounter, or built from your own history), a simulated League client and ARAM game (inhibitor and relic events, fights with multikills and aces for the announcer), test games for the post-game summary, achievements (unlock, reset, play the animation), the Discord message of your newest game, every announcer sound, the live overlay log and a relic pad calibration for maps the timers don't know yet. Builds leave all of it out (`import.meta.env.DEV`), so it is never part of the installer.
 
 CI runs type checks, tests and both builds on every push. Tagging `v*` builds the Windows installer and attaches it to a GitHub release; `main` is deployed as the web demo to GitHub Pages.
 
 ## Is this allowed?
 
 ratioAI only uses **official, documented interfaces**: the public Riot API, the League Client API (LCU – the same interface Blitz, Porofessor, Mobalytics etc. use for rune import) and the in-game Live Client Data API. It does not read game memory or inject anything into the game, so it is not affected by Vanguard. For personal use a development or personal API key is sufficient; if you want to distribute the app publicly with a shared key you have to register it as a product with Riot.
+
+The 1.2 features add nothing to that list: encounters and achievements are worked out from your own game database, the announcer listens to the same Live Client Data feed the Live tab already polls and only plays audio in the app's own window. **Discord posts only go to the webhook URL you enter yourself** (stored encrypted, never shown again), nothing is sent anywhere else, and players who aren't you or your premades appear only as their champion unless you switch that off.
 
 ## Legal
 
