@@ -1,6 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Download, ExternalLink, FolderOpen, KeyRound, Loader2, MonitorPlay, ScanSearch } from 'lucide-react'
-import type { OverlayDiagnostics, Platform, ScanTestResult, SeedTier, Settings as SettingsT, UpdateState } from '@shared/types'
+import { Download, ExternalLink, FolderOpen, KeyRound, Loader2, MonitorPlay, ScanSearch, Send, Webhook } from 'lucide-react'
+import type {
+  EditableSettings,
+  OverlayDiagnostics,
+  Platform,
+  ScanTestResult,
+  SeedTier,
+  Settings as SettingsT,
+  UpdateState
+} from '@shared/types'
+import { DISCORD_MODES } from '@shared/discordPayload'
 import { PLATFORMS } from '@shared/types'
 import { api, isDemo } from '@/lib/api'
 import { useApp } from '@/lib/store'
@@ -31,7 +40,7 @@ export function Settings() {
 
   if (!settings) return null
 
-  const save = async (patch: Partial<Omit<SettingsT, 'hasApiKey'>>) => setSettings(await api.saveSettings(patch))
+  const save = async (patch: Partial<EditableSettings>) => setSettings(await api.saveSettings(patch))
   const saveKey = async () => {
     setSaving(true)
     setKeyStatus(null)
@@ -288,6 +297,10 @@ export function Settings() {
         </Field>
       </Group>
 
+      <Group title="Discord">
+        <DiscordSettings settings={settings} save={save} refresh={async () => setSettings(await api.getSettings())} />
+      </Group>
+
       <Group title="Crawler">
         <Field label="Player pool">
           <div className="flex gap-2">
@@ -374,6 +387,96 @@ export function Settings() {
         registered trademarks of Riot Games, Inc.
       </p>
     </div>
+  )
+}
+
+/** Webhook URL (stored encrypted, never shown again), a test button and what gets posted. */
+function DiscordSettings({
+  settings,
+  save,
+  refresh
+}: {
+  settings: SettingsT
+  save: (patch: Partial<EditableSettings>) => Promise<void>
+  refresh: () => Promise<void>
+}) {
+  const [url, setUrl] = useState('')
+  const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null)
+  const [busy, setBusy] = useState<'save' | 'test' | null>(null)
+  const discord = settings.discord
+  const set = (patch: Partial<SettingsT['discord']>) => save({ discord: { ...discord, ...patch } })
+  const saveUrl = async () => {
+    setBusy('save')
+    setStatus(null)
+    const result = await api.setDiscordWebhook(url)
+    setStatus(result)
+    if (result.ok) setUrl('')
+    await refresh()
+    setBusy(null)
+  }
+  const test = async () => {
+    setBusy('test')
+    setStatus(null)
+    setStatus(await api.testDiscordWebhook().catch((error: Error) => ({ ok: false, message: error.message })))
+    setBusy(null)
+  }
+  return (
+    <>
+      <p className="mb-3 text-sm text-muted">
+        After every game a summary with everyone's quips lands in your friends' channel. Create a webhook in Discord (channel settings ›
+        Integrations › Webhooks) and paste its URL – it is stored encrypted and only used to post there.
+        {settings.hasDiscordWebhook && <span className="ml-1 font-semibold text-win">A webhook is saved.</span>}
+      </p>
+      <div className="flex gap-2">
+        <input
+          type="password"
+          autoComplete="off"
+          className="input flex-1"
+          placeholder={
+            settings.hasDiscordWebhook ? '••••••••••••••••  (saved – paste a new one to replace it)' : 'https://discord.com/api/webhooks/…'
+          }
+          value={url}
+          onChange={(event) => setUrl(event.target.value)}
+        />
+        <button className="btn btn-primary" disabled={!!busy || (!url && !settings.hasDiscordWebhook)} onClick={saveUrl}>
+          {busy === 'save' ? <Loader2 size={15} className="animate-spin" /> : <Webhook size={15} />}
+          {url || !settings.hasDiscordWebhook ? 'Save' : 'Remove'}
+        </button>
+        <button className="btn btn-ghost" disabled={!!busy || !settings.hasDiscordWebhook} onClick={test}>
+          {busy === 'test' ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} Test
+        </button>
+      </div>
+      {status && <p className={`mt-2 text-sm ${status.ok ? 'text-win' : 'text-loss'}`}>{status.message}</p>}
+      <Toggle label="Post finished games automatically" value={discord.enabled} onChange={(value) => set({ enabled: value })} />
+      <Field label="Modes">
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {DISCORD_MODES.map(([mode, label]) => {
+            const on = discord.modes.includes(mode)
+            return (
+              <button
+                key={mode}
+                onClick={() => set({ modes: on ? discord.modes.filter((other) => other !== mode) : [...discord.modes, mode] })}
+                className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${on ? 'border-accent/60 bg-accent/15 text-accent' : 'border-line text-muted'}`}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      </Field>
+      <Toggle label="Only games with premades" value={discord.onlyWithPremades} onChange={(value) => set({ onlyWithPremades: value })} />
+      <Toggle
+        label="Show strangers only as their champion (no names)"
+        value={discord.anonymizeRandoms}
+        onChange={(value) => set({ anonymizeRandoms: value })}
+      />
+      <Toggle label="Include the quips" value={discord.includeQuips} onChange={(value) => set({ includeQuips: value })} />
+      <Toggle
+        label="Include new achievements"
+        value={discord.includeAchievements}
+        onChange={(value) => set({ includeAchievements: value })}
+      />
+    </>
   )
 }
 

@@ -9,7 +9,7 @@ import type {
   PatchStats,
   Platform,
   RcEvents,
-  Settings,
+  EditableSettings,
   StatRole,
   TierEntry,
   UpdateState,
@@ -38,6 +38,9 @@ import { CaptureService } from './capture/captureService'
 import { cardRects, WINDOWS, type NameCandidate } from './scanner/detect'
 import { augmentTiersForChampion, makeTierLookup, type TierLookup } from '@shared/mayhem'
 import { AchievementService } from './achievements'
+import { DiscordPoster } from './discord'
+import { isDiscordWebhook } from '@shared/discordPayload'
+import { demoGame } from '@shared/demoGame'
 import { ProfileService } from './profile'
 import { sanitizeApiKey, isValidKeyFormat } from './riot/apiKey'
 import { RiotClient, regionalOf } from './riot/client'
@@ -415,6 +418,17 @@ const achievements = new AchievementService({
   unlocked: (ids) => emit('achievementsUnlocked', ids),
   log: (message) => diag.log(message)
 })
+// --- Discord: a summary of each game in your friends' channel (your own webhook) ---
+const discord = new DiscordPoster({
+  db: games.database,
+  settings: () => settings.get().discord,
+  webhook: () => settings.getDiscordWebhook(),
+  staticData: () => ddragon.get().catch(() => null),
+  tiers: augmentTiers,
+  achievementsOf: (gameId) => achievements.list().filter((achievement) => achievement.gameId === gameId),
+  log: (message) => diag.log(message)
+})
+
 /** The first full evaluation reads every saved game, so it waits until no game is running. */
 function startAchievements(): void {
   if (inGame) {
@@ -564,7 +578,12 @@ const lcu = new LcuManager({
       }
       emit('gameSummary', saved)
       // after the summary is on screen; the game is over, so reading the database is fine now
-      void achievements.onGame(saved).catch((error) => diag.log(`achievements after game ${saved.gameId} failed: ${String(error)}`))
+      void achievements
+        .onGame(saved)
+        .catch((error) => diag.log(`achievements after game ${saved.gameId} failed: ${String(error)}`))
+        // posted after the achievements, so the message can name the ones this game unlocked
+        .then(() => discord.maybePost(saved))
+        .catch((error) => diag.log(`discord after game ${saved.gameId} failed: ${String(error)}`))
     }
   }
 })
@@ -616,7 +635,7 @@ function registerIpc(): void {
 
   handle('getStatic', () => ddragon.get())
   handle('getSettings', () => settings.get())
-  handle('saveSettings', (patch: Partial<Omit<Settings, 'hasApiKey'>>) => {
+  handle('saveSettings', (patch: Partial<EditableSettings>) => {
     const next = settings.update(patch)
     ddragon.setLanguage(next.language)
     mayhem.setLanguage(next.language)
@@ -641,6 +660,24 @@ function registerIpc(): void {
     diag.log(`API key saved, test: ${result.ok ? 'ok' : result.message}`)
     if (result.ok) crawler.clearKeyError()
     return result
+  })
+  handle('setDiscordWebhook', (url: string) => {
+    const clean = String(url ?? '').trim()
+    if (!clean) {
+      settings.setDiscordWebhook('')
+      return { ok: true, message: 'Webhook removed.' }
+    }
+    if (!isDiscordWebhook(clean))
+      return { ok: false, message: 'This is not a Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>).' }
+    settings.setDiscordWebhook(clean)
+    diag.log('discord: webhook saved')
+    return { ok: true, message: 'Webhook saved.' }
+  })
+  handle('testDiscordWebhook', () => discord.post(demoGame(), true))
+  handle('postGameToDiscord', async (gameId: number) => {
+    const summary = games.get(Number(gameId))
+    if (!summary) return { ok: false, message: 'Game not found.' }
+    return discord.post(summary)
   })
   handle('getPatches', (mode: GameMode) => store.patches(assertMode(mode)))
   handle('getTierList', (patch: string, mode: GameMode) => tierList(patch, assertMode(mode)))
@@ -763,6 +800,7 @@ function registerIpc(): void {
         capture,
         games,
         achievements,
+        discord,
         diag,
         padsFile: minimapPadsFile
       })

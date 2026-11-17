@@ -27,6 +27,7 @@ import {
   Rocket,
   Save,
   ScrollText,
+  Send,
   Sparkles,
   Square,
   Swords,
@@ -633,6 +634,67 @@ function AchievementsCard() {
         <div className="admin-subpanel">
           <DiscoveryCard key={preview} achievement={selected} />
         </div>
+      )}
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Discord
+// ---------------------------------------------------------------------------
+
+function DiscordCard() {
+  const admin = api.admin
+  const action = useAction()
+  const [preview, setPreview] = useState<{ gameId: number | null; payload: unknown; skip: string | null } | null>(null)
+  return (
+    <Card icon={<Send size={18} />} title="Discord" action={action}>
+      <div className="flex flex-wrap gap-2">
+        <Btn
+          icon={<Eye size={15} />}
+          onClick={() =>
+            action.run('Building message', async () => {
+              const result = (await admin?.discordPreview()) ?? null
+              setPreview(result)
+              return result?.gameId
+                ? `Newest game ${result.gameId}: ${result.skip ? `would be skipped (${result.skip})` : 'would be posted'}`
+                : 'No game'
+            })
+          }
+        >
+          Message for newest game
+        </Btn>
+        <Btn
+          icon={<Send size={15} />}
+          onClick={() =>
+            action.run('Sending test message', async () => {
+              const result = await api.testDiscordWebhook()
+              if (!result.ok) throw new Error(result.message)
+              return result.message
+            })
+          }
+        >
+          Send test message
+        </Btn>
+        {preview?.gameId != null && (
+          <Btn
+            icon={<Rocket size={15} />}
+            onClick={() =>
+              action.run('Posting', async () => {
+                const result = await api.postGameToDiscord(preview.gameId!)
+                if (!result.ok) throw new Error(result.message)
+                return result.message
+              })
+            }
+          >
+            Post it now
+          </Btn>
+        )}
+      </div>
+      {preview?.payload != null && (
+        <pre className="admin-events max-h-72 overflow-auto text-[11px] whitespace-pre-wrap">
+          {JSON.stringify(preview.payload, null, 2)}
+        </pre>
       )}
     </Card>
   )
@@ -1341,6 +1403,7 @@ export function Admin() {
         <FlightsCard />
         <OverlaysCard />
         <AchievementsCard />
+        <DiscordCard />
         <SimCard />
         <CalibrationCard />
         <LogCard />

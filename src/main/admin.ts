@@ -27,6 +27,7 @@ import type { CaptureService } from './capture/captureService'
 import type { DiagLog } from './diag'
 import type { GameStore } from './games'
 import type { AchievementService } from './achievements'
+import type { DiscordPoster } from './discord'
 import type { OverlayManager } from './overlay'
 import type { MinimapWatcher } from './minimap/watcher'
 import { validPads, writeMeasuredPads } from './minimap/store'
@@ -66,6 +67,7 @@ export interface AdminContext {
   capture: CaptureService
   games: GameStore
   achievements: AchievementService
+  discord: DiscordPoster
   diag: DiagLog
   padsFile: string
 }
@@ -402,6 +404,13 @@ export function registerAdmin(ctx: AdminContext): void {
     log(`test game ${summary.gameId} saved`)
     ctx.emit('gameSummary', saved)
     void ctx.achievements.onGame(saved)
+  })
+
+  handle('admin:discordPreview', async () => {
+    const newest = ctx.games.list()[0]
+    const summary = newest ? ctx.games.get(newest.gameId) : null
+    if (!summary) return { gameId: null, payload: null, skip: 'no saved games' }
+    return { gameId: summary.gameId, payload: await ctx.discord.payload(summary), skip: ctx.discord.skipReason(summary) }
   })
 
   handle('admin:unlockAchievement', (id: string) => {

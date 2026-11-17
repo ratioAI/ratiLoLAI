@@ -1,0 +1,70 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildDiscordPayload > matches the snapshot 1`] = `
+{
+  "allowed_mentions": {
+    "parse": [],
+  },
+  "embeds": [
+    {
+      "color": 3066993,
+      "fields": [
+        {
+          "name": "Your team",
+          "value": "**Champ99** · You · 11/4/19 👑 ⭐
+> *Die anderen vier waren Begleitpersonal. Und 31.2k Schaden.*
+**Champ86** · Duo Partner · 7/9/12
+> *38k eingesteckt. Ein Sandsack mit Beinen.*
+**Champ13** · Random Ryze · 2/12/10
+> *Statistisch gesehen eher ein Handicap. Leider 12× tot.*
+**Champ432** · Bard Enjoyer · 3/6/27
+> *KDA 5.0. Mama wäre stolz. Und nebenbei Heiler.*
+**Champ157** · Splitpushed · 9/8/8
+> *9/8/8. Keine Schlagzeilen.*",
+        },
+        {
+          "name": "Enemy team",
+          "value": "**Champ222** · Enemy Jinx · 14/7/9
+> *36.5k Schaden. Unsere Healthbars weinen noch.*
+**Champ412** · Enemy Thresh · 2/9/24
+> *Ein Geschenk an unser Team.*
+**Champ103** · Enemy Ahri · 8/8/13
+> *27.4k Schaden. Ihr Hauptgeschütz – und es traf.*
+**Champ54** · Enemy Malphite · 5/6/16
+> *Unser Schaden ist an ihm abgeprallt.*
+**Champ117** · Enemy Lulu · 3/2/21
+> *3 Kills gegen uns. Wir legen Beschwerde ein.*",
+        },
+        {
+          "inline": true,
+          "name": "MVP 👑",
+          "value": "You (Champ99) · impact 64",
+        },
+        {
+          "inline": true,
+          "name": "Troll 🤡",
+          "value": "Random Ryze (Champ13) · impact 38",
+        },
+        {
+          "name": "Highlights",
+          "value": "• Comeback: your team was down 6.0k gold at 14:00.
+• Most damage: Enemy Jinx \\(36.5k\\).",
+        },
+        {
+          "name": "New constellations ✨",
+          "value": "**Triple Threat** – Get a triple kill.",
+        },
+      ],
+      "footer": {
+        "text": "ratioAI · ad-free League companion",
+      },
+      "thumbnail": {
+        "url": "https://ddragon.leagueoflegends.com/cdn/15.22.1/img/champion/Champ99Key.png",
+      },
+      "timestamp": "2026-11-17T11:56:41.000Z",
+      "title": "VICTORY · ARAM: Mayhem · 18:41",
+    },
+  ],
+  "username": "ratioAI",
+}
+`;

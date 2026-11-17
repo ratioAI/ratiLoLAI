@@ -20,6 +20,7 @@ import { encounterStatsFromSummaries, toEncounter } from '@shared/encounters'
 import { ACHIEVEMENTS, evaluateAchievements, goalOf } from '@shared/achievements'
 import { makeTierLookup, summaryAugmentTiers } from '@shared/mayhem'
 import { UNIVERSE } from '@shared/universe'
+import { isDiscordWebhook } from '@shared/discordPayload'
 import type {
   AchievementState,
   AdminApi,
@@ -487,6 +488,7 @@ export function createMockApi(): RcApi {
     platform: 'euw1',
     language: 'en_US',
     hasApiKey: true,
+    hasDiscordWebhook: false,
     leaguePath: '',
     crawler: {
       seedTiers: ['CHALLENGER', 'GRANDMASTER', 'MASTER'],
@@ -507,7 +509,15 @@ export function createMockApi(): RcApi {
     },
     minimap: { enabled: true, inhibitors: true, relics: true, scale: 1 },
     ui: { background: 'animated' },
-    client: { autoImportRunes: true, autoImportItems: true, autoImportSpells: false, flashOn: 'F', autoAccept: true, acceptDelay: 'human' }
+    client: { autoImportRunes: true, autoImportItems: true, autoImportSpells: false, flashOn: 'F', autoAccept: true, acceptDelay: 'human' },
+    discord: {
+      enabled: false,
+      modes: ['mayhem', 'aram'],
+      onlyWithPremades: false,
+      anonymizeRandoms: true,
+      includeQuips: true,
+      includeAchievements: true
+    }
   }
 
   let crawler: CrawlerStatus = {
@@ -545,11 +555,20 @@ export function createMockApi(): RcApi {
         ...settings,
         ...patch,
         crawler: { ...settings.crawler, ...patch.crawler },
-        client: { ...settings.client, ...patch.client }
+        client: { ...settings.client, ...patch.client },
+        discord: { ...settings.discord, ...patch.discord }
       }
       return settings
     },
     setApiKey: async () => ({ ok: true, message: 'Web demo: the key is not stored.' }),
+    setDiscordWebhook: async (url) => {
+      if (url && !isDiscordWebhook(url))
+        return { ok: false, message: 'This is not a Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>).' }
+      settings = { ...settings, hasDiscordWebhook: !!url }
+      return { ok: true, message: url ? 'Web demo: pretending the webhook is saved.' : 'Webhook removed.' }
+    },
+    testDiscordWebhook: async () => ({ ok: true, message: 'Web demo: nothing is sent to Discord.' }),
+    postGameToDiscord: async () => ({ ok: true, message: 'Web demo: nothing is sent to Discord.' }),
     getPatches: async (mode) => {
       const stats = await getStats(mode)
       return [{ patch: stats.patch, matches: stats.matches, updatedAt: stats.updatedAt }]
@@ -1035,6 +1054,7 @@ function mockAdmin(emit: <K extends keyof RcEvents>(event: K, payload: RcEvents[
       demoAchievements.seen.delete(id)
       emit('achievementsUnlocked', [id])
     },
+    discordPreview: async () => ({ gameId: null, payload: null, skip: 'Only in the desktop app (npm run dev).' }),
     resetAchievements: async () => {
       demoAchievements.manual.clear()
       demoAchievements.seen.clear()

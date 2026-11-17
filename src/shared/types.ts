@@ -258,6 +258,8 @@ export interface Settings {
   platform: Platform
   language: string
   hasApiKey: boolean
+  /** a Discord webhook URL is saved (the URL itself never leaves the main process) */
+  hasDiscordWebhook: boolean
   leaguePath: string
   crawler: {
     seedTiers: SeedTier[]
@@ -307,7 +309,22 @@ export interface Settings {
     /** how long to wait before accepting: instant, random 2 to 6 s or random 4 to 8 s */
     acceptDelay: AcceptDelay
   }
+  /** post a summary of every finished game to your friends' Discord channel (your own webhook) */
+  discord: {
+    enabled: boolean
+    /** which games: ARAM: Mayhem, ARAM, ranked, everything else */
+    modes: ('mayhem' | 'aram' | 'ranked' | 'other')[]
+    /** only games you played with at least one premade */
+    onlyWithPremades: boolean
+    /** players that aren't you or your premades appear only as their champion */
+    anonymizeRandoms: boolean
+    includeQuips: boolean
+    includeAchievements: boolean
+  }
 }
+
+/** The settings the renderer can change (the flags about stored secrets are read-only). */
+export type EditableSettings = Omit<Settings, 'hasApiKey' | 'hasDiscordWebhook'>
 
 /** Loading screen: the players of the game with their recent record in this mode. */
 export interface LoadingPlayer {
@@ -638,8 +655,14 @@ export interface MayhemPersonal {
 export interface RcApi {
   getStatic(): Promise<StaticData>
   getSettings(): Promise<Settings>
-  saveSettings(patch: Partial<Omit<Settings, 'hasApiKey'>>): Promise<Settings>
+  saveSettings(patch: Partial<EditableSettings>): Promise<Settings>
   setApiKey(key: string): Promise<{ ok: boolean; message: string }>
+  /** stores the Discord webhook URL encrypted ('' removes it) */
+  setDiscordWebhook(url: string): Promise<{ ok: boolean; message: string }>
+  /** sends a made-up game marked [TEST] to the saved webhook */
+  testDiscordWebhook(): Promise<{ ok: boolean; message: string }>
+  /** posts a saved game to the webhook now, whatever the automatic rules say */
+  postGameToDiscord(gameId: number): Promise<{ ok: boolean; message: string }>
   getPatches(mode: GameMode): Promise<{ patch: string; matches: number; updatedAt: number }[]>
   getTierList(patch: string, mode: GameMode): Promise<TierEntry[]>
   getChampionBuild(patch: string, championId: number, role: StatRole | undefined, mode: GameMode): Promise<ChampionBuild | null>
@@ -772,6 +795,8 @@ export interface AdminApi {
   deleteTestGames(): Promise<number>
   /** unlocks an achievement now (as if the newest game did it) and sends the unlock event */
   unlockAchievement(id: string): Promise<void>
+  /** the Discord message the newest saved game would get, and why it would not be posted automatically */
+  discordPreview(): Promise<{ gameId: number | null; payload: unknown; skip: string | null }>
   /** locks every achievement again (they are worked out anew from the history), returns the unlocked ones after that */
   resetAchievements(): Promise<number>
   log(lines: number): Promise<string[]>

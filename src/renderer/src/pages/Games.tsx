@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { Crown, History, Info, Orbit, Skull, Sparkles, Trophy, X } from 'lucide-react'
+import { Crown, History, Info, Loader2, Orbit, Send, Skull, Sparkles, Trophy, X } from 'lucide-react'
 import type { AchievementState, GameListEntry } from '@shared/types'
 import { explainImpact, teamBlame, type GameSummary, type SummaryPlayer } from '@shared/summary'
 import { makeTierLookup, summaryAugmentTiers, type TierLookup } from '@shared/mayhem'
@@ -308,6 +308,34 @@ function VerdictCard({ kind, p, s }: { kind: 'mvp' | 'blame'; p: SummaryPlayer; 
   )
 }
 
+/** Posts this game to the saved Discord webhook, whatever the automatic rules say. */
+function PostToDiscord({ gameId }: { gameId: number }) {
+  const { settings } = useApp()
+  const [state, setState] = useState<{ busy: boolean; result: { ok: boolean; message: string } | null }>({ busy: false, result: null })
+  const ready = !!settings?.hasDiscordWebhook
+  return (
+    <span className="flex items-center gap-2">
+      {state.result && (
+        <span className={`max-w-64 truncate text-xs ${state.result.ok ? 'text-win' : 'text-loss'}`} title={state.result.message}>
+          {state.result.message}
+        </span>
+      )}
+      <button
+        className="btn btn-ghost"
+        disabled={!ready || state.busy}
+        title={ready ? 'Post this game to your Discord channel' : 'Save a Discord webhook in Settings first'}
+        onClick={async () => {
+          setState({ busy: true, result: null })
+          const result = await api.postGameToDiscord(gameId).catch((error: Error) => ({ ok: false, message: error.message }))
+          setState({ busy: false, result })
+        }}
+      >
+        {state.busy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} Post to Discord
+      </button>
+    </span>
+  )
+}
+
 /** The achievements this game unlocked; new ones draw their constellation once, then count as seen. */
 function GameDiscoveries({ gameId }: { gameId: number }) {
   const [found, setFound] = useState<AchievementState[]>([])
@@ -363,7 +391,9 @@ export function GameDetail() {
           {MODE[summary.mode] ?? summary.mode} · {duration(summary.duration)} · {new Date(summary.createdAt).toLocaleString()} ·{' '}
           {galaxyOf(cosmicSeed(summary.cosmos ?? summary.gameId)).name}
         </span>
-        <Link to="/games" className="btn btn-ghost ml-auto">
+        <span className="ml-auto" />
+        <PostToDiscord gameId={summary.gameId} />
+        <Link to="/games" className="btn btn-ghost">
           All games
         </Link>
       </div>

@@ -1,19 +1,26 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
-import type { Settings } from '@shared/types'
+import type { EditableSettings, Settings } from '@shared/types'
 
-type Stored = Omit<Settings, 'hasApiKey'> & { apiKeyEnc?: string; apiKeyPlain?: string; schema?: number }
+type Stored = EditableSettings & {
+  apiKeyEnc?: string
+  apiKeyPlain?: string
+  discordWebhookEnc?: string
+  discordWebhookPlain?: string
+  schema?: number
+}
 
 /**
  * Bump this to migrate stored settings.
  * 2: the UI switched to English, so game data defaults to en_US.
  * 3: only the card frames are on by default, the tier list panel is opt-in.
  * 4: the tier list panel is gone (its setting is dropped).
+ * 5: Discord webhook and hype announcer (1.2).
  */
-const SCHEMA = 4
+const SCHEMA = 5
 
-export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
+export const DEFAULT_SETTINGS: EditableSettings = {
   platform: 'euw1',
   language: 'en_US',
   leaguePath: '',
@@ -50,6 +57,14 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'hasApiKey'> = {
     flashOn: 'F',
     autoAccept: false,
     acceptDelay: 'human'
+  },
+  discord: {
+    enabled: false,
+    modes: ['mayhem', 'aram'],
+    onlyWithPremades: false,
+    anonymizeRandoms: true,
+    includeQuips: true,
+    includeAchievements: true
   }
 }
 
@@ -74,7 +89,8 @@ export class SettingsStore {
       overlay: { ...DEFAULT_SETTINGS.overlay, ...loaded.overlay },
       minimap: { ...DEFAULT_SETTINGS.minimap, ...loaded.minimap },
       ui: { ...DEFAULT_SETTINGS.ui, ...loaded.ui },
-      client: { ...DEFAULT_SETTINGS.client, ...loaded.client }
+      client: { ...DEFAULT_SETTINGS.client, ...loaded.client },
+      discord: { ...DEFAULT_SETTINGS.discord, ...loaded.discord }
     }
     if ((loaded.schema ?? 1) < 2) this.data.language = 'en_US'
     // the tier list panel next to the cards was removed in 1.0.5
@@ -84,11 +100,11 @@ export class SettingsStore {
 
   get(): Settings {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { apiKeyEnc, apiKeyPlain, schema, ...rest } = this.data
-    return { ...rest, hasApiKey: !!(apiKeyEnc || apiKeyPlain) }
+    const { apiKeyEnc, apiKeyPlain, discordWebhookEnc, discordWebhookPlain, schema, ...rest } = this.data
+    return { ...rest, hasApiKey: !!(apiKeyEnc || apiKeyPlain), hasDiscordWebhook: !!(discordWebhookEnc || discordWebhookPlain) }
   }
 
-  update(patch: Partial<Omit<Settings, 'hasApiKey'>>): Settings {
+  update(patch: Partial<EditableSettings>): Settings {
     this.data = {
       ...this.data,
       ...patch,
@@ -96,7 +112,8 @@ export class SettingsStore {
       overlay: { ...this.data.overlay, ...patch.overlay },
       minimap: { ...this.data.minimap, ...patch.minimap },
       ui: { ...this.data.ui, ...patch.ui },
-      client: { ...this.data.client, ...patch.client }
+      client: { ...this.data.client, ...patch.client },
+      discord: { ...this.data.discord, ...patch.discord }
     }
     this.save()
     return this.get()
@@ -121,6 +138,29 @@ export class SettingsStore {
     if (key) {
       if (safeStorage.isEncryptionAvailable()) this.data.apiKeyEnc = safeStorage.encryptString(key).toString('base64')
       else this.data.apiKeyPlain = key
+    }
+    this.save()
+  }
+
+  /** The Discord webhook URL, decrypted. Never sent to the renderer. */
+  getDiscordWebhook(): string | null {
+    if (this.data.discordWebhookEnc && safeStorage.isEncryptionAvailable()) {
+      try {
+        return safeStorage.decryptString(Buffer.from(this.data.discordWebhookEnc, 'base64'))
+      } catch {
+        return null
+      }
+    }
+    return this.data.discordWebhookPlain ?? null
+  }
+
+  /** Stores the webhook URL encrypted like the API key ('' removes it). */
+  setDiscordWebhook(url: string): void {
+    delete this.data.discordWebhookEnc
+    delete this.data.discordWebhookPlain
+    if (url) {
+      if (safeStorage.isEncryptionAvailable()) this.data.discordWebhookEnc = safeStorage.encryptString(url).toString('base64')
+      else this.data.discordWebhookPlain = url
     }
     this.save()
   }
