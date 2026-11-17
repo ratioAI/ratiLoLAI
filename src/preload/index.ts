@@ -73,6 +73,7 @@ const api: RcApi = {
   exportStart: (request) => call('exportStart', request),
   exportCancel: () => call('exportCancel'),
   exportStatus: () => call('exportStatus'),
+  shareClipToDiscord: (id, options) => call('shareClipToDiscord', id, options),
   copyClipFile: (id) => call('copyClipFile', id),
   saveClipAs: (id) => call('saveClipAs', id),
   openClipFolder: () => call('openClipFolder'),

@@ -323,6 +323,10 @@ export interface Settings {
     anonymizeRandoms: boolean
     includeQuips: boolean
     includeAchievements: boolean
+    /** after a game was posted, add its best automatic clip (off by default) */
+    attachBestClip: boolean
+    /** files above this many MB are exported smaller before they are sent (Discord: 20; boosted servers 50 or 100) */
+    uploadLimitMb: number
   }
   /** sounds for multikills, aces, many deaths … during a game (main window, audio only) */
   announcer: {
@@ -901,6 +905,8 @@ export interface RcApi {
   exportStart(request: ExportRequest): Promise<ExportJob>
   exportCancel(): Promise<void>
   exportStatus(): Promise<ExportJob | null>
+  /** posts a clip to the Discord webhook; a clip that was posted before needs `again` */
+  shareClipToDiscord(id: number, options?: { quip?: boolean; again?: boolean }): Promise<{ ok: boolean; message: string; alreadyPosted?: boolean }>
   /** puts a clip's file on the clipboard, ready to paste into Discord or a folder */
   copyClipFile(id: number): Promise<boolean>
   /** "Save as…": copies a clip's file to a place of your choice; false when cancelled */

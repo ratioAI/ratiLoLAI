@@ -90,8 +90,8 @@ const MIGRATIONS: Record<number, { add?: AddColumns[]; sql?: string; after?: (db
         galaxy  INTEGER NOT NULL
       );`
   },
-  // 1.3: Clips. Recordings (the segments of one game), the clips cut from them and the editor's
-  // projects. The video files live in the clips folder; deleting a game keeps its clips.
+  // 1.3: Clips. Recordings (the segments of one game), the clips cut from them, the editor's
+  // projects and which clips were posted to Discord. The video files live in the clips folder; deleting a game keeps its clips.
   4: {
     sql: `
       CREATE TABLE IF NOT EXISTS recordings (
@@ -124,6 +124,10 @@ const MIGRATIONS: Record<number, { add?: AddColumns[]; sql?: string; after?: (db
         clip_id      INTEGER PRIMARY KEY,
         project_json TEXT    NOT NULL,
         updated_at   INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS clip_posts (
+        clip_id   INTEGER PRIMARY KEY,
+        posted_at INTEGER NOT NULL
       );`
   }
 }

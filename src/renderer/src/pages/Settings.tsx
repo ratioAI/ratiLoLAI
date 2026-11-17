@@ -499,6 +499,18 @@ function DiscordSettings({
         value={discord.includeAchievements}
         onChange={(value) => set({ includeAchievements: value })}
       />
+      <Toggle
+        label="Add the game's best automatic clip under the summary"
+        value={discord.attachBestClip}
+        onChange={(value) => set({ attachBestClip: value })}
+      />
+      <NumberField
+        label="Upload limit for clips (MB) – 20 for everyone, 50 or 100 on boosted servers"
+        value={discord.uploadLimitMb}
+        min={1}
+        max={500}
+        onChange={(uploadLimitMb) => set({ uploadLimitMb })}
+      />
     </>
   )
 }

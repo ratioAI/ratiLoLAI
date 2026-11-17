@@ -65,6 +65,7 @@ import { api, isDemo } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { drawOverlays, emojiUrl, loadPeaks, renderExportImages } from '@/lib/clipCanvas'
 import { EmptyState, formatBytes } from '@/components/Layout'
+import { ShareToDiscord } from './Clips'
 
 type Selection = { type: 'part'; index: number } | { type: 'text'; id: string } | { type: 'sticker'; id: string } | null
 type Tab = 'format' | 'text' | 'stickers' | 'stats' | 'music'
@@ -1235,6 +1236,7 @@ export function ExportDone({ job, onClose, onAgain, extra }: { job: ExportJob; o
             <button className="btn btn-ghost" onClick={async () => setNote((await api.saveClipAs(clip.id)) ? 'Saved.' : null)}>
               <Save size={15} /> Save as…
             </button>
+            <ShareToDiscord clip={clip} primary />
             {extra}
           </>
         )}

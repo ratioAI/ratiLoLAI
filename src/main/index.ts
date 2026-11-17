@@ -56,6 +56,9 @@ import { RecorderService } from './recorder/service'
 import { ClipStore } from './recorder/clipStore'
 import { clipProtocolHandler, mediaTypeOf } from './recorder/protocol'
 import { Exporter } from './recorder/exporter'
+import { ClipSharer } from './recorder/share'
+import { quips as gameQuips } from '@shared/quips'
+import { newProject } from '@shared/editProject'
 import { normalizeProject, type EditProject } from '@shared/editProject'
 import type { ExportRequest } from '@shared/types'
 
@@ -509,6 +512,39 @@ const exporter = new Exporter({
   log: (message) => diag.log(message)
 })
 
+// --- Sharing clips through the Discord webhook ---
+const sharer = new ClipSharer({
+  db: games.database,
+  store: clips,
+  settings: () => settings.get().discord,
+  webhook: () => settings.getDiscordWebhook(),
+  staticData: () => ddragon.get().catch(() => null),
+  quipOf: async (gameId) => {
+    const summary = games.get(gameId)
+    const me = summary?.players.find((player) => player.me)
+    return summary && me ? (gameQuips(summary)[me.puuid] ?? null) : null
+  },
+  // a clip that is too large is exported again with the Discord preset
+  shrink: async (clipId, targetMb) => {
+    const clip = clips.clip(clipId)
+    if (!clip) return null
+    try {
+      const project = newProject(clipId, clip.durationMs / 1000)
+      project.output = { ...project.output, preset: 'discord', targetMb }
+      const job = await exporter.runToEnd({ clipId, project, title: clip.title, images: {} })
+      if (job.state === 'paused') exporter.cancel()
+      return job.state === 'done' ? (job.clip?.id ?? null) : null
+    } catch {
+      // another export is running
+      return null
+    }
+  },
+  discard: async (clipId) => {
+    await recorder.deleteClips([clipId])
+  },
+  log: (message) => diag.log(message)
+})
+
 function registerClipProtocol(): void {
   protocol.handle(
     'rcclip',
@@ -691,6 +727,10 @@ const lcu = new LcuManager({
         // posted after the achievements, so the message can name the ones this game unlocked
         .then(() => discord.maybePost(saved))
         .catch((error) => diag.log(`discord after game ${saved.gameId} failed: ${String(error)}`))
+        // the best automatic clip goes under the summary (option, off by default); wait for the recorder's last clips
+        .then(() => recorder.settled())
+        .then(() => (discord.posted(saved.gameId) ? sharer.attachBest(saved.gameId) : undefined))
+        .catch((error) => diag.log(`discord clip after game ${saved.gameId} failed: ${String(error)}`))
     }
   }
 })
@@ -846,6 +886,9 @@ function registerIpc(): void {
   handle('exportStart', (request: ExportRequest) => exporter.start(request))
   handle('exportCancel', () => exporter.cancel())
   handle('exportStatus', () => exporter.status())
+  handle('shareClipToDiscord', (id: number, options?: { quip?: boolean; again?: boolean }) =>
+    sharer.share(Number(id), { quip: options?.quip ?? settings.get().discord.includeQuips, again: !!options?.again })
+  )
   handle('copyClipFile', (id: number) => {
     const file = clips.files(Number(id))?.file
     if (!file || !existsSync(file)) return false

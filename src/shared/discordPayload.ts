@@ -200,3 +200,80 @@ export function buildDiscordPayload(summary: GameSummary, options: DiscordPayloa
     for (const field of embed.fields) field.value = cut(field.value, Math.floor((DISCORD_LIMITS.total - 400) / embed.fields.length))
   return { username: 'ratioAI', allowed_mentions: { parse: [] }, embeds: [embed] }
 }
+
+// ---------------------------------------------------------------------------
+// Clips
+// ---------------------------------------------------------------------------
+
+/** Discord's upload limit for webhooks and everyone without Nitro, in MiB (20 since August 2026). */
+export const DISCORD_UPLOAD_MB = 20
+
+export interface ClipPayloadInput {
+  /** the clip's title, or what kind of clip it is ("Pentakill") */
+  title: string
+  durationS: number
+  createdAt: number
+  /** from the game the clip belongs to; all optional (a clip can have no saved game) */
+  champion?: { name: string; id: string }
+  kda?: [number, number, number]
+  win?: boolean
+  mode?: string
+  /** your quip of that game */
+  quip?: string
+  ddragonVersion?: string
+}
+
+/** The message that goes with a clip: its title, champion, K/D/A and result, optionally the quip. The video itself is the attachment. */
+export function buildClipPayload(input: ClipPayloadInput): DiscordPayload {
+  const fields: DiscordEmbedField[] = []
+  if (input.champion) fields.push({ name: 'Champion', value: escapeDiscord(input.champion.name), inline: true })
+  if (input.kda) fields.push({ name: 'K / D / A', value: input.kda.join(' / '), inline: true })
+  if (input.win !== undefined) fields.push({ name: 'Result', value: input.win ? 'Victory' : 'Defeat', inline: true })
+  const minutes = Math.floor(input.durationS / 60)
+  const length = `${minutes}:${String(Math.round(input.durationS % 60)).padStart(2, '0')}`
+  const embed: DiscordEmbed = {
+    title: cut(`🎬 ${escapeDiscord(input.title.trim() || 'Clip')}`, DISCORD_LIMITS.title),
+    color: input.win === undefined ? 0xb58bff : input.win ? WIN_COLOR : LOSS_COLOR,
+    fields,
+    footer: { text: cut(`ratioAI · ${input.mode ? `${MODE_LABEL[input.mode] ?? input.mode} · ` : ''}${length}`, DISCORD_LIMITS.footer) },
+    timestamp: new Date(input.createdAt).toISOString()
+  }
+  if (input.quip?.trim()) embed.description = cut(`*${escapeDiscord(input.quip.trim())}*`, 1000)
+  if (input.champion && input.ddragonVersion)
+    embed.thumbnail = { url: `${DDRAGON}/cdn/${input.ddragonVersion}/img/champion/${input.champion.id}.png` }
+  return { username: 'ratioAI', allowed_mentions: { parse: [] }, embeds: [embed] }
+}
+
+/** A file name Discord and every file system accept: "pentakill-lux.mp4". */
+export function clipFileName(title: string, extension: string): string {
+  const base = title
+    .normalize('NFKD')
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .toLowerCase()
+    .slice(0, 60)
+  return `${base || 'clip'}.${extension.replace(/^\./, '').toLowerCase()}`
+}
+
+/**
+ * The body of a webhook message with one attached file, the way Discord wants it:
+ * multipart/form-data with the message as `payload_json` and the file as `files[0]`.
+ */
+export function clipUploadForm(payload: DiscordPayload, file: { name: string; type: string; data: Uint8Array }): FormData {
+  const form = new FormData()
+  form.append('payload_json', JSON.stringify(payload))
+  form.append('files[0]', new Blob([file.data as BlobPart], { type: file.type }), file.name)
+  return form
+}
+
+const AUTO_RANK = ['auto:penta', 'auto:quadra', 'auto:ace', 'auto:triple', 'auto:firstBlood', 'auto:death', 'auto:gameEnd']
+
+/** The automatic clip of a game most worth showing: a pentakill before a quadra before an ace …, the longer one on a tie. */
+export function bestAutoClip<T extends { kind: string; durationMs: number; createdAt: number }>(clips: readonly T[]): T | null {
+  const auto = clips.filter((clip) => AUTO_RANK.includes(clip.kind))
+  if (!auto.length) return null
+  return [...auto].sort(
+    (a, b) => AUTO_RANK.indexOf(a.kind) - AUTO_RANK.indexOf(b.kind) || b.durationMs - a.durationMs || b.createdAt - a.createdAt
+  )[0]
+}

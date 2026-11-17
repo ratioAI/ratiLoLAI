@@ -134,7 +134,9 @@ describe('DiscordPoster', () => {
     onlyWithPremades: false,
     anonymizeRandoms: true,
     includeQuips: true,
-    includeAchievements: true
+    includeAchievements: true,
+    attachBestClip: false,
+    uploadLimitMb: 20
   }
   const setup = (responses: Response[], settings: Partial<Settings['discord']> = {}) => {
     const store = new GameStore(':memory:')

@@ -130,6 +130,8 @@ export class RecorderService {
   private lastRecordingId: number | null = null
   private lastEndedAt = 0
   private lastStatus = ''
+  /** the work after a recording ended (last clips, bookmarks, joining), while it runs */
+  private finishing: Promise<void> | null = null
 
   constructor(private readonly deps: RecorderDeps) {}
 
@@ -441,8 +443,21 @@ export class RecorderService {
     await this.finish(rec)
   }
 
+  /** Resolves once a recording that just ended has made its last clips (at once when nothing is going on). */
+  async settled(): Promise<void> {
+    await this.finishing?.catch(() => undefined)
+  }
+
   /** After FFmpeg ended: last clips, bookmarks, the whole-game file, cleanup. */
-  private async finish(rec: Recording): Promise<void> {
+  private finish(rec: Recording): Promise<void> {
+    const work = this.doFinish(rec).finally(() => {
+      if (this.finishing === work) this.finishing = null
+    })
+    this.finishing = work
+    return work
+  }
+
+  private async doFinish(rec: Recording): Promise<void> {
     this.deps.hotkeys([])
     this.deps.env.helper.stop()
     await this.readSegments(rec)

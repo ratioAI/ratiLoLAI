@@ -524,7 +524,9 @@ export function createMockApi(): RcApi {
       onlyWithPremades: false,
       anonymizeRandoms: true,
       includeQuips: true,
-      includeAchievements: true
+      includeAchievements: true,
+      attachBestClip: false,
+      uploadLimitMb: 20
     },
     announcer: {
       enabled: false,
@@ -751,6 +753,7 @@ export function createMockApi(): RcApi {
       }
     },
     exportStatus: async () => (demoJob ? { ...demoJob } : null),
+    shareClipToDiscord: async () => ({ ok: true, message: 'Web demo: nothing is sent to Discord.' }),
     copyClipFile: async () => false,
     saveClipAs: async () => false,
     openClipFolder: async () => undefined,

@@ -16,6 +16,7 @@ import {
   Pencil,
   Scissors,
   Search,
+  Send,
   Sparkles,
   Star,
   Trash2,
@@ -61,6 +62,87 @@ const SORTS: [ClipSort, string][] = [
 ]
 /** one frame at 60 fps, for the arrow keys */
 const FRAME = 1 / 60
+
+const MUSIC_NOTICE_KEY = 'rc.ownMusicNotice'
+
+/**
+ * "Share to Discord": posts a clip through your webhook. A clip that is too large is sent as a
+ * smaller version on its own. Before the first share of a clip with music of your own, a note
+ * about who is responsible for the rights is shown once.
+ */
+export function ShareToDiscord({ clip, primary }: { clip: Clip; primary?: boolean }) {
+  const { settings } = useApp()
+  const [state, setState] = useState<{ busy: boolean; ok?: boolean; message?: string; again?: boolean }>({ busy: false })
+  const [notice, setNotice] = useState(false)
+  const ready = !!settings?.hasDiscordWebhook
+  const send = async (again = false) => {
+    setState({ busy: true })
+    const result = await api.shareClipToDiscord(clip.id, { again }).catch((error: Error) => ({ ok: false, message: error.message, alreadyPosted: false }))
+    setState({ busy: false, ok: result.ok, message: result.message, again: !!result.alreadyPosted })
+  }
+  const share = async () => {
+    // only edited clips can carry music; the project tells whether it is the user's own
+    const project = clip.kind === 'export' ? await api.getEdit(clip.id).catch(() => null) : null
+    const ownMusic = !!project?.music && !project.music.file.startsWith('builtin:')
+    let seen = true
+    try {
+      seen = localStorage.getItem(MUSIC_NOTICE_KEY) === '1'
+    } catch {
+      // private mode: just ask every time
+      seen = false
+    }
+    if (ownMusic && !seen) return setNotice(true)
+    await send()
+  }
+  return (
+    <>
+      <button
+        className={`btn ${primary ? 'btn-primary' : 'btn-ghost'}`}
+        disabled={!ready || state.busy}
+        title={ready ? 'Post this clip to your Discord channel' : 'Save a Discord webhook in Settings first'}
+        onClick={() => (state.again ? send(true) : share())}
+      >
+        {state.busy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+        {state.again ? 'Post again' : 'Share to Discord'}
+      </button>
+      {state.message && (
+        <span className={`max-w-72 truncate text-xs ${state.ok ? 'text-win' : state.again ? 'text-muted' : 'text-loss'}`} title={state.message}>
+          {state.message}
+        </span>
+      )}
+      {notice && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center p-8" style={{ background: 'rgb(4 2 10 / 0.84)' }} onClick={() => setNotice(false)}>
+          <div className="panel w-full max-w-md p-6" onClick={(event) => event.stopPropagation()}>
+            <h2 className="mb-3 font-display text-xl font-extrabold">Your own music</h2>
+            <p className="mb-5 text-sm leading-relaxed text-muted">
+              This clip has a song you added yourself. When you share it, you are responsible for having the rights to that music – ratioAI
+              cannot check that. This note is shown once.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button className="btn btn-ghost" onClick={() => setNotice(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  try {
+                    localStorage.setItem(MUSIC_NOTICE_KEY, '1')
+                  } catch {
+                    // private mode
+                  }
+                  setNotice(false)
+                  void send()
+                }}
+              >
+                <Send size={15} /> Share
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
 
 /** Champion, K/D/A and result of the game a clip belongs to. */
 export function ClipGameLine({ clip, size = 22 }: { clip: Pick<Clip, 'game'>; size?: number }) {
@@ -270,6 +352,7 @@ export function ClipPlayer({
               <button className="btn btn-primary" onClick={() => navigate(`/clips/edit/${clip.id}`)}>
                 <Scissors size={15} /> Edit
               </button>
+              <ShareToDiscord clip={clip} />
             </>
           )}
           {session && (

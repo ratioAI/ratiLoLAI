@@ -227,6 +227,8 @@ export class Exporter {
         title: this.job!.title || owner?.title || '',
         bytes
       })
+      // the export remembers what it was made of (to edit it again, and to know whether it has music of your own)
+      this.deps.store.saveEdit(clip.id, JSON.stringify(project), this.now())
       this.deps.log(`export: ${project.output.preset} done (${(bytes / 1048576).toFixed(1)} MB, ${Math.round(duration)} s)`)
       this.deps.clipSaved(clip)
       return this.set({ state: 'done', progress: 1, bytes, clip, message: null })

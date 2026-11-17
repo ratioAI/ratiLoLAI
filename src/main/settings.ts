@@ -4,6 +4,7 @@ import { safeStorage } from 'electron'
 import type { EditableSettings, Settings } from '@shared/types'
 import { TRIGGERS, type Trigger } from '@shared/announcer'
 import { DEFAULT_RECORDER, mergeRecorderSettings } from '@shared/recorder'
+import { DISCORD_UPLOAD_MB } from '@shared/discordPayload'
 
 type Stored = EditableSettings & {
   apiKeyEnc?: string
@@ -67,7 +68,9 @@ export const DEFAULT_SETTINGS: EditableSettings = {
     onlyWithPremades: false,
     anonymizeRandoms: true,
     includeQuips: true,
-    includeAchievements: true
+    includeAchievements: true,
+    attachBestClip: false,
+    uploadLimitMb: DISCORD_UPLOAD_MB
   },
   // off by default, so nobody is surprised by sounds after an update
   announcer: {
