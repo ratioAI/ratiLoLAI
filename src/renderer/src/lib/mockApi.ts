@@ -29,7 +29,11 @@ import type {
   AdminMinimapSnapshot,
   ChampionRoleStats,
   ChampSelectState,
+  CleanupPreview,
+  Clip,
+  ClipGame,
   ClientStatus,
+  SessionRecording,
   CrawlerStatus,
   LiveGameState,
   MatchSummary,
@@ -563,6 +567,7 @@ export function createMockApi(): RcApi {
 
   const champSelect = async (): Promise<ChampSelectState> => demoChampSelect(await getStatic())
 
+  initDemoSessions()
   // '#/games?demo-journey' plays the flight to the next galaxy (screenshots)
   if (window.location.hash.includes('demo-journey')) setTimeout(() => emit('journey', { seed: 1_790_000_123_456 }), 300)
   const api: RcApi = {
@@ -619,6 +624,72 @@ export function createMockApi(): RcApi {
       lastClip: null
     }),
     clipNow: async () => null,
+    listClips: async () => [...demoClips()],
+    updateClip: async (id, patch) => {
+      const clip = demoClips().find((entry) => entry.id === id)
+      if (!clip) return null
+      if (patch.title !== undefined) clip.title = patch.title
+      if (patch.favorite !== undefined) clip.favorite = patch.favorite
+      return { ...clip }
+    },
+    deleteClips: async (ids) => {
+      const before = demoClips().length
+      demoClipList = demoClips().filter((clip) => !ids.includes(clip.id))
+      return before - demoClipList.length
+    },
+    showClipInFolder: async () => undefined,
+    clipStorage: async () => {
+      const clipBytes = demoClips().reduce((sum, clip) => sum + clip.bytes, 0)
+      const sessionBytes = demoSessions.reduce((sum, session) => sum + session.bytes, 0)
+      return {
+        usedBytes: clipBytes + sessionBytes + 1.1e9,
+        quotaBytes: settings.recorder.storage.maxGb * 1e9,
+        clipBytes,
+        sessionBytes,
+        otherBytes: 1.1e9,
+        clips: demoClips().length,
+        sessions: demoSessions.length
+      }
+    },
+    cleanupPreview: async () => demoCleanup(),
+    cleanupRun: async () => {
+      const preview = demoCleanup()
+      demoSessions = demoSessions.filter((session) => session.kept || (session.expiresAt ?? 0) > Date.now())
+      return { ...preview, items: [] }
+    },
+    listRecordings: async () => demoSessions.map((session) => ({ ...session })),
+    gameRecording: async (gameId) => demoSessions.find((session) => session.gameId === gameId) ?? null,
+    keepRecording: async (id, keep) => {
+      const session = demoSessions.find((entry) => entry.id === id)
+      if (!session) return null
+      session.kept = keep
+      session.expiresAt = keep ? null : session.startedAt + 7 * 86_400_000
+      return { ...session }
+    },
+    deleteRecording: async (id) => {
+      demoSessions = demoSessions.filter((session) => session.id !== id)
+    },
+    clipFromRecording: async (id, startMs, endMs) => {
+      const session = demoSessions.find((entry) => entry.id === id)
+      if (!session) return null
+      const clip: Clip = {
+        ...demoClips()[0],
+        id: Math.max(0, ...demoClips().map((entry) => entry.id)) + 1,
+        gameId: session.gameId,
+        recordingId: id,
+        createdAt: Date.now(),
+        startMs,
+        endMs,
+        durationMs: endMs - startMs,
+        kind: 'manual',
+        title: '',
+        favorite: false,
+        game: session.game
+      }
+      demoClipList = [clip, ...demoClips()]
+      emit('clipSaved', clip)
+      return clip
+    },
     openClipFolder: async () => undefined,
     chooseClipFolder: async () => null,
     getPatches: async (mode) => {
@@ -924,6 +995,108 @@ export function createMockApi(): RcApi {
 }
 
 /** Achievement state of the web demo (only lives as long as the page). */
+// --- Clips: a small library of test clips for the web demo ---
+//
+// The videos are FFmpeg's test pictures (public/demo, see the README there): nothing recorded from
+// a game, nothing copyrighted. Each clip hangs on one of the demo games, so champion, K/D/A and
+// result show up like in the real library.
+
+const DEMO_VIDEOS = [
+  { file: 'clip-a', ms: 8000, bytes: 46e6 },
+  { file: 'clip-b', ms: 6000, bytes: 31e6 },
+  { file: 'clip-c', ms: 7000, bytes: 38e6 }
+]
+const DEMO_CLIP_KINDS: [Clip['kind'], string, boolean][] = [
+  ['auto:penta', 'PENTAKILL', true],
+  ['manual', '', false],
+  ['auto:ace', '', false],
+  ['bookmark', 'that Flash', true],
+  ['auto:triple', '', false],
+  ['export', 'Montage: best of Mayhem', true],
+  ['manual', '1v3 under tower', false],
+  ['auto:quadra', '', false],
+  ['auto:firstBlood', '', false],
+  ['manual', '', false],
+  ['auto:triple', 'triple into the fountain', false],
+  ['bookmark', '', false]
+]
+
+function demoClipGame(summary: GameSummary): ClipGame {
+  const me = summary.players.find((player) => player.me) ?? summary.players[0]
+  return {
+    championId: me.championId,
+    kda: [me.kills, me.deaths, me.assists],
+    win: summary.win,
+    mode: summary.mode,
+    queueId: summary.queueId,
+    createdAt: summary.createdAt
+  }
+}
+
+let demoClipList: Clip[] | null = null
+function demoClips(): Clip[] {
+  demoClipList ??= DEMO_CLIP_KINDS.map(([kind, title, favorite], index) => {
+    const video = DEMO_VIDEOS[index % DEMO_VIDEOS.length]
+    // two or three clips per game, so the game pages have something to show
+    const summary = demoHistory()[Math.floor(index / 2)]
+    const startMs = 120_000 + index * 95_000
+    return {
+      id: 200 - index,
+      gameId: summary.gameId,
+      recordingId: 1,
+      createdAt: summary.createdAt + startMs,
+      startMs,
+      endMs: startMs + video.ms,
+      durationMs: video.ms,
+      kind,
+      title,
+      favorite,
+      bytes: video.bytes,
+      url: `demo/${video.file}.mp4`,
+      thumbUrl: `demo/${video.file}.jpg`,
+      game: demoClipGame(summary)
+    }
+  })
+  return demoClipList
+}
+
+let demoSessions: SessionRecording[] = []
+function initDemoSessions(): void {
+  if (demoSessions.length) return
+  demoSessions = [0, 3, 7].map((gameIndex, index) => {
+    const summary = demoHistory()[gameIndex]
+    // the third one is two weeks old, so "Clean up" has something to show
+    const startedAt = index === 2 ? Date.now() - 14 * 86_400_000 : summary.createdAt
+    return {
+      id: index + 1,
+      gameId: summary.gameId,
+      startedAt,
+      durationMs: summary.duration * 1000,
+      bytes: Math.round((summary.duration / 60) * 52e6),
+      kept: index === 0,
+      expiresAt: index === 0 ? null : startedAt + 7 * 86_400_000,
+      url: `demo/${DEMO_VIDEOS[index].file}.mp4`,
+      game: demoClipGame(summary)
+    }
+  })
+}
+
+function demoCleanup(): CleanupPreview {
+  initDemoSessions()
+  const expired = demoSessions.filter((session) => !session.kept && (session.expiresAt ?? 0) <= Date.now())
+  const items: CleanupPreview['items'] = [
+    { name: '2026-11-16T20-41-07', type: 'replay', bytes: 0.4e9, at: Date.now() - 86_400_000 },
+    ...expired.map((session) => ({
+      name: new Date(session.startedAt).toISOString().slice(0, 19).replace(/:/g, '-') + '.mp4',
+      type: 'session' as const,
+      bytes: session.bytes,
+      at: session.startedAt
+    }))
+  ]
+  const freedBytes = items.reduce((sum, item) => sum + item.bytes, 0)
+  return { items, freedBytes, usedAfter: 3.1e9, overQuota: false }
+}
+
 const demoAchievements = {
   flights: { wormhole: 2, slingshot: 1 } as Partial<Record<'wormhole' | 'slingshot', number>>,
   seen: new Set<string>(),

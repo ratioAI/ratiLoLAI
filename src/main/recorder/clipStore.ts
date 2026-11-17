@@ -136,6 +136,23 @@ export class ClipStore {
     this.db.prepare('UPDATE clips SET game_id = ? WHERE recording_id = ? AND game_id IS NULL').run(gameId, recordingId)
   }
 
+  /** Champion, K/D/A and result of a saved game, for recordings and clips. */
+  gameOf(gameId: number): ClipGame | null {
+    const row = this.db
+      .prepare('SELECT champion_id, kills, deaths, assists, win, mode, queue_id, created_at FROM games WHERE game_id = ?')
+      .get(gameId) as Record<string, number | string> | undefined
+    return row
+      ? {
+          championId: Number(row.champion_id),
+          kda: [Number(row.kills), Number(row.deaths), Number(row.assists)],
+          win: !!row.win,
+          mode: String(row.mode),
+          queueId: Number(row.queue_id),
+          createdAt: Number(row.created_at)
+        }
+      : null
+  }
+
   // --- clips ---
 
   addClip(clip: {

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Database, Gauge, History, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy, Wrench } from 'lucide-react'
+import { Clapperboard, Database, Gauge, History, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy, Wrench } from 'lucide-react'
 import type { GameMode, RecorderStatus, UpdateState } from '@shared/types'
 import type { GameSummary } from '@shared/summary'
 import { api } from '@/lib/api'
@@ -16,6 +16,7 @@ const NAV = [
   { to: '/champions', label: 'Champions', icon: LayoutGrid },
   { to: '/live', label: 'Live', icon: Radio },
   { to: '/games', label: 'Games', icon: History },
+  { to: '/clips', label: 'Clips', icon: Clapperboard },
   { to: '/mayhem', label: 'Mayhem', icon: Sparkles },
   { to: '/profile', label: 'Profile', icon: Search },
   { to: '/data', label: 'Data', icon: Database },

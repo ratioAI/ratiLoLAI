@@ -466,6 +466,41 @@ export interface Clip {
   game: ClipGame | null
 }
 
+/** A whole-game recording (session mode), joined into one file after the game. */
+export interface SessionRecording {
+  id: number
+  gameId: number | null
+  startedAt: number
+  durationMs: number
+  bytes: number
+  /** marked "keep": never deleted by the cleanup */
+  kept: boolean
+  /** when the cleanup deletes it (null when kept) */
+  expiresAt: number | null
+  url: string
+  game: ClipGame | null
+}
+
+/** Space used by clips and recordings. */
+export interface ClipStorageInfo {
+  usedBytes: number
+  quotaBytes: number
+  clipBytes: number
+  sessionBytes: number
+  /** leftovers of replay recordings, screenshots, exports */
+  otherBytes: number
+  clips: number
+  sessions: number
+}
+
+/** What "Clean up" would delete. Clips and favorites are never on this list. */
+export interface CleanupPreview {
+  items: { name: string; type: 'replay' | 'session'; bytes: number; at: number }[]
+  freedBytes: number
+  usedAfter: number
+  overQuota: boolean
+}
+
 /** What the recorder is doing, for the header of the main window and the Clips settings. */
 export interface RecorderStatus {
   /** off = switched off or something is missing (see message), error = recording failed */
@@ -802,6 +837,23 @@ export interface RcApi {
   recorderStatus(): Promise<RecorderStatus>
   /** the same as the clip hotkey: saves the last seconds of the running recording */
   clipNow(): Promise<Clip | null>
+  listClips(): Promise<Clip[]>
+  updateClip(id: number, patch: { title?: string; favorite?: boolean }): Promise<Clip | null>
+  /** deletes clips and their files for good, returns how many */
+  deleteClips(ids: number[]): Promise<number>
+  /** shows a clip's file in the file manager */
+  showClipInFolder(id: number): Promise<void>
+  clipStorage(): Promise<ClipStorageInfo>
+  cleanupPreview(): Promise<CleanupPreview>
+  cleanupRun(): Promise<CleanupPreview>
+  /** whole-game recordings that still exist, newest first */
+  listRecordings(): Promise<SessionRecording[]>
+  /** the whole-game recording of a game, null when there is none (any more) */
+  gameRecording(gameId: number): Promise<SessionRecording | null>
+  keepRecording(id: number, keep: boolean): Promise<SessionRecording | null>
+  deleteRecording(id: number): Promise<void>
+  /** cuts a clip out of a whole-game recording (stream copy) */
+  clipFromRecording(id: number, startMs: number, endMs: number): Promise<Clip | null>
   /** opens the folder with your clips (creates it if needed) */
   openClipFolder(): Promise<void>
   /** asks for another storage folder; null when cancelled */

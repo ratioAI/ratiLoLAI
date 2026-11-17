@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type {
   ChampionBuild,
@@ -51,6 +51,7 @@ import { SettingsStore } from './settings'
 import { RecorderEnv } from './recorder/setup'
 import { RecorderService } from './recorder/service'
 import { ClipStore } from './recorder/clipStore'
+import { clipProtocolHandler } from './recorder/protocol'
 
 // The app used to be called "Rift Companion". Move its data (settings, encrypted API key, crawled
 // stats, caches) to the new folder once, or keep using the old folder if the move fails.
@@ -68,6 +69,9 @@ import { ClipStore } from './recorder/clipStore'
 }
 
 if (!app.requestSingleInstanceLock()) app.quit()
+// rcclip:// plays clips in the window (read-only, ids instead of paths; see recorder/protocol.ts).
+// Must be declared before the app is ready; "stream" lets the video player seek.
+protocol.registerSchemesAsPrivileged([{ scheme: 'rcclip', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }])
 // the announcer plays sounds when a game event comes in, not after a click in the window
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
@@ -475,6 +479,23 @@ const recorder = new RecorderService({
   log: (message) => diag.log(message)
 })
 
+/** Files the user picked for the editor (music, stickers), by the token the window gets instead of the path. */
+const pickedMedia = new Map<string, string>()
+
+function registerClipProtocol(): void {
+  protocol.handle(
+    'rcclip',
+    clipProtocolHandler((kind, id) => {
+      if (kind === 'media') return pickedMedia.get(id) ?? null
+      const numericId = Number(id)
+      if (!Number.isInteger(numericId)) return null
+      if (kind === 'recording') return recorder.sessionFile(numericId)
+      const files = clips.files(numericId)
+      return kind === 'clip' ? (files?.file ?? null) : (files?.thumb ?? null)
+    })
+  )
+}
+
 /** The first full evaluation reads every saved game, so it waits until no game is running. */
 function startAchievements(): void {
   if (inGame) {
@@ -744,6 +765,23 @@ function registerIpc(): void {
   handle('testEncoders', () => recorderEnv.testEncoders(true))
   handle('recorderStatus', () => recorder.status())
   handle('clipNow', () => recorder.clipNow())
+  handle('listClips', () => clips.list())
+  handle('updateClip', (id: number, patch: { title?: string; favorite?: boolean }) =>
+    clips.update(Number(id), { title: typeof patch?.title === 'string' ? patch.title : undefined, favorite: typeof patch?.favorite === 'boolean' ? patch.favorite : undefined })
+  )
+  handle('deleteClips', (ids: number[]) => recorder.deleteClips(Array.isArray(ids) ? ids.map(Number) : []))
+  handle('showClipInFolder', (id: number) => {
+    const file = clips.files(Number(id))?.file
+    if (file) shell.showItemInFolder(file)
+  })
+  handle('clipStorage', () => recorder.storageInfo())
+  handle('cleanupPreview', () => recorder.cleanupPreviewInfo())
+  handle('cleanupRun', () => recorder.cleanupNow())
+  handle('listRecordings', () => recorder.sessions())
+  handle('gameRecording', (gameId: number) => recorder.sessionOfGame(Number(gameId)))
+  handle('keepRecording', (id: number, keep: boolean) => recorder.keepSession(Number(id), !!keep))
+  handle('deleteRecording', (id: number) => recorder.deleteSession(Number(id)))
+  handle('clipFromRecording', (id: number, startMs: number, endMs: number) => recorder.clipFromSession(Number(id), Number(startMs), Number(endMs)))
   handle('openClipFolder', async () => {
     mkdirSync(recorderEnv.folder(), { recursive: true })
     await shell.openPath(recorderEnv.folder())
@@ -1060,6 +1098,7 @@ void app.whenReady().then(async () => {
   }
   app.setAppUserModelId('dev.riftcompanion.app')
   registerIpc()
+  registerClipProtocol()
   createWindow()
   void recorderEnv
     .init()

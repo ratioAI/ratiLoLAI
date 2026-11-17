@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
-import type { Clip, LiveGameState, RecorderStatus } from '@shared/types'
+import type { CleanupPreview, Clip, ClipStorageInfo, LiveGameState, RecorderStatus, SessionRecording } from '@shared/types'
 import {
   autoClipWindows,
   cleanupPlan,
@@ -735,6 +735,136 @@ export class RecorderService {
     this.usedBytes = plan.usedAfter
     if (plan.overQuota) this.deps.log('recorder: the clips alone are above the storage limit (they are never deleted automatically)')
     return plan
+  }
+
+  /** Space in use, split by what it is. */
+  async storageInfo(): Promise<ClipStorageInfo> {
+    const items = await this.scanStorage()
+    const sum = (type: StoredItem['type']): number => items.filter((item) => item.type === type).reduce((total, item) => total + item.bytes, 0)
+    const clipBytes = this.deps.store.storage().reduce((total, clip) => total + clip.bytes, 0)
+    return {
+      usedBytes: this.usedBytes,
+      quotaBytes: this.deps.settings().storage.maxGb * 1e9,
+      clipBytes,
+      sessionBytes: sum('session'),
+      otherBytes: Math.max(0, this.usedBytes - clipBytes - sum('session')),
+      clips: this.deps.store.storage().length,
+      sessions: items.filter((item) => item.type === 'session').length
+    }
+  }
+
+  private preview(plan: CleanupPlan): CleanupPreview {
+    return {
+      items: plan.delete.map((item) => ({ name: basename(item.path), type: item.type === 'session' ? 'session' : 'replay', bytes: item.bytes, at: item.at })),
+      freedBytes: plan.freedBytes,
+      usedAfter: plan.usedAfter,
+      overQuota: plan.overQuota
+    }
+  }
+
+  async cleanupPreviewInfo(): Promise<CleanupPreview> {
+    return this.preview(await this.cleanupPreview())
+  }
+
+  async cleanupNow(): Promise<CleanupPreview> {
+    const plan = await this.cleanupRun()
+    this.emit()
+    return this.preview(plan)
+  }
+
+  // --- whole-game recordings ---
+
+  private toSession(recording: { id: number; gameId: number | null; startedAt: number; endedAt: number | null; bytes: number; kept: boolean }): SessionRecording {
+    const days = this.deps.settings().storage.keepSessionsDays
+    return {
+      id: recording.id,
+      gameId: recording.gameId,
+      startedAt: recording.startedAt,
+      durationMs: Math.max(0, (recording.endedAt ?? recording.startedAt) - recording.startedAt),
+      bytes: recording.bytes,
+      kept: recording.kept,
+      expiresAt: recording.kept ? null : recording.startedAt + days * 86_400_000,
+      url: `rcclip://recording/${recording.id}`,
+      game: recording.gameId === null ? null : (this.deps.store.gameOf(recording.gameId) ?? null)
+    }
+  }
+
+  /** Whole-game recordings whose file still exists. */
+  sessions(): SessionRecording[] {
+    return this.deps.store
+      .recordings()
+      .filter((recording) => recording.dir.endsWith('.mp4') && recording.id !== this.rec?.id)
+      .map((recording) => this.toSession(recording))
+  }
+
+  sessionOfGame(gameId: number): SessionRecording | null {
+    return this.sessions().find((session) => session.gameId === gameId) ?? null
+  }
+
+  keepSession(id: number, keep: boolean): SessionRecording | null {
+    this.deps.store.updateRecording(id, { kept: keep })
+    return this.sessions().find((session) => session.id === id) ?? null
+  }
+
+  async deleteSession(id: number): Promise<void> {
+    const recording = this.deps.store.recording(id)
+    if (!recording || recording.id === this.rec?.id) return
+    if (recording.dir.endsWith('.mp4')) await unlink(recording.dir).catch(() => undefined)
+    // the row stays: clips cut from this recording still point to it
+    this.deps.store.updateRecording(id, { dir: '', bytes: 0 })
+    await this.scanStorage()
+    this.emit()
+  }
+
+  /** Path of a whole-game recording's file for the player, null when it is gone. */
+  sessionFile(id: number): string | null {
+    const recording = this.deps.store.recording(id)
+    return recording?.dir.endsWith('.mp4') ? recording.dir : null
+  }
+
+  /** Cuts [startMs, endMs] out of a whole-game recording into a clip (stream copy, cut on keyframes). */
+  async clipFromSession(id: number, startMs: number, endMs: number): Promise<Clip | null> {
+    const ffmpeg = this.deps.env.ffmpeg.path
+    const source = this.sessionFile(id)
+    const recording = this.deps.store.recording(id)
+    if (!ffmpeg || !source || !recording || !(endMs > startMs)) return null
+    const start = Math.max(0, Math.floor(startMs / 1000))
+    const duration = Math.max(1, Math.ceil(endMs / 1000) - start)
+    const now = this.now()
+    const file = join(this.deps.env.folder(), 'clips', new Date(now).toISOString().slice(0, 7), `${stamp(now)}-manual.mp4`)
+    await mkdir(dirname(file), { recursive: true })
+    this.saving++
+    this.emit()
+    try {
+      const args = ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-i', source, '-t', String(duration), '-c', 'copy', '-avoid_negative_ts', 'make_zero', '-movflags', '+faststart', file]
+      const result = await this.run(ffmpeg, args, { timeoutMs: 120_000, lowPriority: true })
+      const bytes = (await stat(file).catch(() => null))?.size ?? 0
+      if (result.code !== 0 || !bytes) {
+        this.deps.log(`recorder: clip from the whole-game recording failed – ${result.stderr.trim().slice(-200)}`)
+        return null
+      }
+      const thumb = file.replace(/\.mp4$/, '.jpg')
+      const thumbed = await this.run(ffmpeg, ffmpegThumbArgs(file, duration / 2, thumb), { timeoutMs: 30_000, lowPriority: true })
+      const clip = this.deps.store.addClip({
+        gameId: recording.gameId,
+        recordingId: id,
+        createdAt: now,
+        startMs: start * 1000,
+        endMs: (start + duration) * 1000,
+        file,
+        thumb: thumbed.code === 0 ? thumb : null,
+        kind: 'manual',
+        title: '',
+        bytes
+      })
+      this.usedBytes += bytes
+      this.lastClip = clip
+      this.deps.clipSaved(clip)
+      return clip
+    } finally {
+      this.saving--
+      this.emit()
+    }
   }
 
   /** Deletes clips for good (rows and files). */
