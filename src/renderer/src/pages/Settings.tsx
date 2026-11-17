@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Download, ExternalLink, FolderOpen, KeyRound, Loader2, MonitorPlay, ScanSearch, Send, Webhook } from 'lucide-react'
+import { Download, ExternalLink, FolderOpen, KeyRound, Loader2, MonitorPlay, ScanSearch, Send, Volume2, Webhook } from 'lucide-react'
 import type {
   EditableSettings,
   OverlayDiagnostics,
@@ -10,6 +10,8 @@ import type {
   UpdateState
 } from '@shared/types'
 import { DISCORD_MODES } from '@shared/discordPayload'
+import { TRIGGERS, TRIGGER_LABELS, type Trigger } from '@shared/announcer'
+import { playAnnouncement, reloadCustomSounds } from '@/lib/announcer'
 import { PLATFORMS } from '@shared/types'
 import { api, isDemo } from '@/lib/api'
 import { useApp } from '@/lib/store'
@@ -301,6 +303,10 @@ export function Settings() {
         <DiscordSettings settings={settings} save={save} refresh={async () => setSettings(await api.getSettings())} />
       </Group>
 
+      <Group title="Hype announcer">
+        <AnnouncerSettings settings={settings} save={save} />
+      </Group>
+
       <Group title="Crawler">
         <Field label="Player pool">
           <div className="flex gap-2">
@@ -476,6 +482,88 @@ function DiscordSettings({
         value={discord.includeAchievements}
         onChange={(value) => set({ includeAchievements: value })}
       />
+    </>
+  )
+}
+
+/** Sounds for multikills, aces, deaths …: on/off, volume, voice, cooldown, each trigger with a preview. */
+function AnnouncerSettings({ settings, save }: { settings: SettingsT; save: (patch: Partial<EditableSettings>) => Promise<void> }) {
+  const announcer = settings.announcer
+  const [volume, setVolume] = useState(announcer.volume)
+  const set = (patch: Partial<SettingsT['announcer']>) => save({ announcer: { ...announcer, ...patch } })
+  const preview = (trigger: Trigger) =>
+    void playAnnouncement({ trigger, time: Date.now() / 1000, deaths: 10, name: 'your premade' }, { volume, voice: announcer.voice })
+  return (
+    <>
+      <p className="mb-2 text-sm text-muted">
+        Plays a sound when something big happens in your game – made by ratioAI itself, no recordings. Only audio from this window, nothing
+        is drawn over the game. Works with the window minimized.
+      </p>
+      <Toggle label="Play sounds during games" value={announcer.enabled} onChange={(value) => set({ enabled: value })} />
+      <Field label="Volume">
+        <input
+          type="range"
+          className="w-48 accent-[#b58bff]"
+          min={0}
+          max={1}
+          step={0.05}
+          value={volume}
+          onChange={(event) => setVolume(Number(event.target.value))}
+          onPointerUp={() => set({ volume })}
+          onKeyUp={() => set({ volume })}
+          onBlur={() => volume !== announcer.volume && set({ volume })}
+        />
+      </Field>
+      <Toggle
+        label="Spoken line after the sound (offline system voice)"
+        value={announcer.voice}
+        onChange={(value) => set({ voice: value })}
+      />
+      <NumberField
+        label="Seconds between two sounds"
+        value={announcer.cooldownS}
+        min={0}
+        max={60}
+        onChange={(value) => set({ cooldownS: value })}
+      />
+      <div className="mt-2 rounded-xl border border-line/60 bg-black/20 px-3 py-1">
+        {TRIGGERS.map((trigger) => (
+          <div key={trigger} className="flex items-center gap-3 border-b border-line/40 py-2 last:border-0">
+            <span className="flex-1 text-sm">
+              {TRIGGER_LABELS[trigger]}
+              <span className="ml-2 font-mono text-[10px] text-muted">{trigger}.mp3</span>
+            </span>
+            <button className="btn btn-ghost px-2 py-1 text-xs" onClick={() => preview(trigger)} title="Preview">
+              <Volume2 size={14} /> Preview
+            </button>
+            <button
+              role="switch"
+              aria-checked={announcer.triggers[trigger]}
+              aria-label={TRIGGER_LABELS[trigger]}
+              onClick={() => set({ triggers: { ...announcer.triggers, [trigger]: !announcer.triggers[trigger] } })}
+              className={`relative h-6 w-11 shrink-0 rounded-full transition ${announcer.triggers[trigger] ? 'bg-accent' : 'bg-panel-2 ring-1 ring-line'}`}
+            >
+              <span
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${announcer.triggers[trigger] ? 'left-[22px]' : 'left-0.5'}`}
+              />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between gap-4 pt-3">
+        <span className="text-xs text-muted">
+          Your own sound replaces the built-in one: put a file named like the trigger (.mp3, .wav or .ogg) into the sound folder.
+        </span>
+        <button
+          className="btn btn-ghost shrink-0"
+          onClick={() => {
+            reloadCustomSounds()
+            void api.openSoundFolder()
+          }}
+        >
+          <FolderOpen size={15} /> Open sound folder
+        </button>
+      </div>
     </>
   )
 }

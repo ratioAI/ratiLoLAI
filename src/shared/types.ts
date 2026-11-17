@@ -1,6 +1,7 @@
 import type { GameSummary } from './summary'
 import type { Encounter } from './encounters'
 import type { AchievementCategory, AchievementRank } from './achievements'
+import type { Announcement, Trigger } from './announcer'
 // Types shared between the Electron main process and the React renderer.
 
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
@@ -320,6 +321,17 @@ export interface Settings {
     anonymizeRandoms: boolean
     includeQuips: boolean
     includeAchievements: boolean
+  }
+  /** sounds for multikills, aces, many deaths … during a game (main window, audio only) */
+  announcer: {
+    enabled: boolean
+    /** 0 to 1 */
+    volume: number
+    /** a spoken line after the sound (the system's offline voice) */
+    voice: boolean
+    /** seconds between two sounds (pentakills, victory and defeat always play) */
+    cooldownS: number
+    triggers: Record<Trigger, boolean>
   }
 }
 
@@ -698,6 +710,10 @@ export interface RcApi {
   markAchievementsSeen(ids: string[]): Promise<void>
   /** a flight to the next galaxy was shown (wormhole or slingshot), for the cosmos achievements */
   recordFlight(variant: 'wormhole' | 'slingshot', seed: number): Promise<void>
+  /** your own sound for a trigger from the sounds folder, null for the built-in one */
+  getAnnouncerSound(trigger: Trigger): Promise<{ data: Uint8Array; mime: string } | null>
+  /** opens the folder for your own announcer sounds (creates it if needed) */
+  openSoundFolder(): Promise<void>
   /** your saved games with or against a player; null when you never met */
   getPlayerHistory(puuid: string, riotId?: string): Promise<PlayerHistory | null>
   setOwnedAugments(ids: number[]): Promise<void>
@@ -743,6 +759,11 @@ export type AdminSimAction =
   | { type: 'inhibitor'; team: 'ORDER' | 'CHAOS'; event: 'killed' | 'soon' | 'respawned' }
   | { type: 'relicTaken'; padId: string }
   | { type: 'skip'; seconds: number }
+  /** a fight in the simulated game's event feed (goes through the announcer like a real one) */
+  | { type: 'fight'; kind: AdminSimFight }
+
+export type AdminSimFight =
+  'firstBlood' | 'triple' | 'quadra' | 'penta' | 'premadePenta' | 'allyAce' | 'enemyAce' | 'myDeath' | 'victory' | 'defeat'
 
 export interface AdminSimState {
   options: AdminSimOptions
@@ -795,6 +816,8 @@ export interface AdminApi {
   deleteTestGames(): Promise<number>
   /** unlocks an achievement now (as if the newest game did it) and sends the unlock event */
   unlockAchievement(id: string): Promise<void>
+  /** plays an announcer trigger in the main window as if it came from a game */
+  announce(trigger: Trigger): Promise<void>
   /** the Discord message the newest saved game would get, and why it would not be posted automatically */
   discordPreview(): Promise<{ gameId: number | null; payload: unknown; skip: string | null }>
   /** locks every achievement again (they are worked out anew from the history), returns the unlocked ones after that */
@@ -873,6 +896,8 @@ export interface RcEvents {
   gameSummary: GameSummary
   /** ids of achievements that were just unlocked */
   achievementsUnlocked: string[]
+  /** something worth a sound happened in the game (hype announcer) */
+  announce: Announcement
   loading: LoadingState | null
   /** map timers for the main window (the minimap overlay gets its own copy with positions) */
   mapTimers: MinimapState | null

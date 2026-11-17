@@ -39,6 +39,8 @@ import { cardRects, WINDOWS, type NameCandidate } from './scanner/detect'
 import { augmentTiersForChampion, makeTierLookup, type TierLookup } from '@shared/mayhem'
 import { AchievementService } from './achievements'
 import { DiscordPoster } from './discord'
+import { AnnouncerFeed, customSound, ensureSoundFolder } from './announcer'
+import type { Trigger } from '@shared/announcer'
 import { isDiscordWebhook } from '@shared/discordPayload'
 import { demoGame } from '@shared/demoGame'
 import { ProfileService } from './profile'
@@ -63,6 +65,8 @@ import { SettingsStore } from './settings'
 }
 
 if (!app.requestSingleInstanceLock()) app.quit()
+// the announcer plays sounds when a game event comes in, not after a click in the window
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 const userData = app.getPath('userData')
 const settings = new SettingsStore(join(userData, 'settings.json'))
@@ -418,6 +422,16 @@ const achievements = new AchievementService({
   unlocked: (ids) => emit('achievementsUnlocked', ids),
   log: (message) => diag.log(message)
 })
+// --- Hype announcer: sounds for multikills, aces, … (played by the main window) ---
+const soundsDir = join(userData, 'sounds')
+const announcer = new AnnouncerFeed({
+  settings: () => settings.get().announcer,
+  announce: (announcement) => {
+    diag.log(`announcer: ${announcement.trigger} at ${Math.round(announcement.time)} s`)
+    emit('announce', announcement)
+  }
+})
+
 // --- Discord: a summary of each game in your friends' channel (your own webhook) ---
 const discord = new DiscordPoster({
   db: games.database,
@@ -544,6 +558,7 @@ const lcu = new LcuManager({
     riot: riotResults
   },
   encounters: async (me, puuids, excludeGameId) => games.encounters(me, puuids, excludeGameId),
+  liveEvents: (events, state) => announcer.tick(events, state),
   log: (message) => diag.log(message),
   settings: () => settings.get(),
   staticData: () => ddragon.get(),
@@ -679,6 +694,10 @@ function registerIpc(): void {
     if (!summary) return { ok: false, message: 'Game not found.' }
     return discord.post(summary)
   })
+  handle('getAnnouncerSound', (trigger: Trigger) => customSound(soundsDir, String(trigger)))
+  handle('openSoundFolder', async () => {
+    await shell.openPath(await ensureSoundFolder(soundsDir))
+  })
   handle('getPatches', (mode: GameMode) => store.patches(assertMode(mode)))
   handle('getTierList', (patch: string, mode: GameMode) => tierList(patch, assertMode(mode)))
   handle('getChampionBuild', (patch: string, championId: number, role: StatRole | undefined, mode: GameMode) =>
@@ -781,9 +800,10 @@ function registerIpc(): void {
         handle,
         emit,
         acceptMatch: onMatchAccepted,
-        feedLive: (live) => {
+        feedLive: (live, events = []) => {
           emit('live', live)
           updateOverlay(live)
+          announcer.tick(events, live)
         },
         realLive: () => lcu.getLive(),
         restore: () => {

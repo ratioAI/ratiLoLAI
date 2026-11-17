@@ -19,7 +19,8 @@ import { buildSummary, type CurvePoint, type GameSummary, type RawGame, type Raw
 import { modeResults, personalMayhemStats, type LcuHistory } from '../mayhem'
 import { mergeResults, type GameResults } from '../records'
 import { encounterTargets, toEncounter, type EncounterStats } from '@shared/encounters'
-import { fetchAllGameData, parseLiveData } from '../live/liveClient'
+import { fetchAllGameData, parseLiveData, parseLiveEvents } from '../live/liveClient'
+import type { LiveEvent } from '@shared/announcer'
 import {
   buildItemSet,
   buildRunePagePayload,
@@ -56,6 +57,8 @@ export interface LcuManagerDeps {
   }
   /** What your saved games say about the other players of a game (see GameStore.encounters). */
   encounters?(me: string | null, puuids: string[], excludeGameId: number | null): Promise<Map<string, EncounterStats>>
+  /** The whole event feed of each live poll (hype announcer); called right after emit.live. */
+  liveEvents?(events: LiveEvent[], state: LiveGameState | null): void
   log?(message: string): void
 }
 
@@ -497,11 +500,13 @@ export class LcuManager {
     if (this.liveTimer) return
     const generation = this.liveGeneration
     const poll = async (): Promise<void> => {
-      const state = parseLiveData(await fetchAllGameData())
+      const raw = await fetchAllGameData()
+      const state = parseLiveData(raw)
       if (generation !== this.liveGeneration) return // game ended while the request was running
       if (state) state.premades = this.premades
       this.liveState = state
       this.deps.emit.live(state)
+      this.deps.liveEvents?.(state ? parseLiveEvents(raw) : [], state)
       this.liveTimer = setTimeout(poll, LIVE_POLL_MS)
     }
     this.liveTimer = setTimeout(poll, 0)

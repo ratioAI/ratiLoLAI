@@ -12,6 +12,7 @@ import type {
   AdminRelicPad,
   AdminRelicSeen,
   AdminSimAction,
+  AdminSimFight,
   AdminSimOptions,
   AdminSimState,
   AugmentOffer,
@@ -32,6 +33,7 @@ import type { OverlayManager } from './overlay'
 import type { MinimapWatcher } from './minimap/watcher'
 import { validPads, writeMeasuredPads } from './minimap/store'
 import { toEncounter } from '@shared/encounters'
+import { TRIGGERS, type LiveEvent, type Trigger } from '@shared/announcer'
 import {
   firstSpawn,
   INHIBITOR_POS,
@@ -53,8 +55,8 @@ export interface AdminContext {
   emit: <K extends keyof RcEvents>(event: K, payload: RcEvents[K]) => void
   /** what happens when a match is accepted in the client */
   acceptMatch: () => void
-  /** the path the live data of a real game takes (main window + overlays) */
-  feedLive: (live: LiveGameState | null) => void
+  /** the path the live data of a real game takes (main window + overlays + announcer) */
+  feedLive: (live: LiveGameState | null, events?: LiveEvent[]) => void
   realLive: () => LiveGameState | null
   /** puts the real overlays back after a preview */
   restore: () => void
@@ -102,6 +104,10 @@ export class SimGame {
   private readonly scheduled: InhibitorEvent[] = []
   readonly takenAt = new Map<string, number>()
   readonly feed: LiveGameState['events'] = []
+  /** the raw event feed with ids, like the Live Client Data API has it (announcer) */
+  readonly liveEvents: LiveEvent[] = [{ EventID: 0, EventName: 'GameStart', EventTime: 0 }]
+  /** a random fight every this many seconds, so the announcer has something to do */
+  static readonly FIGHT_EVERY = 45
 
   constructor(
     readonly options: AdminSimOptions,
@@ -116,7 +122,12 @@ export class SimGame {
 
   /** Moves the clock and sends whatever the game would have sent in between. */
   advance(seconds: number): void {
+    const before = this.gameTime
     this.gameTime += seconds
+    if (Math.floor(this.gameTime / SimGame.FIGHT_EVERY) > Math.floor(before / SimGame.FIGHT_EVERY) && this.gameTime > 60) {
+      const kinds: AdminSimFight[] = ['triple', 'allyAce', 'enemyAce', 'myDeath', 'myDeath', 'quadra', 'premadePenta', 'penta']
+      this.fight(kinds[Math.floor(Math.random() * kinds.length)])
+    }
     for (const event of [...this.scheduled].sort((a, b) => a.time - b.time)) {
       if (event.time > this.gameTime) continue
       this.scheduled.splice(this.scheduled.indexOf(event), 1)
@@ -129,6 +140,53 @@ export class SimGame {
     const team = event.inhibitor.includes('_T1_') ? 'ORDER' : 'CHAOS'
     const text = { killed: 'destroyed', soon: 'respawning soon', respawned: 'respawned' }[event.type]
     this.feed.push({ name: `Inhib_${event.type}`, time: event.time, text: `${TEAM_NAME[team]} inhibitor ${text}` })
+  }
+
+  private push(event: Omit<LiveEvent, 'EventID' | 'EventTime'>, text: string): void {
+    this.liveEvents.push({ ...event, EventID: this.liveEvents.length, EventTime: this.gameTime })
+    this.feed.push({ name: event.EventName, time: this.gameTime, text })
+  }
+
+  /** A fight in the event feed: kills, multikills, aces, your death, the end of the game. */
+  fight(kind: AdminSimFight): void {
+    const allies = SIM_PLAYERS.filter(([, , team]) => team === 'ORDER').map(([riotId]) => riotId.split('#')[0])
+    const enemies = SIM_PLAYERS.filter(([, , team]) => team === 'CHAOS').map(([riotId]) => riotId.split('#')[0])
+    const kill = (killer: string, victim: string, assisters: string[] = []) =>
+      this.push({ EventName: 'ChampionKill', KillerName: killer, VictimName: victim, Assisters: assisters }, `${killer} killed ${victim}`)
+    const spree = (killer: string, count: number) => {
+      for (let i = 0; i < count; i++) {
+        kill(killer, enemies[i % enemies.length])
+        if (i > 0) this.push({ EventName: 'Multikill', KillerName: killer, KillStreak: i + 1 }, `${killer}: ${i + 1} kills in a row`)
+      }
+    }
+    const ace = (team: 'ORDER' | 'CHAOS') => {
+      const [killers, victims] = team === 'ORDER' ? [allies, enemies] : [enemies, allies]
+      victims.forEach((victim, i) => kill(killers[(i + 1) % killers.length], victim))
+      this.push({ EventName: 'Ace', Acer: killers[0], AcingTeam: team }, `Ace (${team === 'ORDER' ? 'blue' : 'red'})`)
+    }
+    switch (kind) {
+      case 'firstBlood':
+        kill('You', enemies[0])
+        this.push({ EventName: 'FirstBlood', Recipient: 'You' }, 'First Blood!')
+        break
+      case 'triple':
+        return spree('You', 3)
+      case 'quadra':
+        return spree('You', 4)
+      case 'penta':
+        return spree('You', 5)
+      case 'premadePenta':
+        return spree('blackbird', 5)
+      case 'allyAce':
+        return ace('ORDER')
+      case 'enemyAce':
+        return ace('CHAOS')
+      case 'myDeath':
+        return kill(enemies[Math.floor(Math.random() * enemies.length)], 'You')
+      case 'victory':
+      case 'defeat':
+        return this.push({ EventName: 'GameEnd', Result: kind === 'victory' ? 'Win' : 'Lose' }, kind === 'victory' ? 'Victory' : 'Defeat')
+    }
   }
 
   inhibitor(team: 'ORDER' | 'CHAOS', type: InhibitorEvent['type']): void {
@@ -231,7 +289,7 @@ export function registerAdmin(ctx: AdminContext): void {
     // a real game always wins
     if (ctx.realLive()?.active) return stopSim('a real game started')
     sim.advance(1)
-    ctx.feedLive(sim.live())
+    ctx.feedLive(sim.live(), sim.liveEvents)
   }
 
   handle('admin:acceptMatch', () => {
@@ -264,7 +322,7 @@ export function registerAdmin(ctx: AdminContext): void {
     log(
       `simulated ${current.options.mode} game on map ${map} from ${current.gameTime} s (inhibitors back after ${current.options.inhibitorRespawn} s)`
     )
-    ctx.feedLive(sim.live())
+    ctx.feedLive(sim.live(), sim.liveEvents)
     simTimer = setInterval(tickSim, 1000)
     return sim.state()
   })
@@ -286,8 +344,11 @@ export function registerAdmin(ctx: AdminContext): void {
       log(`skipped ${seconds} s → ${sim.gameTime} s`)
       // the overlay counts down on its own, so it needs the new clock right away
       minimap.resync()
+    } else if (action.type === 'fight') {
+      sim.fight(action.kind)
+      log(`fight "${action.kind}" at ${sim.gameTime} s`)
     }
-    ctx.feedLive(sim.live())
+    ctx.feedLive(sim.live(), sim.liveEvents)
     return sim.state()
   })
 
@@ -404,6 +465,18 @@ export function registerAdmin(ctx: AdminContext): void {
     log(`test game ${summary.gameId} saved`)
     ctx.emit('gameSummary', saved)
     void ctx.achievements.onGame(saved)
+  })
+
+  // straight to the main window, no game needed
+  handle('admin:announce', (trigger: Trigger) => {
+    if (!(TRIGGERS as readonly string[]).includes(trigger)) throw new Error(`unknown trigger ${String(trigger)}`)
+    log(`announce ${trigger}`)
+    ctx.emit('announce', {
+      trigger,
+      time: 0,
+      deaths: trigger === 'myDeathMilestone' ? 10 : undefined,
+      name: trigger === 'premadePenta' ? 'blackbird' : undefined
+    })
   })
 
   handle('admin:discordPreview', async () => {

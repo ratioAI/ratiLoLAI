@@ -21,6 +21,7 @@ import { ACHIEVEMENTS, evaluateAchievements, goalOf } from '@shared/achievements
 import { makeTierLookup, summaryAugmentTiers } from '@shared/mayhem'
 import { UNIVERSE } from '@shared/universe'
 import { isDiscordWebhook } from '@shared/discordPayload'
+import { TRIGGERS } from '@shared/announcer'
 import type {
   AchievementState,
   AdminApi,
@@ -517,6 +518,13 @@ export function createMockApi(): RcApi {
       anonymizeRandoms: true,
       includeQuips: true,
       includeAchievements: true
+    },
+    announcer: {
+      enabled: false,
+      volume: 0.6,
+      voice: true,
+      cooldownS: 6,
+      triggers: Object.fromEntries(TRIGGERS.map((trigger) => [trigger, true])) as Settings['announcer']['triggers']
     }
   }
 
@@ -556,7 +564,8 @@ export function createMockApi(): RcApi {
         ...patch,
         crawler: { ...settings.crawler, ...patch.crawler },
         client: { ...settings.client, ...patch.client },
-        discord: { ...settings.discord, ...patch.discord }
+        discord: { ...settings.discord, ...patch.discord },
+        announcer: { ...settings.announcer, ...patch.announcer, triggers: { ...settings.announcer.triggers, ...patch.announcer?.triggers } }
       }
       return settings
     },
@@ -679,6 +688,8 @@ export function createMockApi(): RcApi {
         }
       })
     },
+    getAnnouncerSound: async () => null,
+    openSoundFolder: async () => undefined,
     markAchievementsSeen: async (ids) => ids.forEach((id) => demoAchievements.seen.add(id)),
     recordFlight: async (variant) => {
       demoAchievements.flights[variant] = (demoAchievements.flights[variant] ?? 0) + 1
@@ -1054,6 +1065,7 @@ function mockAdmin(emit: <K extends keyof RcEvents>(event: K, payload: RcEvents[
       demoAchievements.seen.delete(id)
       emit('achievementsUnlocked', [id])
     },
+    announce: async (trigger) => emit('announce', { trigger, time: 0, deaths: 10, name: 'blackbird' }),
     discordPreview: async () => ({ gameId: null, payload: null, skip: 'Only in the desktop app (npm run dev).' }),
     resetAchievements: async () => {
       demoAchievements.manual.clear()

@@ -33,9 +33,19 @@ import {
   Swords,
   Trash2,
   Users,
+  Volume2,
   X
 } from 'lucide-react'
-import type { AdminMinimapSnapshot, AdminRelicPad, AdminRelicSeen, AdminSimOptions, AdminSimState, MinimapState } from '@shared/types'
+import type {
+  AdminMinimapSnapshot,
+  AdminRelicPad,
+  AdminRelicSeen,
+  AdminSimFight,
+  AdminSimOptions,
+  AdminSimState,
+  MinimapState
+} from '@shared/types'
+import { TRIGGERS, TRIGGER_LABELS } from '@shared/announcer'
 import { FLIGHT_VARIANTS, type FlightVariant } from '@shared/journey'
 import { GALAXY_TYPES, TYPE_NAMES, UNIVERSE, cosmicSeed, galaxyKind, galaxyOf, type GalaxyType } from '@shared/universe'
 import { api } from '@/lib/api'
@@ -635,6 +645,67 @@ function AchievementsCard() {
           <DiscoveryCard key={preview} achievement={selected} />
         </div>
       )}
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Hype announcer
+// ---------------------------------------------------------------------------
+
+const FIGHTS: [AdminSimFight, string][] = [
+  ['firstBlood', 'First blood'],
+  ['triple', 'Triple'],
+  ['quadra', 'Quadra'],
+  ['penta', 'Penta'],
+  ['premadePenta', 'Premade penta'],
+  ['allyAce', 'Ace'],
+  ['enemyAce', 'Enemy ace'],
+  ['myDeath', 'You die'],
+  ['victory', 'Victory'],
+  ['defeat', 'Defeat']
+]
+
+function AnnouncerCard() {
+  const admin = api.admin
+  const action = useAction()
+  return (
+    <Card icon={<Volume2 size={18} />} title="Hype announcer" action={action}>
+      <div>
+        <Label>Play a trigger (straight to this window)</Label>
+        <div className="flex flex-wrap gap-1.5">
+          {TRIGGERS.map((trigger) => (
+            <button
+              key={trigger}
+              className="admin-chip"
+              title={TRIGGER_LABELS[trigger]}
+              onClick={() => action.run(`Announcing ${trigger}`, async () => void (await admin?.announce(trigger)))}
+            >
+              {trigger}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <Label>Fight in the simulated game (through the event feed, cooldown and settings)</Label>
+        <div className="flex flex-wrap gap-1.5">
+          {FIGHTS.map(([kind, label]) => (
+            <button
+              key={kind}
+              className="admin-chip"
+              onClick={() =>
+                action.run(`Fight: ${label}`, async () => {
+                  const state = await admin?.simAction({ type: 'fight', kind })
+                  if (!state) throw new Error('Start a simulated game first (card below).')
+                  return `${label} at ${clock(state.gameTime)} – the simulated game also has a random fight every 45 s`
+                })
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
     </Card>
   )
 }
@@ -1404,6 +1475,7 @@ export function Admin() {
         <OverlaysCard />
         <AchievementsCard />
         <DiscordCard />
+        <AnnouncerCard />
         <SimCard />
         <CalibrationCard />
         <LogCard />

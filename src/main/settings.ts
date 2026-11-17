@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
 import type { EditableSettings, Settings } from '@shared/types'
+import { TRIGGERS, type Trigger } from '@shared/announcer'
 
 type Stored = EditableSettings & {
   apiKeyEnc?: string
@@ -65,6 +66,14 @@ export const DEFAULT_SETTINGS: EditableSettings = {
     anonymizeRandoms: true,
     includeQuips: true,
     includeAchievements: true
+  },
+  // off by default, so nobody is surprised by sounds after an update
+  announcer: {
+    enabled: false,
+    volume: 0.6,
+    voice: true,
+    cooldownS: 6,
+    triggers: Object.fromEntries(TRIGGERS.map((trigger) => [trigger, true])) as Record<Trigger, boolean>
   }
 }
 
@@ -90,7 +99,12 @@ export class SettingsStore {
       minimap: { ...DEFAULT_SETTINGS.minimap, ...loaded.minimap },
       ui: { ...DEFAULT_SETTINGS.ui, ...loaded.ui },
       client: { ...DEFAULT_SETTINGS.client, ...loaded.client },
-      discord: { ...DEFAULT_SETTINGS.discord, ...loaded.discord }
+      discord: { ...DEFAULT_SETTINGS.discord, ...loaded.discord },
+      announcer: {
+        ...DEFAULT_SETTINGS.announcer,
+        ...loaded.announcer,
+        triggers: { ...DEFAULT_SETTINGS.announcer.triggers, ...loaded.announcer?.triggers }
+      }
     }
     if ((loaded.schema ?? 1) < 2) this.data.language = 'en_US'
     // the tier list panel next to the cards was removed in 1.0.5
@@ -113,7 +127,12 @@ export class SettingsStore {
       minimap: { ...this.data.minimap, ...patch.minimap },
       ui: { ...this.data.ui, ...patch.ui },
       client: { ...this.data.client, ...patch.client },
-      discord: { ...this.data.discord, ...patch.discord }
+      discord: { ...this.data.discord, ...patch.discord },
+      announcer: {
+        ...this.data.announcer,
+        ...patch.announcer,
+        triggers: { ...this.data.announcer.triggers, ...patch.announcer?.triggers }
+      }
     }
     this.save()
     return this.get()

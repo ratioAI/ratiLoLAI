@@ -1,5 +1,6 @@
 import https from 'node:https'
 import type { LiveGameState, LivePlayer } from '@shared/types'
+import type { LiveEvent } from '@shared/announcer'
 
 // the game serves this API with a self-signed certificate on localhost
 const agent = new https.Agent({ rejectUnauthorized: false })
@@ -43,10 +44,17 @@ interface RawLive {
   }[]
   events?: {
     Events?: {
+      EventID?: number
       EventName: string
       EventTime: number
       KillerName?: string
       VictimName?: string
+      Assisters?: string[]
+      KillStreak?: number
+      Acer?: string
+      AcingTeam?: string
+      Recipient?: string
+      Result?: string
       DragonType?: string
       InhibKilled?: string
       InhibRespawningSoon?: string
@@ -142,4 +150,31 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
     events,
     inhibitorEvents
   }
+}
+
+/**
+ * Every event of the feed with its id (the announcer needs all of them and the ids; the Live tab
+ * only gets the newest twelve as text). Events without an id are dropped.
+ */
+export function parseLiveEvents(raw: unknown): LiveEvent[] {
+  const events = (raw as RawLive | null)?.events?.Events ?? []
+  return events.flatMap((event): LiveEvent[] =>
+    typeof event.EventID === 'number'
+      ? [
+          {
+            EventID: event.EventID,
+            EventName: event.EventName,
+            EventTime: event.EventTime,
+            KillerName: event.KillerName,
+            VictimName: event.VictimName,
+            Assisters: event.Assisters,
+            KillStreak: event.KillStreak,
+            Acer: event.Acer,
+            AcingTeam: event.AcingTeam,
+            Recipient: event.Recipient,
+            Result: event.Result
+          }
+        ]
+      : []
+  )
 }
