@@ -5,7 +5,8 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import { QUEUE_IDS, type GameListEntry, type LeaderboardEntry } from '@shared/types'
 import { teamBlame, type GameSummary } from '@shared/summary'
 
-const SCHEMA = `
+/** The layout of version 1 (1.0 and 1.1). Later versions build on it through MIGRATIONS. */
+export const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS games (
   game_id     INTEGER PRIMARY KEY,
   created_at  INTEGER NOT NULL,
@@ -38,6 +39,93 @@ CREATE TABLE IF NOT EXISTS game_players (
 );
 CREATE INDEX IF NOT EXISTS game_players_puuid ON game_players (puuid);
 `
+
+/** Version of the database layout, kept in `PRAGMA user_version`. Databases from 1.0 and 1.1 are version 1 (or 0). */
+export const DB_VERSION = 2
+
+/** Columns one migration adds to an existing table (skipped when they are already there). */
+type AddColumns = { table: string; columns: [name: string, definition: string][] }
+
+/**
+ * Migrations, keyed by the version they lead to. Each runs once in a transaction together with
+ * raising user_version, and is written so that running it on a database that already has its
+ * changes does no harm.
+ */
+const MIGRATIONS: Record<number, { add?: AddColumns[]; sql?: string; after?: (db: DatabaseSync) => void }> = {
+  // 1.2: per-player K/D/A and multikill for the encounters on the loading screen, plus the
+  // tables of the achievements and the Discord posts
+  2: {
+    add: [
+      {
+        table: 'game_players',
+        columns: [
+          ['kills', 'INTEGER NOT NULL DEFAULT 0'],
+          ['deaths', 'INTEGER NOT NULL DEFAULT 0'],
+          ['assists', 'INTEGER NOT NULL DEFAULT 0'],
+          ['multikill', 'INTEGER NOT NULL DEFAULT 0']
+        ]
+      }
+    ],
+    sql: `
+      CREATE TABLE IF NOT EXISTS achievements (
+        id          TEXT PRIMARY KEY,
+        unlocked_at INTEGER NOT NULL,
+        game_id     INTEGER,
+        seen        INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS discord_posts (
+        game_id   INTEGER PRIMARY KEY,
+        posted_at INTEGER NOT NULL
+      );`,
+    after: backfillPlayerStats
+  }
+}
+
+/** Fills the new per-player columns from the summary JSON of every saved game. */
+function backfillPlayerStats(db: DatabaseSync): void {
+  const update = db.prepare('UPDATE game_players SET kills = ?, deaths = ?, assists = ?, multikill = ? WHERE game_id = ? AND puuid = ?')
+  const rows = db.prepare('SELECT game_id, summary FROM games').all() as unknown as { game_id: number; summary: string }[]
+  for (const row of rows) {
+    let summary: GameSummary
+    try {
+      summary = JSON.parse(row.summary) as GameSummary
+    } catch {
+      continue
+    }
+    for (const player of summary.players ?? []) {
+      update.run(player.kills ?? 0, player.deaths ?? 0, player.assists ?? 0, player.multikill ?? 0, row.game_id, player.puuid)
+    }
+  }
+}
+
+/** Brings a database up to DB_VERSION. Safe to call on every start. */
+export function migrate(db: DatabaseSync): number {
+  db.exec(BASE_SCHEMA)
+  let version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
+  for (let next = Math.max(version, 1) + 1; next <= DB_VERSION; next++) {
+    const migration = MIGRATIONS[next]
+    db.exec('BEGIN')
+    try {
+      for (const { table, columns } of migration.add ?? []) {
+        const existing = new Set(
+          (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).map((column) => column.name)
+        )
+        for (const [name, definition] of columns) {
+          if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`)
+        }
+      }
+      if (migration.sql) db.exec(migration.sql)
+      migration.after?.(db)
+      db.exec(`PRAGMA user_version = ${next}`)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    version = next
+  }
+  return version
+}
 
 interface GameRow {
   game_id: number
@@ -72,7 +160,7 @@ export class GameStore {
     if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true })
     this.db = new DatabaseSync(file)
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
-    this.db.exec(SCHEMA)
+    migrate(this.db)
     this.insertGame = this.db.prepare(
       `INSERT INTO games (${LIST_COLUMNS}, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (game_id) DO UPDATE SET
@@ -82,8 +170,8 @@ export class GameStore {
          summary = excluded.summary`
     )
     this.insertPlayer = this.db.prepare(
-      `INSERT INTO game_players (game_id, puuid, riot_id, champion_id, ally, me, premade, score, mvp, troll, win)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO game_players (game_id, puuid, riot_id, champion_id, ally, me, premade, score, mvp, troll, win, kills, deaths, assists, multikill)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     this.deletePlayers = this.db.prepare('DELETE FROM game_players WHERE game_id = ?')
   }
@@ -136,7 +224,11 @@ export class GameStore {
         summary.mvp === player.puuid ? 1 : 0,
         // nobody is the troll of a team of one
         allies > 1 && blamed?.puuid === player.puuid ? 1 : 0,
-        (player.ally ? summary.win : !summary.win) ? 1 : 0
+        (player.ally ? summary.win : !summary.win) ? 1 : 0,
+        player.kills,
+        player.deaths,
+        player.assists,
+        player.multikill ?? 0
       )
     }
   }
@@ -282,6 +374,11 @@ export class GameStore {
       }
     }
     return imported
+  }
+
+  /** The underlying database, for the other stores that keep their tables in games.db. */
+  get database(): DatabaseSync {
+    return this.db
   }
 
   close(): void {

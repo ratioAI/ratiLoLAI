@@ -25,6 +25,10 @@ export interface SummaryPlayer {
   augments: number[]
   /** 0 to 100 impact score within the player's own team (heuristic, see impactScores) */
   score: number
+  /** largest multikill (2 = double … 5 = penta); missing in games saved before 1.2 */
+  multikill?: number
+  /** pentakills in this game; missing in games saved before 1.2 */
+  pentas?: number
 }
 
 export interface CurvePoint {
@@ -202,7 +206,9 @@ export function buildSummary(
       level: num(stats.champLevel),
       items: [0, 1, 2, 3, 4, 5, 6].map((i) => num(stats[`item${i}`])),
       augments: [1, 2, 3, 4, 5, 6].map((i) => num(stats[`playerAugment${i}`])).filter((augment) => augment > 0),
-      score: 0
+      score: 0,
+      multikill: num(stats.largestMultiKill),
+      pentas: num(stats.pentaKills)
     }
   })
   for (const side of [true, false]) {
