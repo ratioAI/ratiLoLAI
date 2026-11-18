@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.2
 
 **Augment overlay on every screen** – the card frames now find and frame the cards no matter how the screen is set up.
 
