@@ -5,6 +5,7 @@ import { createWorker, PSM } from 'tesseract.js'
 import { describe, expect, it } from 'vitest'
 import {
   AugmentSchedule,
+  cardMetrics,
   cardRects,
   cardsVisible,
   matchAugment,
@@ -53,9 +54,17 @@ describe('cardsVisible', () => {
   it('detects the augment selection', () => {
     expect(cardsVisible(shot)).toBe(true)
   })
-  // real 640×360 previews from a user's game: prismatic, gold (screenshot and in-game capture)
-  it.each(['pos-prismatic.png', 'pos-gold.png', 'pos-gold-ingame.png'])('finds the cards in %s', (f) => {
+  // real 640×360 previews from a user's game: prismatic, gold (screenshot and in-game capture), silver
+  it.each(['pos-prismatic.png', 'pos-gold.png', 'pos-gold-ingame.png', 'pos-silver.png'])('finds the cards in %s', (f) => {
     expect(cardsVisible(preview(f))).toBe(true)
+  })
+  // Silver frames fade to about 65 on the lower right edge. The hovered (left) card glows, the other
+  // two have to count on their own, otherwise the selection is only seen while it fades in.
+  it('counts every silver card, not just the hovered one', () => {
+    for (const card of cardMetrics(preview('pos-silver.png'))) {
+      expect(card.edges).toBeGreaterThanOrEqual(0.7)
+      expect(card.dark).toBeGreaterThanOrEqual(0.6)
+    }
   })
   // normal game frame, alt-tab switcher, a window over the game
   it.each(['neg-gameplay.png', 'neg-alttab.png', 'neg-window.png'])('finds nothing in %s', (f) => {

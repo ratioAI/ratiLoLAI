@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Augment overlay: silver augments are recognised again. Their frames fade towards the bottom right, so the frames only flashed up while the cards faded in (or never showed) and then disappeared.
+- Augment overlay: one look without cards (hover glow, tooltip, animation) no longer hides the frames; they go after two misses in a row.
+
 ## 1.3.2
 
 **Augment overlay on every screen** – the card frames now find and frame the cards no matter how the screen is set up.

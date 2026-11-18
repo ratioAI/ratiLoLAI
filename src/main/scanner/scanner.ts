@@ -245,7 +245,9 @@ export class AugmentScanner {
         // for a while even without a respawn or purchase to trigger it.
         else this.schedule.openWindow(90_000)
       }
-      this.publish(state)
+      // One look without cards (hover glow, a tooltip or the cursor over a frame, an animation) keeps
+      // the frames up. They only go once the schedule counts the cards as gone: two misses in a row.
+      if (state.visible || !this.schedule.cardsSeen) this.publish(state)
     } catch (err) {
       this.log(`scan failed: ${err instanceof Error ? err.message : String(err)}`)
       this.publish({ visible: false, offer: null, displayId: null })

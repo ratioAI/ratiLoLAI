@@ -72,9 +72,18 @@ function runMax(bitmap: Bitmap, x0: number, x1: number, y: number): number {
 }
 
 /**
- * Per card: `edges` is the share of rows where both side frames are light (>= 105) and at least 55
- * brighter than the body just inside them, `dark` is the share of dark samples in the card body.
- * All distances are reference pixels (1080p) scaled by the geometry's unit.
+ * A row counts as framed when the side frame is at least FRAME_MIN bright and FRAME_CONTRAST
+ * brighter than the card body just inside it, on both sides. Silver frames are lit from the top
+ * left: towards the bottom their right edge fades to about 65 over a body of 15, so stricter values
+ * (105 / 55 until 1.3.2) only matched half of each silver card and the selection went unseen.
+ */
+const FRAME_MIN = 60
+const FRAME_CONTRAST = 40
+
+/**
+ * Per card: `edges` is the share of rows where both side frames are light and clearly brighter
+ * than the body just inside them (see FRAME_MIN), `dark` is the share of dark samples in the card
+ * body. All distances are reference pixels (1080p) scaled by the geometry's unit.
  */
 export function cardMetrics(bitmap: Bitmap, fit: LayoutFit = 'height'): { edges: number; dark: number }[] {
   const geometry = cardGeometry(bitmap.width, bitmap.height, fit)
@@ -94,7 +103,7 @@ export function cardMetrics(bitmap: Bitmap, fit: LayoutFit = 'height'): { edges:
         const inner = side < 0 ? [centreX - 126 * unit, centreX - 112 * unit] : [centreX + 112 * unit, centreX + 126 * unit]
         const frame = runMax(bitmap, band[0], band[1], y)
         const body = runMean(bitmap, inner[0], inner[1], y)
-        if (frame < 105 || frame - body < 55) framed = false
+        if (frame < FRAME_MIN || frame - body < FRAME_CONTRAST) framed = false
       }
       if (framed) hits++
     }
