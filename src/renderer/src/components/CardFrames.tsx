@@ -1,5 +1,7 @@
+import type { CSSProperties } from 'react'
 import type { AugmentOffer, Settings, Tier } from '@shared/types'
 import { COMBO_TYPE_LABELS, type AugmentTier } from '@shared/mayhem'
+import { uiScale } from '@shared/overlayGeometry'
 import { FrameCanvas, type FrameSpec } from './FrameCanvas'
 
 const TIER_ORDER: Tier[] = ['S+', 'S', 'A', 'B', 'C', 'D']
@@ -64,7 +66,16 @@ export function CardFrames({
             className="card-frame"
             data-tier={rating.tier}
             data-combo={synergy && synergy.type !== 'trap' ? '' : undefined}
-            style={{ left: card.rect.x, top: card.rect.y, width: card.rect.width, height: card.rect.height }}
+            style={
+              {
+                left: card.rect.x,
+                top: card.rect.y,
+                width: card.rect.width,
+                height: card.rect.height,
+                // crest, label and note grow and shrink with the card (720p, 4K, Windows scaling)
+                '--cf-scale': uiScale(card.rect.width)
+              } as CSSProperties
+            }
           >
             <div className="cf-crest">
               <span className="cf-shield">

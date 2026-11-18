@@ -1,3 +1,4 @@
+import type { OverlayNotice } from './overlayNotice'
 import type { GameSummary } from './summary'
 import type { Encounter } from './encounters'
 import type { AchievementCategory, AchievementRank } from './achievements'
@@ -1025,6 +1026,8 @@ export interface AdminApi {
 /** Augment cards currently offered on screen (detected by screen recognition). */
 export interface AugmentOffer {
   displayId: number
+  /** which card layout matched on this screen (see @shared/cardLayout), for the log */
+  fit?: 'height' | 'fit16x9'
   /** only for the settings preview: rate the cards for this champion instead of the live one */
   championId?: number
   /** card rectangles relative to the display, in DIP */
@@ -1045,6 +1048,12 @@ export interface OverlayDiagnostics {
   overlayVisible: boolean
   /** state of the shared screen stream */
   captureStream: string
+  /** League's window mode as far as we know it ('fullscreen' | 'windowed' | 'borderless') */
+  windowMode: string | null
+  /** one line per monitor: id, position, size in DIP, Windows scaling */
+  displays: string[]
+  /** what keeps the overlay from working, if anything */
+  notice: OverlayNotice | null
   log: string[]
 }
 
@@ -1053,6 +1062,11 @@ export interface ScanTestResult {
   screens: {
     displayId: number
     size: string
+    /** Windows display scaling of this screen (1 = 100 %) */
+    scaleFactor?: number
+    primary?: boolean
+    /** card layout that matched (null when no cards were found) */
+    layout?: 'height' | 'fit16x9' | null
     /** augment cards found on this screen */
     visible: boolean
     /** screenshot is completely black (exclusive fullscreen) */
@@ -1099,4 +1113,7 @@ export interface RcEvents {
   mapTimers: MinimapState | null
   minimap: MinimapState | null
   update: UpdateState
+  /** why the in-game overlay can't work right now (fullscreen, windowed, black capture), null when fine */
+  overlayNotice: OverlayNotice | null
 }
+export type { OverlayNotice } from './overlayNotice'

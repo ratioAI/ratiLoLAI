@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+**Augment overlay on every screen** – the card frames now find and frame the cards no matter how the screen is set up.
+
+- Any resolution and aspect ratio: 720p to 4K, 16:9, 16:10 laptops, 21:9 ultrawide, 4:3. The recognition checks which layout the game shows instead of assuming 16:9, remembers it per monitor and writes it to the log.
+- Multi-monitor: screen sources are paired with monitors by Windows' display id, then by aspect ratio, and only as a last resort by order. A wrong guess used to scan the wrong monitor or draw the frames on the other screen.
+- Mixed Windows scaling (e.g. 100 % + 125 %): the frames window is created on the game screen and its size is checked after every move, so it no longer ends up too big, too small or shifted.
+- Capture pixels are converted to screen coordinates per axis, and frames are never put on a guessed monitor anymore when the remembered one is gone.
+- Plugging in, removing or rescaling a monitor during a game resets the recognition and the overlay right away.
+- Crest, label, note, border and glow scale with the cards, so they look the same on 720p, 1440p and 4K.
+- League's window mode is read from the client: exclusive fullscreen (nothing can be drawn over it), windowed mode and a black screen capture are shown as a notice in the header and in Settings › Diagnostics, with how to fix it.
+- The overlay page is rebuilt on its own after a crash (e.g. a GPU driver reset).
+- `overlay.log` now lists the monitors (position, size, scaling), League's window mode, the detected card layout and where the frames were placed; *Test screen recognition* shows scaling and layout per screen.
+
 ## 1.3.1
 
 - Clips: the FFmpeg build is published now, so *Download* in Settings › Clips works (FFmpeg 8.1, LGPL build, verified by SHA-256).

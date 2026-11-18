@@ -1,5 +1,6 @@
 import { BrowserWindow, globalShortcut, ipcMain, screen, type Rectangle } from 'electron'
 import type { AugmentOffer, RcEvents } from '@shared/types'
+import { boundsDiffer, frameWindowBounds } from '@shared/overlayGeometry'
 
 type Part = 'frames' | 'minimap' | 'loading'
 
@@ -24,8 +25,12 @@ class OverlayWindow {
     private readonly part: Part,
     private readonly preload: string,
     private readonly load: (win: BrowserWindow, hash: string) => void,
-    private readonly hash: string
+    private readonly hash: string,
+    private readonly log: (message: string) => void = () => undefined
   ) {}
+
+  /** called after the page crashed and the window was thrown away, so the owner can show it again */
+  onGone: () => void = () => undefined
 
   ensure(bounds?: Rectangle): BrowserWindow {
     if (this.win && !this.win.isDestroyed()) return this.win
@@ -55,8 +60,20 @@ class OverlayWindow {
     this.loaded = new Promise((resolve) => win.webContents.once('did-finish-load', () => setTimeout(resolve, 300)))
     this.load(win, this.hash)
     win.on('closed', () => {
+      if (this.win !== win) return
       this.win = null
       this.loaded = null
+    })
+    // A crashed or killed overlay page (GPU driver reset, out of memory) would leave an empty window
+    // for the rest of the session. Throw it away; the next show builds a fresh one.
+    win.webContents.on('render-process-gone', (_event, details) => {
+      // destroy() and app shutdown let go of the window first, those are not crashes
+      if (this.win !== win || details.reason === 'clean-exit') return
+      this.log(`${this.part} overlay page gone (${details.reason}) – recreating`)
+      this.win = null
+      this.loaded = null
+      if (!win.isDestroyed()) win.destroy()
+      this.onGone()
     })
     this.win = win
     return win
@@ -64,15 +81,25 @@ class OverlayWindow {
 
   setBounds(bounds: Rectangle): void {
     const win = this.ensure(bounds)
-    const current = win.getBounds()
     // only touch the window when the bounds actually changed
-    if (current.x !== bounds.x || current.y !== bounds.y || current.width !== bounds.width || current.height !== bounds.height)
+    if (!boundsDiffer(win.getBounds(), bounds, 0)) return
+    win.setBounds(bounds)
+    // Windows sizes a window that moves onto a monitor with a different scale factor (100 % next to
+    // 125 %, say) using the old monitor's factor, so it ends up too big or too small. Once it is on
+    // the new monitor a second setBounds is converted correctly.
+    if (boundsDiffer(win.getBounds(), bounds)) {
       win.setBounds(bounds)
+      const actual = win.getBounds()
+      if (boundsDiffer(actual, bounds)) this.log(`${this.part} window: wanted ${JSON.stringify(bounds)}, got ${JSON.stringify(actual)}`)
+    }
   }
 
   show(): void {
     const win = this.ensure()
     if (!win.isVisible()) win.showInactive()
+    // the game can push itself above other topmost windows when it gets focus, so claim the top again
+    win.setAlwaysOnTop(true, 'screen-saver')
+    win.moveTop()
   }
 
   hide(): void {
@@ -96,15 +123,14 @@ class OverlayWindow {
   }
 
   destroy(): void {
-    this.win?.destroy()
+    const win = this.win
     this.win = null
+    win?.destroy()
   }
 }
 
 /** Margin (DIP) around the minimap inside the minimap window, for labels that stick out. */
 export const MINIMAP_MARGIN = 36
-/** Space around the cards for the crest above them and the glow. */
-const FRAME_PAD = { top: 100, side: 60, bottom: 52 }
 
 export class OverlayManager {
   readonly frames: OverlayWindow
@@ -116,23 +142,33 @@ export class OverlayManager {
   private displayId: number | null = null
   /** hotkeys of other features (the recorder's clip, bookmark and screenshot keys) */
   private extraKeys: string[] = []
+  /** offer the frames show right now (display-relative), to restore them after a page crash */
+  private shownOffer: AugmentOffer | null = null
+  /** bumped by every show/hide of the frames, so a slow show can't undo a later hide */
+  private framesToken = 0
 
   constructor(
     preload: string,
     load: (win: BrowserWindow, hash: string) => void,
-    private readonly onToggle: () => void
+    private readonly onToggle: () => void,
+    private readonly log: (message: string) => void = () => undefined
   ) {
-    this.frames = new OverlayWindow('frames', preload, load, '/overlay/frames')
-    this.minimap = new OverlayWindow('minimap', preload, load, `/overlay/minimap?m=${MINIMAP_MARGIN}`)
-    this.loading = new OverlayWindow('loading', preload, load, '/overlay/loading')
+    this.frames = new OverlayWindow('frames', preload, load, '/overlay/frames', log)
+    this.minimap = new OverlayWindow('minimap', preload, load, `/overlay/minimap?m=${MINIMAP_MARGIN}`, log)
+    this.loading = new OverlayWindow('loading', preload, load, '/overlay/loading', log)
+    this.frames.onGone = () => {
+      const offer = this.shownOffer
+      if (offer) setTimeout(() => this.shownOffer === offer && this.showFrames(offer), 500)
+    }
     // the renderer turns click-through off while the mouse is over something clickable
     ipcMain.on('overlay:interactive', (event, interactive: boolean) => {
       BrowserWindow.fromWebContents(event.sender)?.setIgnoreMouseEvents(!interactive, { forward: true })
     })
   }
 
-  private display(id = this.displayId): Electron.Display {
-    return screen.getAllDisplays().find((display) => display.id === id) ?? screen.getPrimaryDisplay()
+  /** The display with this id, or the primary display when `fallback` is set and it is gone. */
+  private display(id: number | null = this.displayId, fallback = true): Electron.Display | null {
+    return screen.getAllDisplays().find((display) => display.id === id) ?? (fallback ? screen.getPrimaryDisplay() : null)
   }
 
   /** Moves the overlay onto the monitor the game runs on. */
@@ -141,47 +177,77 @@ export class OverlayManager {
   }
 
   get currentDisplayId(): number {
-    return this.display().id
+    return this.display()!.id
   }
 
-  /** Creates the hidden frames window early so it shows up instantly later. */
-  prepare(): void {
-    this.frames.ensure()
+  /**
+   * Creates the hidden frames window early so it shows up instantly later. It is created on the game
+   * screen right away: moving it there later from another monitor is where scaling goes wrong.
+   */
+  prepare(displayId: number | null = this.displayId): void {
+    const { bounds } = this.display(displayId)!
+    this.frames.ensure({
+      x: bounds.x + Math.round(bounds.width / 2) - 200,
+      y: bounds.y + Math.round(bounds.height / 2) - 150,
+      width: 400,
+      height: 300
+    })
   }
 
-  /** Frames around the offered cards. The window only covers the cards plus crest and glow. */
-  showFrames(offer: AugmentOffer): void {
-    const display = this.display(offer.displayId)
-    const rects = offer.cards.map((card) => card.rect)
-    // card rects are relative to the display, clamp the padded area to it
-    const x0 = Math.max(0, Math.min(...rects.map((rect) => rect.x)) - FRAME_PAD.side)
-    const y0 = Math.max(0, Math.min(...rects.map((rect) => rect.y)) - FRAME_PAD.top)
-    const x1 = Math.min(display.bounds.width, Math.max(...rects.map((rect) => rect.x + rect.width)) + FRAME_PAD.side)
-    const y1 = Math.min(display.bounds.height, Math.max(...rects.map((rect) => rect.y + rect.height)) + FRAME_PAD.bottom)
-    const bounds = {
-      x: Math.round(display.bounds.x + x0),
-      y: Math.round(display.bounds.y + y0),
-      width: Math.round(x1 - x0),
-      height: Math.round(y1 - y0)
+  /**
+   * Frames around the offered cards. The window only covers the cards plus crest and glow. Returns
+   * false (and shows nothing) when the offer doesn't fit any current display, instead of guessing.
+   */
+  showFrames(offer: AugmentOffer): boolean {
+    const display = this.display(offer.displayId, false)
+    const placed = display
+      ? frameWindowBounds(
+          display.bounds,
+          offer.cards.map((card) => card.rect)
+        )
+      : null
+    if (!display || !placed) {
+      this.log(
+        display
+          ? `frames: cards ${JSON.stringify(offer.cards.map((card) => card.rect))} are outside display ${display.id} – not shown`
+          : `frames: display ${offer.displayId} is gone – not shown`
+      )
+      this.hideFrames()
+      return false
     }
-    this.frames.setBounds(bounds)
+    this.shownOffer = offer
+    const token = ++this.framesToken
+    // a window that doesn't exist yet is created right where it belongs (see prepare)
+    this.frames.ensure(placed.bounds)
     // the frames page draws in window coordinates
     const local: AugmentOffer = {
       ...offer,
-      cards: offer.cards.map((card) => ({ ...card, rect: { ...card.rect, x: card.rect.x - x0, y: card.rect.y - y0 } }))
+      cards: offer.cards.map((card) => ({
+        ...card,
+        rect: { ...card.rect, x: card.rect.x - placed.offset.x, y: card.rect.y - placed.offset.y }
+      }))
     }
-    void this.frames.send('framesOffer', local).then(() => this.frames.show())
+    // content first, then bounds: moving a visible window before its content changed shows the old
+    // frames at the new spot for a frame
+    void this.frames.send('framesOffer', local).then(() => {
+      if (token !== this.framesToken) return // hidden or replaced meanwhile
+      this.frames.setBounds(placed.bounds)
+      this.frames.show()
+    })
+    return true
   }
 
   hideFrames(): void {
     if (this.previewTimer) return
+    this.shownOffer = null
+    this.framesToken++
     this.frames.hide()
     void this.frames.send('framesOffer', null)
   }
 
   /** Minimap timers. `rect` is in fractions of the display; returns the minimap's position inside the window (DIP). */
   showMinimap(displayId: number, rect: { x: number; y: number; w: number; h: number }): { x: number; y: number; w: number; h: number } {
-    const { bounds } = this.display(displayId)
+    const { bounds } = this.display(displayId)!
     const margin = MINIMAP_MARGIN
     const x = Math.round(bounds.x + rect.x * bounds.width - margin)
     const y = Math.round(bounds.y + rect.y * bounds.height - margin)
@@ -200,7 +266,7 @@ export class OverlayManager {
 
   /** Loading screen panel, centered at the top of the game screen. */
   showLoading(displayId: number | null): void {
-    const { bounds } = this.display(displayId)
+    const { bounds } = this.display(displayId)!
     const width = Math.min(1040, bounds.width - 40)
     const height = 340
     this.loading.setBounds({ x: Math.round(bounds.x + (bounds.width - width) / 2), y: bounds.y + 18, width, height })
@@ -240,6 +306,14 @@ export class OverlayManager {
       this.previewTimer = null
       this.hideFrames()
     }, durationMs)
+  }
+
+  /** Monitors were added, removed or rescaled: frames placed for the old setup are wrong now. */
+  displaysChanged(): void {
+    if (this.displayId !== null && !this.display(this.displayId, false)) this.displayId = null
+    if (this.previewTimer) clearTimeout(this.previewTimer)
+    this.previewTimer = null
+    this.hideFrames()
   }
 
   /** Ends a running preview right away. */

@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { BrowserWindow, desktopCapturer, ipcMain, screen, type Display } from 'electron'
 import type { CaptureCommand, CaptureFrame, CaptureRegion, CaptureReply } from '@shared/capture'
+import { matchSourcesToDisplays, sourceForDisplay } from './sources'
 
 /** Who needs the screen, on which displays and how often. */
 interface Demand {
@@ -109,20 +110,24 @@ export class CaptureService {
     if (key === this.openKey) return
 
     const all = screen.getAllDisplays()
-    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
+    // small thumbnails are enough to tell screens apart by aspect ratio when display_id is missing
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 160, height: 160 } })
+    const matched = matchSourcesToDisplays(
+      sources.map((source) => ({ id: source.id, displayId: source.display_id, ...source.thumbnail.getSize() })),
+      all
+    )
     const streams = displays
       .map((id) => {
         const display = all.find((candidate) => candidate.id === id)
-        if (!display) return null
-        // display_id can be empty on Windows, so fall back to enumeration order or the only source
-        const source =
-          sources.find((candidate) => candidate.display_id === String(id)) ??
-          (sources.length === all.length ? sources[all.indexOf(display)] : undefined) ??
-          (sources.length === 1 ? sources[0] : undefined)
-        if (!source) return null
+        const source = display ? sourceForDisplay(matched, id) : null
+        if (!display || !source) {
+          this.log(`capture: no screen source for display ${id}`)
+          return null
+        }
+        if (source.by !== 'id') this.log(`capture: display ${id} paired with ${source.sourceId} by ${source.by} (no display_id)`)
         return {
           displayId: id,
-          sourceId: source.id,
+          sourceId: source.sourceId,
           width: Math.round(display.size.width * display.scaleFactor),
           height: Math.round(display.size.height * display.scaleFactor),
           fps
@@ -140,6 +145,12 @@ export class CaptureService {
       this.failed = reply.error ?? 'unknown error'
       this.log(`capture streams failed: ${this.failed}`)
     }
+  }
+
+  /** Monitors changed (added, removed, rescaled): reopen the streams so they pair with the new setup. */
+  reset(): void {
+    this.openKey = ''
+    this.applying = this.applying.then(() => this.apply()).catch(() => undefined)
   }
 
   /** Waits until pending stream changes are applied. */

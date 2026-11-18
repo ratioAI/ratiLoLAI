@@ -1,13 +1,23 @@
 /**
  * Pure helpers for spotting the ARAM: Mayhem augment selection on a screenshot.
  *
- * The three cards are centred horizontally and scale with the screen height. Measured at
- * 1920x1080: card centres at 598 / 966 / 1334 px, width 320 px, top 192 px, bottom 720 px,
- * title baseline around y = 444 px. All geometry is stored as a fraction of the height.
+ * Geometry lives in @shared/cardLayout: positions are measured on a 1920x1080 reference screen and
+ * mapped onto the real screen with a `CardGeometry`. Screens that are not 16:9 have more than one
+ * candidate fit, `detectLayout` finds out which one the picture actually shows.
  */
 
-import { cardCentres, LAYOUT, titleRects, type Rect } from '@shared/cardLayout'
-export { cardCentres, cardRects, titleRects, LAYOUT, type Rect } from '@shared/cardLayout'
+import {
+  cardCentres,
+  cardGeometry,
+  LAYOUT,
+  layoutFits,
+  layoutFitsOnScreen,
+  screenY,
+  titleRects,
+  type LayoutFit,
+  type Rect
+} from '@shared/cardLayout'
+export { cardCentres, cardRects, titleRects, layoutFits, LAYOUT, type LayoutFit, type Rect } from '@shared/cardLayout'
 
 /** Minimal view on a BGRA/RGBA bitmap. */
 export interface Bitmap {
@@ -27,10 +37,20 @@ function brightness(bitmap: Bitmap, x: number, y: number): number {
  * Cheap check before running OCR. Returns true when at least two of the three cards show a light
  * side frame with the dark card body right next to it.
  */
-export function cardsVisible(bitmap: Bitmap): boolean {
+export function cardsVisible(bitmap: Bitmap, fit: LayoutFit = 'height'): boolean {
   // Frame-to-body contrast instead of a fixed brightness threshold, because gold frames are much
   // darker than prismatic ones. Works for silver, gold and prismatic cards.
-  return cardMetrics(bitmap).filter((metrics) => metrics.edges >= 0.7 && metrics.dark >= 0.6).length >= 2
+  return cardMetrics(bitmap, fit).filter((metrics) => metrics.edges >= 0.7 && metrics.dark >= 0.6).length >= 2
+}
+
+/**
+ * Which layout fit shows the cards on this picture, or null when no cards are visible. `preferred`
+ * (the fit that matched on this screen last time) is tried first, so the usual case costs one check.
+ */
+export function detectLayout(bitmap: Bitmap, preferred: LayoutFit | null = null): LayoutFit | null {
+  const fits = layoutFits(bitmap.width, bitmap.height).filter((fit) => layoutFitsOnScreen(bitmap.width, bitmap.height, fit))
+  const ordered = preferred && fits.includes(preferred) ? [preferred, ...fits.filter((fit) => fit !== preferred)] : fits
+  return ordered.find((fit) => cardsVisible(bitmap, fit)) ?? null
 }
 
 /** Mean brightness over a horizontal run of pixels. */
@@ -54,15 +74,19 @@ function runMax(bitmap: Bitmap, x0: number, x1: number, y: number): number {
 /**
  * Per card: `edges` is the share of rows where both side frames are light (>= 105) and at least 55
  * brighter than the body just inside them, `dark` is the share of dark samples in the card body.
+ * All distances are reference pixels (1080p) scaled by the geometry's unit.
  */
-export function cardMetrics(bitmap: Bitmap): { edges: number; dark: number }[] {
-  const H = bitmap.height
-  const unit = H / 1080 // 1 px at 1080p
+export function cardMetrics(bitmap: Bitmap, fit: LayoutFit = 'height'): { edges: number; dark: number }[] {
+  const geometry = cardGeometry(bitmap.width, bitmap.height, fit)
+  const unit = geometry.unit
+  const inside = (y: number): boolean => y >= 0 && y < bitmap.height
   const metrics: { edges: number; dark: number }[] = []
-  for (const centreX of cardCentres(bitmap.width, H)) {
+  const rowStep = Math.max(1, Math.round(6 * unit))
+  for (const centreX of cardCentres(bitmap.width, bitmap.height, fit)) {
     let rows = 0
     let hits = 0
-    for (let y = Math.round(0.25 * H); y < 0.62 * H; y += Math.max(1, Math.round(H / 180))) {
+    for (let y = Math.round(screenY(geometry, 270)); y < screenY(geometry, 669.6); y += rowStep) {
+      if (!inside(y)) continue
       rows++
       let framed = true
       for (const side of [-1, 1]) {
@@ -77,10 +101,12 @@ export function cardMetrics(bitmap: Bitmap): { edges: number; dark: number }[] {
     // the card body has to be dark
     let dark = 0
     let samples = 0
-    const bodyY = LAYOUT.emptyY * H
-    for (let dx = -0.08 * H; dx <= 0.08 * H; dx += 0.02 * H) {
+    const bodyY = screenY(geometry, LAYOUT.emptyY)
+    for (let dx = -86.4; dx <= 86.4 + 1e-6; dx += 21.6) {
+      const x = centreX + dx * unit
+      if (x < 0 || x >= bitmap.width || !inside(bodyY)) continue
       samples++
-      if (brightness(bitmap, centreX + dx, bodyY) < 90) dark++
+      if (brightness(bitmap, x, bodyY) < 90) dark++
     }
     metrics.push({ edges: rows ? hits / rows : 0, dark: samples ? dark / samples : 0 })
   }
@@ -171,8 +197,10 @@ export function matchAugment(text: string, candidates: NameCandidate[], minScore
  * Coarse fingerprint of each card (icon and title area, mean brightness per cell), one entry per
  * card. Runs on the small preview capture so we notice a reroll without OCR on every frame.
  */
-export function titleSignature(bitmap: Bitmap): number[][] {
+export function titleSignature(bitmap: Bitmap, fit: LayoutFit = 'height'): number[][] {
   const H = bitmap.height
+  const geometry = cardGeometry(bitmap.width, H, fit)
+  const unit = geometry.unit
   const sampleGrid = (x0: number, y0: number, w: number, h: number, cols: number, rows: number, out: number[]): void => {
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
@@ -191,12 +219,12 @@ export function titleSignature(bitmap: Bitmap): number[][] {
       }
     }
   }
-  return titleRects(bitmap.width, H).map((rect, i) => {
+  const centres = cardCentres(bitmap.width, H, fit)
+  return titleRects(bitmap.width, H, fit).map((rect, i) => {
     const signature: number[] = []
     sampleGrid(rect.x, rect.y, rect.width, rect.height, 12, 2, signature)
     // augment icon above the title, it changes completely on a reroll
-    const centreX = cardCentres(bitmap.width, H)[i]
-    sampleGrid(centreX - 0.075 * H, 0.215 * H, 0.15 * H, 0.14 * H, 5, 5, signature)
+    sampleGrid(centres[i] - 81 * unit, screenY(geometry, 232.2), 162 * unit, 151.2 * unit, 5, 5, signature)
     return signature
   })
 }

@@ -38,6 +38,8 @@ import { DiagLog } from './diag'
 import { GameStore } from './games'
 import type { CurvePoint } from '@shared/summary'
 import { CaptureService } from './capture/captureService'
+import type { GameWindowSettings } from './lcu/gameSettings'
+import { overlayNotice, type OverlayNotice } from '@shared/overlayNotice'
 import { cardRects, WINDOWS, type NameCandidate } from './scanner/detect'
 import { augmentTiersForChampion, makeTierLookup, type TierLookup } from '@shared/mayhem'
 import { AchievementService } from './achievements'
@@ -155,12 +157,72 @@ let shownOffer = ''
 let minimapState: MinimapState | null = null
 let lastTick = { level: 0, dead: false, gameMode: null as string | null }
 
-const overlay = new OverlayManager(join(__dirname, '../preload/index.js'), loadRenderer, () => {
-  // hotkey: look for the cards right away
-  diag.log(`hotkey → scan now (inGame=${inGame}, mayhem=${inMayhem})`)
-  if (scanner.running) scanner.lookNow(WINDOWS.manual)
-  refreshOverlay()
-})
+const overlay = new OverlayManager(
+  join(__dirname, '../preload/index.js'),
+  loadRenderer,
+  () => {
+    // hotkey: look for the cards right away
+    diag.log(`hotkey → scan now (inGame=${inGame}, mayhem=${inMayhem})`)
+    if (scanner.running) scanner.lookNow(WINDOWS.manual)
+    refreshOverlay()
+  },
+  (message) => diag.log(message)
+)
+
+/** One line per monitor for overlay.log and the diagnostics: id, position, size (DIP), scaling. */
+function describeDisplays(): string[] {
+  const primary = screen.getPrimaryDisplay().id
+  return screen
+    .getAllDisplays()
+    .map(
+      (display) =>
+        `#${display.id}${display.id === primary ? ' (primary)' : ''}: ${display.bounds.width}×${display.bounds.height} DIP at ${display.bounds.x},${display.bounds.y}, ` +
+        `${Math.round(display.scaleFactor * 100)} % → ${Math.round(display.size.width * display.scaleFactor)}×${Math.round(display.size.height * display.scaleFactor)} px` +
+        (display.rotation ? `, rotated ${display.rotation}°` : '')
+    )
+}
+
+// League's window mode (exclusive fullscreen can't be overlaid) and the notice shown in the app
+let windowSettings: GameWindowSettings | null = null
+let windowModeCheckedAt = 0
+let notice: OverlayNotice | null = null
+
+function refreshNotice(): void {
+  const enabled = settings.get().overlay.enabled
+  const next = enabled
+    ? overlayNotice({ windowMode: windowSettings?.mode ?? null, blackCapture: inMayhem && scanner.running && scanner.blackCapture })
+    : null
+  if (JSON.stringify(next) === JSON.stringify(notice)) return
+  notice = next
+  diag.log(next ? `notice: ${next.title} – ${next.detail}` : 'notice cleared')
+  emit('overlayNotice', next)
+}
+
+async function checkWindowMode(): Promise<void> {
+  const next = await lcu.gameWindowSettings().catch(() => null)
+  if (JSON.stringify(next) !== JSON.stringify(windowSettings))
+    diag.log(next ? `League video: ${next.mode ?? 'unknown mode'}, ${next.width}×${next.height} (from ${next.source})` : 'League video settings: unknown')
+  windowSettings = next
+  refreshNotice()
+}
+
+/** Monitors were added, removed, rearranged or rescaled: everything placed for the old setup is stale. */
+let displayTimer: NodeJS.Timeout | null = null
+function onDisplaysChanged(_event: unknown, _display: unknown, changed?: string[]): void {
+  // a work area change (taskbar shown or hidden) moves nothing we draw
+  if (changed && !changed.some((metric) => metric === 'bounds' || metric === 'scaleFactor' || metric === 'rotation')) return
+  if (displayTimer) clearTimeout(displayTimer)
+  displayTimer = setTimeout(() => {
+    displayTimer = null
+    diag.log(`monitors changed: ${describeDisplays().join(' | ')}`)
+    overlay.displaysChanged()
+    capture.reset()
+    if (scanner.running) scanner.displaysChanged()
+    cards = { visible: false, offer: null, displayId: null }
+    shownOffer = ''
+    refreshOverlay()
+  }, 600)
+}
 
 function refreshOverlay(): void {
   const current = settings.get()
@@ -170,8 +232,9 @@ function refreshOverlay(): void {
     shownOffer = key
     diag.log(offer ? 'frames shown' : 'frames hidden')
     if (process.env.RC_SELFTEST_NO_FRAMES) return // xvfb has no compositor, so our own window would cover the cards
-    if (offer) overlay.showFrames(offer)
-    else overlay.hideFrames()
+    if (offer) {
+      if (overlay.showFrames(offer)) diag.log(`frames at ${offer.cards.map((card) => `${Math.round(card.rect.x)},${Math.round(card.rect.y)} ${Math.round(card.rect.width)}×${Math.round(card.rect.height)}`).join(' / ')} on display ${offer.displayId} (layout ${offer.fit ?? 'height'})`)
+    } else overlay.hideFrames()
   }
 
   const mapState = minimapState
@@ -286,7 +349,9 @@ function updateOverlay(live: LiveGameState | null): void {
   const aram = inGame && (nowMayhem || live!.gameMode === 'ARAM' || queueId === 450)
   if (inGame && (!wasInGame || live!.gameMode !== lastTick.gameMode)) {
     diag.log(`game detected: gameMode=${live!.gameMode} queue=${queueId ?? '?'} → mayhem=${nowMayhem}`)
+    diag.log(`monitors: ${describeDisplays().join(' | ')}; game screen remembered: ${gameDisplay.get() ?? 'none yet'}`)
     lastTick.gameMode = live!.gameMode
+    void checkWindowMode()
   }
   minimap.update(live, aram, nowMayhem)
   // the game clock went backwards, so this is a new game: forget the last game's augments
@@ -295,7 +360,7 @@ function updateOverlay(live: LiveGameState | null): void {
     ownedGameTime = live!.gameTime
   }
   if (nowMayhem && overlaySettings.enabled) {
-    if (!inMayhem) overlay.prepare()
+    if (!inMayhem) overlay.prepare(gameDisplay.get())
     inMayhem = true
     const me = live!.players.find((player) => player.riotId === live!.activePlayer)
     const level = me?.level ?? 0
@@ -320,6 +385,7 @@ function updateOverlay(live: LiveGameState | null): void {
   }
   if (!inGame) lastTick = { level: 0, dead: false, gameMode: null }
   refreshOverlay()
+  refreshNotice()
 }
 
 function overlayDiagnostics(): OverlayDiagnostics {
@@ -336,6 +402,9 @@ function overlayDiagnostics(): OverlayDiagnostics {
     cardsVisible: cards.visible,
     overlayVisible: overlay.anyVisible,
     captureStream: capture.failed ? `failed: ${capture.failed}` : capture.active ? 'running' : 'off',
+    windowMode: windowSettings?.mode ?? null,
+    displays: describeDisplays(),
+    notice,
     log: diag.recent(40)
   }
 }
@@ -683,6 +752,11 @@ const lcu = new LcuManager({
       emit('champSelect', champSelect)
       // load the OCR engine during champion select, not when the first augment choice opens
       if (champSelect?.mode === 'mayhem' && settings.get().overlay.cardFrames) scanner.warmup()
+      // tell about fullscreen before the game, while it can still be changed calmly
+      if (champSelect && Date.now() - windowModeCheckedAt > 30_000) {
+        windowModeCheckedAt = Date.now()
+        void checkWindowMode()
+      }
     },
     loading: (loading) => {
       emit('loading', loading)
@@ -1219,6 +1293,10 @@ void app.whenReady().then(async () => {
   lcu.start()
   overlay.setHotkey(settings.get().overlay.hotkey)
   overlay.setVisibleInCapture(settings.get().overlay.showInCapture)
+  screen.on('display-added', onDisplaysChanged)
+  screen.on('display-removed', onDisplaysChanged)
+  screen.on('display-metrics-changed', onDisplaysChanged)
+  diag.log(`ratioAI ${app.getVersion()} – monitors: ${describeDisplays().join(' | ')}`)
   initAutoUpdate()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -31,7 +31,8 @@ import {
   isOurRunePage,
   type RawSession
 } from './champSelect'
-import { findCredentials } from './credentials'
+import { DEFAULT_LEAGUE_PATHS, findCredentials } from './credentials'
+import { parseClientGameSettings, readGameCfg, type GameWindowSettings } from './gameSettings'
 import { LcuClient, type LcuEvent } from './lcuClient'
 
 export interface LcuManagerDeps {
@@ -126,6 +127,15 @@ export class LcuManager {
   }
   getLive(): LiveGameState | null {
     return this.liveState
+  }
+
+  /**
+   * League's video settings (window mode, resolution): from the client, or Config/game.cfg in the
+   * install folder when the client isn't reachable. Null when neither is available.
+   */
+  async gameWindowSettings(): Promise<GameWindowSettings | null> {
+    const fromClient = this.client ? await this.client.get<unknown>('/lol-game-settings/v1/game-settings').catch(() => null) : null
+    return parseClientGameSettings(fromClient) ?? (await readGameCfg([this.deps.settings().leaguePath, ...DEFAULT_LEAGUE_PATHS]))
   }
 
   private setStatus(patch: Partial<ClientStatus>): void {

@@ -151,7 +151,8 @@ export function Settings() {
           Frames the augment cards by tier right in the game. It only looks at the screen while an augment is waiting to be picked (level 1,
           7, 11, 15) and only while the choice can open – when you are dead, at the start of the game, right after respawning or shopping –
           and disappears as soon as you have picked one. No screenshots are taken while you are fighting. League must run in{' '}
-          <b className="text-text">Borderless</b> or <b className="text-text">Windowed</b> mode – exclusive fullscreen cannot be overlaid.
+          <b className="text-text">Borderless</b> mode – exclusive fullscreen cannot be overlaid, and in a window the cards are not where
+          the overlay expects them. Any resolution, aspect ratio (16:9, 16:10, 21:9) and Windows scaling works.
         </p>
         <Toggle
           label="Enable overlay"
@@ -933,6 +934,27 @@ function OverlayDiagnosticsPanel() {
               <div>
                 Screen stream: <b className="text-text">{diagnostics.captureStream}</b>
               </div>
+              <div>
+                League window mode:{' '}
+                <b className={diagnostics.windowMode === 'borderless' ? 'text-emerald-400' : diagnostics.windowMode ? 'text-amber-300' : 'text-text'}>
+                  {diagnostics.windowMode ?? 'unknown'}
+                </b>
+              </div>
+            </div>
+          )}
+          {diagnostics?.notice && (
+            <div className="rounded-lg border border-amber-400/40 bg-amber-400/10 p-2 text-amber-200">
+              <b>{diagnostics.notice.title}.</b> {diagnostics.notice.detail}
+            </div>
+          )}
+          {diagnostics && diagnostics.displays.length > 0 && (
+            <div className="text-muted">
+              Monitors:
+              {diagnostics.displays.map((line) => (
+                <div key={line} className="font-mono text-[10px] text-text/80">
+                  {line}
+                </div>
+              ))}
             </div>
           )}
           <p className="text-muted">
@@ -954,11 +976,16 @@ function OverlayDiagnosticsPanel() {
               </div>
               {testResult.screens.map((screen, i) => (
                 <div key={i}>
-                  Screen {i + 1} ({screen.size}):{' '}
+                  Screen {i + 1} ({screen.size}
+                  {screen.scaleFactor ? `, ${Math.round(screen.scaleFactor * 100)} %` : ''}
+                  {screen.primary ? ', primary' : ''}):{' '}
                   {screen.black ? (
                     <span className="text-red-400">black image – use Borderless mode</span>
                   ) : (
-                    <>cards {yes(screen.visible)}</>
+                    <>
+                      cards {yes(screen.visible)}
+                      {screen.layout && <span className="text-muted"> (layout: {screen.layout === 'fit16x9' ? '16:9 inside the screen' : 'by height'})</span>}
+                    </>
                   )}
                   {screen.titles.length > 0 && (
                     <> · read: {screen.titles.map((title, j) => `"${title}"${screen.matches[j] ? ' ✓' : ' ✗'}`).join(', ')}</>

@@ -1,7 +1,20 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Clapperboard, Database, Gauge, History, LayoutGrid, Radio, Search, Settings as SettingsIcon, Sparkles, Trophy, Wrench } from 'lucide-react'
-import type { GameMode, RecorderStatus, UpdateState } from '@shared/types'
+import {
+  Clapperboard,
+  Database,
+  Gauge,
+  History,
+  LayoutGrid,
+  MonitorX,
+  Radio,
+  Search,
+  Settings as SettingsIcon,
+  Sparkles,
+  Trophy,
+  Wrench
+} from 'lucide-react'
+import type { GameMode, OverlayNotice, RecorderStatus, UpdateState } from '@shared/types'
 import type { GameSummary } from '@shared/summary'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
@@ -121,11 +134,18 @@ function RecorderIndicator() {
 export function Layout({ children }: { children: ReactNode }) {
   const { client, patches, patch, setPatch, crawler, mode, setMode } = useApp()
   const [update, setUpdate] = useState<UpdateState | null>(null)
+  const [notice, setNotice] = useState<OverlayNotice | null>(null)
   const navigate = useNavigate()
   useEffect(() => {
     api.appInfo().then((info) => setUpdate(info.update))
+    // the notice may already be set when this window opens (it only goes out when it changes)
+    api
+      .overlayDiagnostics()
+      .then((diagnostics) => setNotice(diagnostics.notice ?? null))
+      .catch(() => undefined)
     const unsubscribers = [
       api.on('update', setUpdate),
+      api.on('overlayNotice', setNotice),
       // a finished game opens its summary page right away
       api.on('gameSummary', (summary: GameSummary) => navigate(`/games/${summary.gameId}`))
     ]
@@ -172,6 +192,15 @@ export function Layout({ children }: { children: ReactNode }) {
           <Wordmark className="text-[15px] text-text" />
           {isDemo && <span className="rounded-md bg-gold/15 px-2 py-0.5 font-semibold text-gold">Web demo · synthetic data</span>}
           <div className="flex-1" />
+          {notice && (
+            <span
+              className="no-drag flex max-w-[340px] items-center gap-1.5 truncate rounded-md bg-amber-400/15 px-2 py-0.5 font-semibold text-amber-300"
+              title={notice.detail}
+            >
+              <MonitorX size={13} className="shrink-0" />
+              {notice.title}
+            </span>
+          )}
           {update?.status === 'ready' && (
             <button className="no-drag rounded-md bg-accent/15 px-2 py-0.5 font-semibold text-accent" onClick={() => api.installUpdate()}>
               Update {update.version} ready – restart

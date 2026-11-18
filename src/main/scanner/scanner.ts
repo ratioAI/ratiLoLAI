@@ -6,7 +6,7 @@ import {
   AugmentSchedule,
   cardRects,
   cardMetrics,
-  cardsVisible,
+  detectLayout,
   meanBrightness,
   matchAugment,
   prepareTitle,
@@ -14,11 +14,13 @@ import {
   titleRects,
   titleSignature,
   type Bitmap,
+  type LayoutFit,
   type NameCandidate,
   type PlayerTick
 } from './detect'
 import { TitleOcr } from './ocr'
 import type { CaptureService } from '../capture/captureService'
+import { matchSourcesToDisplays } from '../capture/sources'
 
 /** Size of the cheap preview capture we use to check whether the augment cards are open. */
 const PREVIEW = 640
@@ -48,20 +50,23 @@ const toBitmap = (image: Electron.NativeImage): Bitmap => {
 async function captureAll(box: { width: number; height: number }): Promise<Shot[]> {
   const displays = screen.getAllDisplays()
   const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: box })
+  const matched = matchSourcesToDisplays(
+    sources.map((source) => ({ id: source.id, displayId: source.display_id, ...source.thumbnail.getSize() })),
+    displays
+  )
   return sources
-    .map((source, i) => {
-      const size = source.thumbnail.getSize()
-      // display_id is empty on some Windows setups, so fall back to enumeration order, then aspect ratio
-      const display =
-        displays.find((candidate) => String(candidate.id) === source.display_id) ??
-        (sources.length === displays.length ? displays[i] : undefined) ??
-        displays.find(
-          (candidate) => Math.abs(candidate.size.width / candidate.size.height - size.width / Math.max(1, size.height)) < 0.02
-        ) ??
-        screen.getPrimaryDisplay()
-      return { display, image: source.thumbnail }
+    .map((source) => {
+      const display = matched.get(source.id)?.display ?? null
+      return display ? { display, image: source.thumbnail } : null
     })
-    .filter((shot) => !shot.image.isEmpty())
+    .filter((shot): shot is Shot => !!shot && !shot.image.isEmpty())
+}
+
+/** Capture pixels per DIP on each axis; they differ when the frame doesn't belong to this display. */
+export function captureScale(frame: { width: number; height: number }, display: { size: { width: number; height: number } }) {
+  const x = frame.width / display.size.width
+  const y = frame.height / display.size.height
+  return { x, y, consistent: Math.abs(x - y) / Math.max(x, y) < 0.03 }
 }
 
 /**
@@ -79,6 +84,10 @@ export class AugmentScanner {
   /** signature of the last cards we ran OCR on (successful or not) */
   private signature: number[][] | null = null
   private gameDisplay: number | null = null
+  /** layout fit that matched on each screen (see detectLayout), so the next look tries it first */
+  private readonly fits = new Map<number, LayoutFit>()
+  /** looks in a row whose capture came back (almost) black, see blackCapture */
+  private blackLooks = 0
   private lastRead = 0
   /** unreadable reads in a row for the selection that's currently open */
   private misreads = 0
@@ -125,6 +134,25 @@ export class AugmentScanner {
     return this.active
   }
 
+  /**
+   * The screen capture keeps coming back black while an augment is waiting. That is what exclusive
+   * fullscreen (or a protected window) looks like to us, and nothing can be drawn over it either.
+   */
+  get blackCapture(): boolean {
+    return this.blackLooks >= 3
+  }
+
+  /** Forget everything tied to the current monitor setup (monitor added, removed, rescaled). */
+  displaysChanged(): void {
+    this.fits.clear()
+    this.gameDisplay = null
+    this.knownMisses = 0
+    this.signature = null
+    this.log('monitor setup changed – watching all screens again')
+    if (this.state.visible) this.publish({ visible: false, offer: null, displayId: null })
+    this.reschedule()
+  }
+
   get scanning(): boolean {
     return this.timer !== null || this.busy
   }
@@ -150,6 +178,7 @@ export class AugmentScanner {
   start(): void {
     this.snapshots = 0
     this.missStreak = 0
+    this.blackLooks = 0
     void this.clearSnapshots()
     this.active = true
     this.log('scanner started')
@@ -316,7 +345,7 @@ export class AugmentScanner {
     try {
       await mkdir(this.snapshotDir, { recursive: true })
       for (const { display, bitmap } of this.lastPreviews) {
-        const metrics = cardMetrics(bitmap)
+        const metrics = cardMetrics(bitmap, this.fits.get(display.id) ?? 'height')
           .map((card) => `${Math.round(card.edges * 100)}/${Math.round(card.dark * 100)}`)
           .join(' ')
         const name = `miss-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}-${display.id}.jpg`
@@ -339,7 +368,7 @@ export class AugmentScanner {
           nativeImage.createFromBitmap(bgra, { width: image.width, height: image.height }).toJPEG(80)
         )
         this.log(
-          `no cards found for ${this.missStreak} looks – saved ${name} (${bitmap.width}×${bitmap.height}, brightness ${Math.round(meanBrightness(bitmap))}, frame/body % per card: ${metrics})`
+          `no cards found for ${this.missStreak} looks – saved ${name} (${bitmap.width}×${bitmap.height}, display ${display.size.width}×${display.size.height} DIP @${display.scaleFactor}x, brightness ${Math.round(meanBrightness(bitmap))}, frame/body % per card: ${metrics})`
         )
       }
     } catch (err) {
@@ -380,11 +409,26 @@ export class AugmentScanner {
       this.log(`preview capture returned no screens (${previewMs} ms)`)
       return { visible: false, offer: null, displayId: null }
     }
+    // a black capture while the choice should be open means exclusive fullscreen (see blackCapture)
+    if (this.schedule.pending && !this.schedule.opening) {
+      // only the game screen counts once we know it: the other monitor shows the desktop as usual
+      const gameId = this.gameDisplay ?? this.knownDisplay.get()
+      const gameShots = shots.filter((shot) => shot.display.id === gameId)
+      const black = (gameShots.length ? gameShots : shots).every((shot) => meanBrightness(shot.bitmap) < 4)
+      if (black && ++this.blackLooks === 3)
+        this.log('screen capture is black – League is probably in exclusive fullscreen, switch to Borderless')
+      if (!black) this.blackLooks = 0
+    }
     for (const shot of shots) {
       const preview = shot.bitmap
-      if (!cardsVisible(preview)) continue
       const displayId = shot.display.id
-      const signature = titleSignature(preview)
+      const fit = detectLayout(preview, this.fits.get(displayId) ?? null)
+      if (!fit) continue
+      if (this.fits.get(displayId) !== fit) {
+        this.fits.set(displayId, fit)
+        this.log(`card layout on display ${displayId}: ${fit} (${preview.width}×${preview.height} preview)`)
+      }
+      const signature = titleSignature(preview, fit)
       const sameCards = this.state.visible && this.state.displayId === displayId && !signatureChanged(this.signature, signature)
       // Same cards as last time, nothing to read again. If the last read failed, retry once a second.
       // When our own frames show up in the capture (overlay visible in screen shares) we re-read every
@@ -402,7 +446,7 @@ export class AugmentScanner {
       }
       this.signature = signature
       this.lastRead = Date.now()
-      const offer = await this.readDisplay(shot.display)
+      const offer = await this.readDisplay(shot.display, fit)
       // One unreadable read while the same selection is open (tooltip, cursor or animation over a
       // title) keeps the frames. Only a second one in a row drops them, which avoids flicker.
       if (!offer && this.state.offer && this.state.displayId === displayId && this.misreads++ < 1)
@@ -428,34 +472,39 @@ export class AugmentScanner {
     return shot ? toBitmap(shot.image) : null
   }
 
-  private async readDisplay(display: Display): Promise<AugmentOffer | null> {
+  private async readDisplay(display: Display, fit: LayoutFit): Promise<AugmentOffer | null> {
     const startedAt = Date.now()
     const bitmap = await this.fullFrame(display)
     if (!bitmap) {
       this.log('full capture: display not found')
       return null
     }
-    const offer = await this.read(bitmap, display)
+    const offer = await this.read(bitmap, display, fit)
     this.log(
       `OCR ${Date.now() - startedAt} ms: ${offer ? offer.cards.map((card) => `"${card.text}"→${card.augmentId ?? '?'}`).join(', ') : 'unreadable'}`
     )
     return offer
   }
 
-  private async readTitles(bitmap: Bitmap): Promise<string[]> {
+  private async readTitles(bitmap: Bitmap, fit: LayoutFit = 'height'): Promise<string[]> {
     const texts: string[] = []
-    for (const rect of titleRects(bitmap.width, bitmap.height)) {
+    for (const rect of titleRects(bitmap.width, bitmap.height, fit)) {
       const title = prepareTitle(bitmap, rect)
       texts.push(await this.ocr.read(nativeImage.createFromBitmap(title.data, { width: title.width, height: title.height }).toPNG()))
     }
     return texts
   }
 
-  private async read(bitmap: Bitmap, display: Display): Promise<AugmentOffer | null> {
+  private async read(bitmap: Bitmap, display: Display, fit: LayoutFit): Promise<AugmentOffer | null> {
     const candidates = this.candidates()
-    const texts = await this.readTitles(bitmap)
-    const cards = cardRects(bitmap.width, bitmap.height)
-    const scale = bitmap.height / display.size.height // capture pixels to DIP
+    const texts = await this.readTitles(bitmap, fit)
+    const cards = cardRects(bitmap.width, bitmap.height, fit)
+    // capture pixels to DIP, per axis: the stream isn't always exactly the display's pixel size
+    const scale = captureScale(bitmap, display)
+    if (!scale.consistent)
+      this.log(
+        `capture ${bitmap.width}×${bitmap.height} doesn't match display ${display.id} (${display.size.width}×${display.size.height} DIP) – wrong screen?`
+      )
     const result: AugmentOffer['cards'] = texts.map((text, i) => {
       const match = matchAugment(text, candidates)
       const rect = cards[i]
@@ -463,11 +512,11 @@ export class AugmentScanner {
         augmentId: match?.id ?? null,
         text,
         score: match?.score ?? 0,
-        rect: { x: rect.x / scale, y: rect.y / scale, width: rect.width / scale, height: rect.height / scale }
+        rect: { x: rect.x / scale.x, y: rect.y / scale.y, width: rect.width / scale.x, height: rect.height / scale.y }
       }
     })
     if (!result.some((card) => card.augmentId !== null)) return null
-    return { displayId: display.id, cards: result }
+    return { displayId: display.id, fit, cards: result }
   }
 
   /** Settings > "Test screen recognition": captures every screen now, saves the images and reports. */
@@ -486,13 +535,17 @@ export class AugmentScanner {
       const bitmap = toBitmap(shot.image)
       const file = join(dir, `screen-${i + 1}.png`)
       await writeFile(file, shot.image.toPNG())
-      const visible = cardsVisible(bitmap)
-      const titles = visible ? await this.readTitles(bitmap).catch((err) => [`OCR error: ${String(err)}`]) : []
+      const fit = detectLayout(bitmap, this.fits.get(shot.display.id) ?? null)
+      const visible = fit !== null
+      const titles = fit ? await this.readTitles(bitmap, fit).catch((err) => [`OCR error: ${String(err)}`]) : []
       // black = every colour channel (alpha skipped) is close to 0
       const black = !bitmap.data.some((value, j) => j % 4 !== 3 && value > 12)
       screens.push({
         displayId: shot.display.id,
         size: `${bitmap.width}×${bitmap.height}`,
+        scaleFactor: shot.display.scaleFactor,
+        primary: shot.display.id === screen.getPrimaryDisplay().id,
+        layout: fit,
         visible,
         black,
         titles,
@@ -508,6 +561,7 @@ export class AugmentScanner {
   /** Diagnostics: OCR the three title areas of a screenshot (RC_OCR_SELFTEST=<png>). */
   async selfTest(image: Electron.NativeImage): Promise<{ visible: boolean; titles: string[] }> {
     const bitmap = toBitmap(image)
-    return { visible: cardsVisible(bitmap), titles: await this.readTitles(bitmap) }
+    const fit = detectLayout(bitmap)
+    return { visible: fit !== null, titles: await this.readTitles(bitmap, fit ?? 'height') }
   }
 }

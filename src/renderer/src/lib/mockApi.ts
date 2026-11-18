@@ -809,6 +809,9 @@ export function createMockApi(): RcApi {
       cardsVisible: false,
       overlayVisible: false,
       captureStream: 'off',
+      windowMode: null,
+      displays: [],
+      notice: null,
       log: ['web demo – no game running']
     }),
     overlayScanNow: async () => undefined,

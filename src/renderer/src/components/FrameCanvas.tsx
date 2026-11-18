@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import type { Tier } from '@shared/types'
 import { freshCanvas } from '@/lib/glCanvas'
+import { LAYOUT } from '@shared/cardLayout'
+import { uiScale } from '@shared/overlayGeometry'
 
 export interface FrameSpec {
   rect: { x: number; y: number; width: number; height: number }
@@ -40,6 +42,7 @@ precision mediump float;
 uniform vec2 u_res;
 uniform float u_time;
 uniform float u_scale;
+uniform float u_ui;      // card size relative to 1080p (card width / 320 CSS px)
 uniform vec4 u_rect[3];
 uniform vec3 u_a[3];
 uniform vec3 u_b[3];
@@ -58,17 +61,20 @@ float sdRound(vec2 p, vec2 b, float r){ vec2 q = abs(p) - b + r; return length(m
 
 void main(){
   vec2 frag = vec2(gl_FragCoord.x, u_res.y - gl_FragCoord.y) / u_scale;   // CSS px, y down like the card rects
+  // Shape and glow are designed at 1080p size; working in those units keeps the border width, the
+  // wobble and the glow in proportion to the cards on 720p, 4K and at any Windows scaling.
+  float k = max(u_ui, 0.01);
   vec3 col = vec3(0.0);
   float alpha = 0.0;
   for (int i = 0; i < 3; i++) {
     vec4 r = u_rect[i];
     vec4 prm = u_p[i];
     if (prm.w < 0.5) continue;   // w = 0 means this slot has no card
-    vec2 d = frag - (r.xy + r.zw * 0.5);
+    vec2 d = (frag - (r.xy + r.zw * 0.5)) / k;
     float ang = atan(d.y, d.x);
     float t = u_time + float(i) * 1.7;
     float wob = prm.y * (0.55*sin(ang*5.0 + t*1.6) + 0.35*sin(ang*11.0 - t*2.4) + 0.9*(noise(d*0.035 + vec2(t*0.45, -t*0.3)) - 0.5));
-    float sd = sdRound(d, r.zw * 0.5, 18.0) + wob;
+    float sd = sdRound(d, r.zw * 0.5 / k, 18.0) + wob;
     float ring = 1.0 - smoothstep(1.6, 3.6, abs(sd - 1.0));
     float outside = step(0.0, sd);
     float glow = exp(-max(sd, 0.0) / (6.0 + prm.z * 10.0)) * outside;
@@ -85,7 +91,7 @@ void main(){
   // fade out near the window edge so the glow doesn't get cut off in a hard line
   vec2 css = u_res / u_scale;
   float edge = min(min(frag.x, css.x - frag.x), min(frag.y, css.y - frag.y));
-  float fade = smoothstep(0.0, 22.0, edge);
+  float fade = smoothstep(0.0, 22.0 * k, edge);
   gl_FragColor = vec4(min(col, vec3(alpha)) * fade, alpha * fade);
 }`
 
@@ -132,6 +138,7 @@ export function FrameCanvas({ frames, animation }: { frames: FrameSpec[]; animat
     const uRes = uniform('u_res')
     const uTime = uniform('u_time')
     const uScale = uniform('u_scale')
+    const uUi = uniform('u_ui')
     const uRect = uniform('u_rect')
     const uA = uniform('u_a')
     const uB = uniform('u_b')
@@ -163,6 +170,8 @@ export function FrameCanvas({ frames, animation }: { frames: FrameSpec[]; animat
       gl.uniform2f(uRes, canvas.width, canvas.height)
       gl.uniform1f(uTime, time)
       gl.uniform1f(uScale, scale)
+      // all cards have the same size, the first one tells the scale
+      gl.uniform1f(uUi, uiScale(framesRef.current[0]?.rect.width ?? LAYOUT.cardWidth))
       gl.uniform4fv(uRect, rects)
       gl.uniform3fv(uA, colorsA)
       gl.uniform3fv(uB, colorsB)
