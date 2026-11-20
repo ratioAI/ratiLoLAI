@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { setPriority, constants } from 'node:os'
 import type { AudioSource } from '@shared/recorder'
@@ -30,6 +30,35 @@ export function lowerPriority(pid: number | undefined): void {
   } catch {
     // the process is already gone
   }
+}
+
+/**
+ * Ends an FFmpeg that an earlier app run left recording: Windows does not end child processes with
+ * their parent, so after a crash or a restart during a game it records on until the game is over.
+ * Only when the pid still belongs to an ffmpeg.exe (by now it may be another program's).
+ * True once that FFmpeg is gone, so its files can be read and deleted.
+ */
+export async function endLeftoverFfmpeg(pid: number): Promise<boolean> {
+  const listed = await new Promise<string>((resolveList) =>
+    execFile('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 5000 }, (error, stdout) =>
+      resolveList(error ? '' : stdout)
+    )
+  )
+  if (!/^"ffmpeg\.exe"/i.test(listed.trim())) return false
+  try {
+    process.kill(pid)
+  } catch {
+    return false
+  }
+  for (let i = 0; i < 30; i++) {
+    try {
+      process.kill(pid, 0)
+    } catch {
+      return true
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+  }
+  return true
 }
 
 /**

@@ -997,6 +997,8 @@ export function createMockApi(): RcApi {
       })
       return {
         active: true,
+        started: true,
+        result: null,
         gameMode: 'KIWI',
         gameTime: 612,
         activePlayer: 'Axel Fungus#EUW',

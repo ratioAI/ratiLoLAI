@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import type { CleanupPreview, Clip, ClipStorageInfo, LiveGameState, RecorderStatus, SessionRecording } from '@shared/types'
@@ -29,9 +30,10 @@ import {
   type Segment,
   type StoredItem
 } from '@shared/recorder'
+import type { GameWindowSettings } from '../lcu/gameSettings'
 import type { ClipStore } from './clipStore'
 import { run } from './ffmpeg'
-import { lowerPriority } from './helper'
+import { endLeftoverFfmpeg, lowerPriority } from './helper'
 import { windowsSupported, type RecorderEnv } from './setup'
 
 export interface RecorderDeps {
@@ -46,12 +48,16 @@ export interface RecorderDeps {
   hotkeys(bindings: { accelerator: string; run(): void }[]): void
   /** size of the screen the game runs on in pixels, used when the helper cannot measure the window */
   displaySize(): { width: number; height: number } | null
+  /** League's video settings (window mode, resolution) from the client or game.cfg; null when unknown */
+  gameVideo(): Promise<GameWindowSettings | null>
   log(message: string): void
   now?(): number
   /** tests: runs FFmpeg for clips, thumbnails and screenshots */
   run?: typeof run
   /** tests: starts the recording FFmpeg */
   spawn?: typeof spawn
+  /** tests: ends an FFmpeg an earlier app run left recording, true when there was one */
+  endLeftover?(pid: number): Promise<boolean>
   /** tests: pretend to be on a supported Windows */
   supported?: boolean
 }
@@ -82,18 +88,58 @@ interface Recording {
   bookmarks: number[]
   /** ranges being cut right now (recording seconds): the ring must not delete them */
   cutting: { start: number; end: number }[]
-  retried: boolean
   stopping: boolean
+  /** the work of stop(), for everyone who asks to stop while it runs */
+  stopped?: Promise<void>
   closed: Promise<number>
   stderr: string[]
+  /** the end of FFmpeg's last output piece, while its line is not finished yet */
+  stderrRest: string
+  /** FFmpeg's frame counters (see trackPicture): totals so far, and where the current minute began */
+  picture: { minute: number; frames: number; dup: number; drop: number; minuteDup: number; minuteDrop: number }
 }
 
 const IN_GAME_PHASES = ['InProgress', 'Reconnect', 'GameStart']
 /** how often the game window is looked for before giving up on a game (once per live poll, 2 s) */
 const MAX_START_ATTEMPTS = 120
+/**
+ * Recordings per game that FFmpeg may break off before the recorder stays off. Each new try waits for
+ * the next live poll (2 s): tried again at once, the second start used to fail the same way.
+ */
+const MAX_FAILURES = 3
+/**
+ * Below this the game window shows no picture yet: League creates it at 2×2 pixels and only then
+ * brings it to its size. Captured that small, the encoder fails with -22 (Invalid argument), even
+ * when the capture is told to scale it up (seen in a game on 2026-11-20).
+ */
+const MIN_WINDOW = { width: 320, height: 180 }
+/** next to the segments while FFmpeg records, so the next app run finds an FFmpeg that was left running */
+const PID_FILE = 'ffmpeg.pid'
+/**
+ * Share of repeated frames from which a minute is logged. A smooth game repeats about 8 % too (the
+ * capture misses a few of the screen's 60 refreshes, 2026-11-20 at 200 game FPS), so only a clear
+ * dip counts: 20 % means the game showed fewer than 48 new frames per second.
+ */
+const UNEVEN = 0.2
 export const FULLSCREEN_HINT = 'If League runs in exclusive fullscreen, switch it to Borderless or Windowed (like for the augment overlay).'
 
 const stamp = (time: number): string => new Date(time).toISOString().replace(/[:.]/g, '-').slice(0, 19)
+
+type Size = { width: number; height: number }
+const hasSize = (size: Size | null | undefined): size is Size => !!size && size.width > 0 && size.height > 0
+
+/**
+ * Size of the game's picture from League's video settings, without looking at the window (whose
+ * size right at the start says nothing). Borderless always fills the screen; windowed and
+ * fullscreen run at the resolution in League's video settings. Null when neither is known.
+ */
+export function gameSize(video: GameWindowSettings | null, screen: Size | null): (Size & { from: string }) | null {
+  if (video?.mode === 'borderless' && hasSize(screen))
+    return { width: screen.width, height: screen.height, from: `League borderless = screen ${screen.width}x${screen.height}` }
+  if (video && hasSize(video)) return { width: video.width, height: video.height, from: `League ${video.mode ?? 'settings'} ${video.width}x${video.height}` }
+  if (hasSize(screen)) return { width: screen.width, height: screen.height, from: `screen ${screen.width}x${screen.height} (League settings unknown)` }
+  return null
+}
 
 /** what the recording's sound holds, for the log */
 const soundLabel = (settings: RecorderSettings): string =>
@@ -132,7 +178,13 @@ export class RecorderService {
   private saving = 0
   private starting = false
   private ticking = false
+  /** the newest live poll that arrived while a tick was still running: it runs right after */
+  private queuedLive: { events: readonly FeedEvent[]; state: LiveGameState | null } | null = null
   private attempts = 0
+  /** recordings FFmpeg broke off in this game */
+  private failures = 0
+  /** what an earlier app run left unfinished is cleaned up before the first recording starts */
+  private recovering: Promise<void> | null = null
   private lastRecordingId: number | null = null
   private lastEndedAt = 0
   private lastStatus = ''
@@ -202,13 +254,17 @@ export class RecorderService {
 
   // --- game flow ---
 
-  /** The League client's gameflow phase changed. */
+  /**
+   * The League client's gameflow phase changed. InProgress comes the moment the game process starts,
+   * when its window is still a few pixels small and cannot be captured (FFmpeg fails with -22): the
+   * recording starts with the game's first live answer instead (onLive).
+   */
   onPhase(phase: string): void {
     this.phase = phase
     if (IN_GAME_PHASES.includes(phase)) {
       if (phase === 'InProgress' && !this.rec) {
         this.attempts = 0
-        void this.tryStart()
+        this.failures = 0
       }
     } else if (this.rec && !this.rec.test) void this.stop('the game is over')
   }
@@ -219,14 +275,35 @@ export class RecorderService {
    */
   onLive(events: readonly FeedEvent[], state: LiveGameState | null): void {
     if (!this.rec) {
-      if (this.phase === 'InProgress') void this.tryStart()
+      // Riot's live API answers once the game runs (loading screen included, ~8 s after InProgress):
+      // its window has its size by then. Not after GameEnd: the Nexus has fallen, nothing left to record
+      if (this.phase === 'InProgress' && state?.active && !state.result) void this.tryStart()
       return
     }
-    if (this.ticking) return
+    // a poll that comes in while the last one is still busy (slow disk) is not dropped: the newest
+    // one runs right after, otherwise a due clip would wait for the next poll (or be lost at game end)
+    // a snapshot: the caller may keep adding to its array while the tick still waits for the disk,
+    // and an event seen early would count as "already known" without ever making a clip
+    const snapshot = [...events]
+    if (this.ticking) {
+      this.queuedLive = { events: snapshot, state }
+      return
+    }
     this.ticking = true
-    void this.tick(events, state)
-      .catch((error) => this.deps.log(`recorder: tick failed – ${String(error)}`))
-      .finally(() => (this.ticking = false))
+    void this.drainLive(snapshot, state)
+  }
+
+  private async drainLive(events: readonly FeedEvent[], state: LiveGameState | null): Promise<void> {
+    let next: { events: readonly FeedEvent[]; state: LiveGameState | null } | null = { events, state }
+    try {
+      while (next) {
+        await this.tick(next.events, next.state).catch((error) => this.deps.log(`recorder: tick failed – ${String(error)}`))
+        next = this.queuedLive
+        this.queuedLive = null
+      }
+    } finally {
+      this.ticking = false
+    }
   }
 
   private async tick(events: readonly FeedEvent[], state: LiveGameState | null): Promise<void> {
@@ -250,8 +327,8 @@ export class RecorderService {
       })
       rec.lastEventId = found.lastEventId
       if (found.windows.length) rec.pending = mergeClipWindows([...rec.pending, ...found.windows])
-      // a clip is made once its lead-out is over
-      const due = rec.pending.filter((window) => state.gameTime >= window.end)
+      // a clip is made once its lead-out is over and its multikill can't grow any more
+      const due = rec.pending.filter((window) => state.gameTime >= window.ready)
       rec.pending = rec.pending.filter((window) => !due.includes(window))
       for (const window of due) await this.cutWindow(rec, window)
     }
@@ -281,6 +358,7 @@ export class RecorderService {
     if (!test && (!settings.enabled || this.phase !== 'InProgress' || this.attempts >= MAX_START_ATTEMPTS)) return
     this.starting = true
     try {
+      await this.recovering
       await this.start(settings, test)
     } catch (error) {
       this.off(`Recording could not start: ${error instanceof Error ? error.message : String(error)}`, true)
@@ -289,7 +367,13 @@ export class RecorderService {
     }
   }
 
-  private async start(settings: RecorderSettings, test: boolean, retried = false): Promise<void> {
+  /** The game window is not ready yet: the next live poll tries again, until MAX_START_ATTEMPTS. */
+  private notYet(why: string, giveUp: string): void {
+    if (++this.attempts === 1) this.deps.log(`recorder: ${why} – trying again with the next live poll`)
+    if (this.attempts >= MAX_START_ATTEMPTS) this.off(giveUp)
+  }
+
+  private async start(settings: RecorderSettings, test: boolean): Promise<void> {
     const env = this.deps.env
     if (!test && !(this.deps.supported ?? windowsSupported())) return this.off('Recording needs Windows 10 version 2004 or newer.')
     const ffmpeg = env.ffmpeg.path
@@ -302,8 +386,10 @@ export class RecorderService {
     if (!probe.capture && !test) return this.off('This FFmpeg cannot capture windows.')
 
     let source: CaptureSource
-    let size: { width: number; height: number } | null
+    let size: Size | null
     let audioPipe: string | null = null
+    /** for the log: where the picture's size came from, and the window as it was found */
+    let sizeNote = ''
     if (test) {
       source = { kind: 'testsrc', width: 1920, height: 1080 }
       size = { width: 1920, height: 1080 }
@@ -311,20 +397,39 @@ export class RecorderService {
       const window = env.helper.available ? await env.helper.findWindow() : null
       if (env.helper.available && (!window || window.minimized)) {
         // the game window appears a few seconds after the client reports the game: try again on the next poll
-        if (++this.attempts >= MAX_START_ATTEMPTS) this.off('Game window not found – nothing is recorded.')
-        return
+        return this.notYet(window ? 'the game window is minimised' : 'game window not found', 'Game window not found – nothing is recorded.')
       }
+      if (window && (window.width < MIN_WINDOW.width || window.height < MIN_WINDOW.height)) {
+        return this.notYet(`the game window is still ${window.width}x${window.height}`, 'The game window never got its size – nothing is recorded.')
+      }
+      const video = await this.deps.gameVideo().catch(() => null)
       if (window) {
-        size = { width: window.width, height: window.height }
-        const fullScreen = window.width >= window.monitorWidth && window.height >= window.monitorHeight
-        source =
-          probe.capture === 'gfxcapture'
-            ? { kind: 'gfxcapture', hwnd: window.hwnd }
-            : {
-                kind: 'ddagrab',
-                outputIdx: window.monitor,
-                crop: fullScreen ? null : { x: window.x - window.monitorX, y: window.y - window.monitorY, width: window.width, height: window.height }
-              }
+        const screen = { width: window.monitorWidth, height: window.monitorHeight }
+        const game = gameSize(video, hasSize(screen) ? screen : this.deps.displaySize())
+        if (probe.capture === 'gfxcapture') {
+          // Windows Graphics Capture follows the window and scales it to the game's size
+          source = { kind: 'gfxcapture', hwnd: window.hwnd }
+          size = game ?? { width: window.width, height: window.height }
+          sizeNote = `; size from ${game?.from ?? 'the window'}`
+        } else {
+          // Desktop Duplication cuts the window out of the screen and cannot follow it: borderless waits
+          // until the window fills the screen (a window in windowed mode may stay smaller than its resolution)
+          if (video?.mode === 'borderless' && game && (window.width < game.width || window.height < game.height)) {
+            return this.notYet(
+              `the game window is ${window.width}x${window.height}, not yet the screen's ${game.width}x${game.height}`,
+              'The game window never got its size – nothing is recorded.'
+            )
+          }
+          const fullScreen = window.width >= window.monitorWidth && window.height >= window.monitorHeight
+          source = {
+            kind: 'ddagrab',
+            outputIdx: window.monitor,
+            crop: fullScreen ? null : { x: window.x - window.monitorX, y: window.y - window.monitorY, width: window.width, height: window.height }
+          }
+          size = { width: window.width, height: window.height }
+          sizeNote = '; size from the window'
+        }
+        sizeNote += `; window ${window.width}x${window.height}, hwnd ${window.hwnd}`
         if (settings.audio.game || settings.audio.mic)
           audioPipe = await env.helper.start({
             pid: window.pid,
@@ -338,7 +443,9 @@ export class RecorderService {
         // Desktop Duplication would record the whole screen, and that is never done
         if (probe.capture !== 'gfxcapture') return this.off('The sound helper is missing, so the game window cannot be found.')
         source = { kind: 'gfxcapture' }
-        size = this.deps.displaySize()
+        const game = gameSize(video, this.deps.displaySize())
+        size = game
+        if (game) sizeNote = `; size from ${game.from}`
       }
     }
 
@@ -349,6 +456,12 @@ export class RecorderService {
     const args = ffmpegRecordArgs(profile, source, audioPipe, dir)
     const child = (this.deps.spawn ?? spawn)(ffmpeg, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }) as ChildProcessWithoutNullStreams
     lowerPriority(child.pid)
+    // written at once (a few bytes): FFmpeg breaking off right away removes the folder again
+    try {
+      if (child.pid) writeFileSync(join(dir, PID_FILE), String(child.pid))
+    } catch {
+      // without it, only the next app run's cleanup misses this FFmpeg
+    }
     const rec: Recording = {
       id: this.deps.store.addRecording(now, dir),
       dir,
@@ -370,10 +483,11 @@ export class RecorderService {
       pending: [],
       bookmarks: [],
       cutting: [],
-      retried,
       stopping: false,
       closed: new Promise((resolveClosed) => child.once('close', (code) => resolveClosed(code ?? -1))),
-      stderr: []
+      stderr: [],
+      stderrRest: '',
+      picture: { minute: 0, frames: 0, dup: 0, drop: 0, minuteDup: 0, minuteDrop: 0 }
     }
     child.stdin.on('error', () => undefined)
     child.stdout.resume()
@@ -386,26 +500,59 @@ export class RecorderService {
     this.message = null
     this.state = 'recording'
     this.deps.log(
-      `recorder: recording started (${test ? 'test picture' : source.kind}, ${encoder.id}, ${profile.width ?? '?'}x${profile.height ?? '?'}@${profile.fps}, ${settings.mode}, sound ${audioPipe ? soundLabel(settings) : 'none'})`
+      `recorder: recording started (${test ? 'test picture' : source.kind}, ${encoder.id}, ${profile.width ?? '?'}x${profile.height ?? '?'}@${profile.fps}, ${settings.mode}, sound ${audioPipe ? soundLabel(settings) : 'none'}${sizeNote})`
     )
     this.registerHotkeys(settings)
     this.emit()
   }
 
   private onStderr(rec: Recording, chunk: string): void {
-    for (const line of chunk.split(/[\r\n]+/)) {
+    // FFmpeg's output arrives in arbitrary pieces, often mid-line: the unfinished end waits for the
+    // next piece (cut in two, a progress line lost its counters and error lines came out torn)
+    const lines = (rec.stderrRest + chunk).split(/[\r\n]+/)
+    rec.stderrRest = lines.pop() ?? ''
+    for (const line of lines) {
       if (!line.trim()) continue
       const time = /time=(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(line)
       if (time) {
         // progress line: second 0 of the recording was that long ago (the earliest estimate is the best one)
-        const zero = this.now() - (Number(time[1]) * 3600 + Number(time[2]) * 60 + Number(time[3])) * 1000
+        const seconds = Number(time[1]) * 3600 + Number(time[2]) * 60 + Number(time[3])
+        const zero = this.now() - seconds * 1000
         if (!rec.zeroKnown || zero < rec.zeroWall) rec.zeroWall = zero
         rec.zeroKnown = true
+        this.trackPicture(rec, line, seconds)
         continue
       }
       rec.stderr.push(line.trim().slice(0, 300))
       if (rec.stderr.length > 30) rec.stderr.shift()
     }
+  }
+
+  /**
+   * FFmpeg's progress line counts frames it repeated ("dup": the game window showed no new frame in
+   * time, so the game ran below the recording's frame rate) and frames it threw away ("drop": the
+   * encoder fell behind). Logged per minute when noticeable, so a report of lag in a game can be
+   * laid next to what the recording saw.
+   */
+  private trackPicture(rec: Recording, line: string, seconds: number): void {
+    const count = (name: string): number => Number(new RegExp(String.raw`\b${name}=\s*(\d+)`).exec(line)?.[1] ?? 0)
+    const picture = rec.picture
+    // the counters only grow (FFmpeg leaves dup and drop out while they are 0)
+    picture.frames = Math.max(picture.frames, count('frame'))
+    picture.dup = Math.max(picture.dup, count('dup'))
+    picture.drop = Math.max(picture.drop, count('drop'))
+    const minute = Math.floor(seconds / 60)
+    if (minute <= picture.minute) return
+    const expected = (minute - picture.minute) * 60 * rec.profile.fps
+    const repeated = picture.dup - picture.minuteDup
+    const dropped = picture.drop - picture.minuteDrop
+    if (repeated > expected * UNEVEN || dropped > 0) {
+      const speed = /speed=\s*([\d.]+)x/.exec(line)?.[1]
+      this.deps.log(
+        `recorder: minute ${minute}: ${Math.round((100 * repeated) / expected)} % of the frames repeated (the game showed ~${Math.round(rec.profile.fps * (1 - repeated / expected))} new frames per second), ${dropped} dropped by the encoder${speed ? `, speed ${speed}x` : ''}`
+      )
+    }
+    Object.assign(picture, { minute, minuteDup: picture.dup, minuteDrop: picture.drop })
   }
 
   /** FFmpeg ended although nobody stopped it. */
@@ -414,33 +561,42 @@ export class RecorderService {
     rec.stopping = true
     const stillInGame = this.phase === 'InProgress' && !rec.test
     // exit code 0: the captured window is gone, which is how a game normally ends
+    if (rec.stderrRest.trim()) rec.stderr.push(rec.stderrRest.trim().slice(0, 300))
     if (code !== 0) {
-      this.deps.log(`recorder: FFmpeg stopped with code ${code}: ${rec.stderr.slice(-4).join(' | ') || 'no output'}`)
+      // more than the last lines: the encoder's complaint comes last, the capture's cause before it
+      this.deps.log(`recorder: FFmpeg stopped with code ${code}: ${rec.stderr.slice(-8).join(' | ') || 'no output'}`)
     }
     await this.finish(rec)
     if (code === 0 || !stillInGame) return
-    if (!rec.retried) {
-      this.deps.log('recorder: trying once more')
-      this.starting = true
-      try {
-        await this.start(this.deps.settings(), false, true)
-      } catch (error) {
-        this.off(`Recording failed: ${String(error)}`, true)
-      } finally {
-        this.starting = false
-      }
+    if (++this.failures < MAX_FAILURES) {
+      // not at once: what broke it off (the game window on its way to its size) needs a moment.
+      // With this.rec gone, the next live poll starts a new recording
+      this.deps.log(`recorder: trying again with the next live poll (failure ${this.failures} of ${MAX_FAILURES})`)
     } else {
-      // no third try: the recorder stays off until the next game
+      // the recorder stays off until the next game
       this.attempts = MAX_START_ATTEMPTS
-      this.off(`Recording failed twice and is off for this game. ${FULLSCREEN_HINT}`, true)
+      this.off(`Recording failed ${MAX_FAILURES} times and is off for this game. ${FULLSCREEN_HINT}`, true)
     }
   }
 
   /** Ends the running recording properly: FFmpeg finishes its last segment, pending clips are cut. */
-  async stop(reason: string): Promise<void> {
+  /**
+   * Ends the running recording properly; resolves once it is finished (clips cut, the whole game
+   * joined). Asked again while that runs, it waits for the same work: closing the app asks twice
+   * (its window closes, then all windows are closed), and the second call used to let the app quit
+   * in the middle of the first, so the whole-game recording was never joined (2026-11-20).
+   */
+  stop(reason: string): Promise<void> {
     const rec = this.rec
-    if (!rec || rec.stopping) return
+    if (!rec) return Promise.resolve()
+    // FFmpeg ended on its own: onExit is finishing the recording already
+    if (rec.stopping) return rec.stopped ?? this.settled()
     rec.stopping = true
+    rec.stopped = this.doStop(rec, reason)
+    return rec.stopped
+  }
+
+  private async doStop(rec: Recording, reason: string): Promise<void> {
     this.deps.log(`recorder: stopping (${reason})`)
     try {
       rec.child.stdin.write('q\n')
@@ -477,20 +633,9 @@ export class RecorderService {
     rec.pending = []
     for (const mark of rec.bookmarks) await this.cut(rec, { start: mark - rec.replaySeconds, end: mark + 3 }, 'bookmark', 'Bookmark')
     const now = this.now()
-    const folder = this.deps.env.folder()
-    let kept: { file: string; bytes: number } | null = null
-    if (rec.mode === 'session' && !rec.test && rec.segments.length) {
-      // the whole game as one file: joining is a plain copy, and the game is over by now
-      const file = join(folder, 'sessions', `${stamp(rec.startedAt)}.mp4`)
-      await mkdir(dirname(file), { recursive: true })
-      const list = join(rec.dir, 'session.txt')
-      await writeFile(list, concatList(rec.segments.map((segment) => join(rec.dir, segment.file))))
-      const joined = await this.run(this.deps.env.ffmpeg.path!, ffmpegClipArgs(list, 0, null, file), { timeoutMs: 300_000, lowPriority: true })
-      const bytes = (await stat(file).catch(() => null))?.size ?? 0
-      if (joined.code === 0 && bytes > 0) kept = { file, bytes }
-      else this.deps.log(`recorder: joining the whole-game recording failed – ${joined.stderr.trim().slice(-200)}`)
-    }
-    if (kept || rec.mode === 'replay' || rec.test) {
+    const kept = rec.mode === 'session' && !rec.test && rec.segments.length ? await this.joinSession(rec.dir, rec.segments, rec.startedAt) : null
+    // without a single segment (FFmpeg broke off right at the start) there is nothing to keep either
+    if (kept || rec.mode === 'replay' || rec.test || !rec.segments.length) {
       await this.removeRecordingDir(rec.dir)
       this.deps.store.updateRecording(rec.id, { endedAt: now, dir: kept?.file ?? '', bytes: kept?.bytes ?? 0 })
     } else {
@@ -498,13 +643,74 @@ export class RecorderService {
       this.deps.store.updateRecording(rec.id, { endedAt: now, bytes: [...rec.sizes.values()].reduce((sum, bytes) => sum + bytes, 0) })
     }
     if (this.rec === rec) this.rec = null
-    this.lastRecordingId = rec.test ? null : rec.id
-    this.lastEndedAt = now
+    // the game's summary is attached to this recording; one that broke off at the start holds nothing to attach to
+    if (rec.test) this.lastRecordingId = null
+    else if (rec.segments.length) {
+      this.lastRecordingId = rec.id
+      this.lastEndedAt = now
+    }
     this.state = 'idle'
     this.deps.env.helper.quit()
-    this.deps.log(`recorder: recording ended after ${Math.round((now - rec.startedAt) / 1000)} s`)
+    const { frames, dup, drop } = rec.picture
+    const picture = frames ? ` (${frames} frames: ${Math.round((100 * dup) / frames)} % repeated, ${drop} dropped)` : ''
+    this.deps.log(`recorder: recording ended after ${Math.round((now - rec.startedAt) / 1000)} s${picture}`)
     await this.cleanupRun().catch((error) => this.deps.log(`recorder: cleanup failed – ${String(error)}`))
     this.emit()
+  }
+
+  /** The whole game as one file: joining is a plain copy. Null when it failed (the segments stay then). */
+  private async joinSession(dir: string, segments: Segment[], startedAt: number): Promise<{ file: string; bytes: number } | null> {
+    const ffmpeg = this.deps.env.ffmpeg.path
+    if (!ffmpeg) return null
+    const file = join(this.deps.env.folder(), 'sessions', `${stamp(startedAt)}.mp4`)
+    await mkdir(dirname(file), { recursive: true })
+    const list = join(dir, 'session.txt')
+    await writeFile(list, concatList(segments.map((segment) => join(dir, segment.file))))
+    const joined = await this.run(ffmpeg, ffmpegClipArgs(list, 0, null, file), { timeoutMs: 300_000, lowPriority: true })
+    const bytes = (await stat(file).catch(() => null))?.size ?? 0
+    if (joined.code === 0 && bytes > 0) return { file, bytes }
+    this.deps.log(`recorder: joining the whole-game recording failed – ${joined.stderr.trim().slice(-200)}`)
+    return null
+  }
+
+  /**
+   * Once at app start, before the first recording: an earlier app run that crashed or was restarted
+   * during a game never finished its recording, and its FFmpeg may still run (Windows does not end
+   * it with the app), recording next to the new one until the game is over; its folder was later
+   * deleted as a leftover. That FFmpeg is ended and what it recorded is kept like a finished recording.
+   */
+  recover(): Promise<void> {
+    this.recovering ??= this.doRecover().catch((error) => this.deps.log(`recorder: cleaning up the last run failed – ${String(error)}`))
+    return this.recovering
+  }
+
+  private async doRecover(): Promise<void> {
+    const unfinished = this.deps.store
+      .recordings()
+      .filter((row) => row.endedAt === null && row.id !== this.rec?.id && !!row.dir && !row.dir.endsWith('.mp4'))
+    for (const row of unfinished) {
+      const pid = Number((await readFile(join(row.dir, PID_FILE), 'utf8').catch(() => '')).trim())
+      if (pid > 0 && (await (this.deps.endLeftover ?? endLeftoverFfmpeg)(pid)))
+        this.deps.log(`recorder: ended FFmpeg ${pid}, which the last app run left recording`)
+      const segments = parseSegmentList(await readFile(join(row.dir, SEGMENT_LIST), 'utf8').catch(() => ''))
+      const mode = this.deps.settings().mode
+      const kept = mode === 'session' && segments.length ? await this.joinSession(row.dir, segments, row.startedAt) : null
+      const endedAt = row.startedAt + Math.round((segments[segments.length - 1]?.end ?? 0) * 1000)
+      let outcome: string
+      if (kept || !segments.length || mode === 'replay') {
+        await this.removeRecordingDir(row.dir)
+        this.deps.store.updateRecording(row.id, { endedAt, dir: kept?.file ?? '', bytes: kept?.bytes ?? 0 })
+        outcome = kept
+          ? `kept as a whole-game recording (${Math.round((endedAt - row.startedAt) / 1000)} s)`
+          : segments.length
+            ? 'replay mode, deleted'
+            : 'nothing in it'
+      } else {
+        this.deps.store.updateRecording(row.id, { endedAt })
+        outcome = 'joining failed, its segments stay'
+      }
+      this.deps.log(`recorder: the recording from ${new Date(row.startedAt).toISOString().slice(0, 16)} was never finished – ${outcome}`)
+    }
   }
 
   /** Only ever deletes a folder below <clips folder>/recordings. */

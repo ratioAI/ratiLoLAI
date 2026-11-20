@@ -30,6 +30,9 @@ const load = (file: string): Bitmap => {
 }
 const shot = load('mayhem-augment-select-1080p.png')
 const gold = load('mayhem-gold-cards-1080p.png')
+// a choice of four cards (November 2026), prismatic and gold, everything around the cards blacked out
+const four = load('mayhem-four-cards-1080p.png')
+const fourGold = load('mayhem-four-gold-cards-1080p.png')
 
 /** Bilinear resize. */
 function resize(src: Bitmap, width: number, height: number): Bitmap {
@@ -120,12 +123,29 @@ describe('detectLayout on other screens', () => {
     ['4:3, UI fitted', fourThree, 'fit16x9'],
     ['preview of 16:10 (640 px)', resize(fit16x10, 640, 400), 'fit16x9']
   ] as const)('finds the cards on %s', (_name, bitmap, fit) => {
-    expect(detectLayout(bitmap)).toBe(fit)
+    expect(detectLayout(bitmap)).toEqual({ fit, count: 3 })
+  })
+
+  it.each([
+    ['1080p', four, 'height'],
+    ['1080p gold cards', fourGold, 'height'],
+    ['a 640 px preview', resize(four, 640, 360), 'height'],
+    ['a 640 px preview of gold cards', resize(fourGold, 640, 360), 'height'],
+    ['1440p', resize(four, 2560, 1440), 'height'],
+    ['21:9 ultrawide', place(four, 2520, 1080, 300, 0), 'height'],
+    ['16:10, UI fitted', place(four, 1920, 1200, 0, 60), 'fit16x9']
+  ] as const)('finds a row of four cards on %s', (_name, bitmap, fit) => {
+    expect(detectLayout(bitmap)).toEqual({ fit, count: 4 })
+  })
+
+  it("doesn't take a row of four for three or the other way round", () => {
+    for (const bitmap of [four, fourGold]) expect(cardsVisible(bitmap, 'height', 3)).toBe(false)
+    for (const bitmap of [shot, gold]) expect(cardsVisible(bitmap, 'height', 4)).toBe(false)
   })
 
   it('tries the fit that matched last time first, and still finds the other one', () => {
-    expect(detectLayout(fit16x10, 'fit16x9')).toBe('fit16x9')
-    expect(detectLayout(height16x10, 'fit16x9')).toBe('height')
+    expect(detectLayout(fit16x10, 'fit16x9')?.fit).toBe('fit16x9')
+    expect(detectLayout(height16x10, 'fit16x9')?.fit).toBe('height')
   })
 
   it('the old height-only check misses the cards on a fitted 16:10 screen', () => {
@@ -174,9 +194,9 @@ describe('OCR on other screens', () => {
   ] as const)(
     'reads the three titles on %s',
     async (_name, bitmap) => {
-      const fit = detectLayout(bitmap)!
+      const layout = detectLayout(bitmap)!
       const ids: (number | null)[] = []
-      for (const rect of titleRects(bitmap.width, bitmap.height, fit)) {
+      for (const rect of titleRects(bitmap.width, bitmap.height, layout.fit, layout.count)) {
         const title = prepareTitle(bitmap, rect)
         const png = new PNG({ width: title.width, height: title.height })
         title.data.copy(png.data)
@@ -184,6 +204,38 @@ describe('OCR on other screens', () => {
         ids.push(matchAugment(data.text.trim(), candidates)?.id ?? null)
       }
       expect(ids).toEqual([1011, 2107, 1349])
+    },
+    30_000
+  )
+
+  const fourNames = [
+    { id: 1, names: ['Overloaded'] },
+    { id: 2, names: ['Dual Wield'] },
+    { id: 3, names: ['Ultimate Revolution'] },
+    { id: 4, names: ['Big Shot'] },
+    { id: 5, names: ['One Hit Wonder'] },
+    { id: 6, names: ['Endless Decimation'] },
+    { id: 7, names: ['Vulnerability'] },
+    { id: 8, names: ['Upgrade Stormsurge'] },
+    ...candidates
+  ]
+  it.each([
+    ['prismatic, 1080p', four, [1, 2, 3, 4]],
+    ['gold, 1080p', fourGold, [5, 6, 7, 8]],
+    ['prismatic, 1440p', resize(four, 2560, 1440), [1, 2, 3, 4]]
+  ] as const)(
+    'reads all four titles (%s)',
+    async (_name, bitmap, expected) => {
+      const layout = detectLayout(bitmap)!
+      const ids: (number | null)[] = []
+      for (const rect of titleRects(bitmap.width, bitmap.height, layout.fit, layout.count)) {
+        const title = prepareTitle(bitmap, rect)
+        const png = new PNG({ width: title.width, height: title.height })
+        title.data.copy(png.data)
+        const { data } = await worker.recognize(PNG.sync.write(png))
+        ids.push(matchAugment(data.text.trim(), fourNames)?.id ?? null)
+      }
+      expect(ids).toEqual(expected)
     },
     30_000
   )

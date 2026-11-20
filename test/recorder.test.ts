@@ -286,7 +286,18 @@ describe('autoClipWindows', () => {
 
   it('clips your multikills with lead-in and lead-out', () => {
     const { windows } = autoClipWindows([event('Multikill', 300, { KillerName: 'You', KillStreak: 3 })], ctx)
-    expect(windows).toEqual([{ kind: 'triple', start: 285, end: 305, title: 'Triple kill' }])
+    // a triple can still become a quadra for 10 s, so it waits until then
+    expect(windows).toEqual([{ kind: 'triple', start: 285, end: 305, title: 'Triple kill', ready: 310 }])
+  })
+
+  it('waits for the quadra a triple can still become, so the fight is one clip', () => {
+    const first = autoClipWindows([event('Multikill', 300, { KillerName: 'You', KillStreak: 3 })], ctx)
+    // the next poll, 8 s later: the triple's lead-out is over, but it isn't ready yet
+    const quadra = event('Multikill', 308, { KillerName: 'You', KillStreak: 4 })
+    const second = autoClipWindows([quadra], { ...ctx, lastEventId: first.lastEventId })
+    const pending = mergeClipWindows([...first.windows, ...second.windows])
+    // a quadra may still become a penta for 30 s
+    expect(pending).toEqual([{ kind: 'quadra', start: 285, end: 313, title: 'Quadra kill', ready: 338 }])
   })
 
   it('merges a triple that becomes a quadra and a penta into one pentakill clip', () => {
@@ -299,7 +310,7 @@ describe('autoClipWindows', () => {
       ],
       ctx
     )
-    expect(windows).toEqual([{ kind: 'penta', start: 384, end: 415, title: 'Pentakill' }])
+    expect(windows).toEqual([{ kind: 'penta', start: 384, end: 415, title: 'Pentakill', ready: 434 }])
   })
 
   it('keeps moments that are far apart as separate clips', () => {
@@ -344,8 +355,8 @@ describe('autoClipWindows', () => {
       event('GameEnd', 1500, { Result: 'Win' })
     ]
     expect(autoClipWindows(fight, ctx).windows).toEqual([
-      { kind: 'death', start: 290, end: 313, title: 'Died in a team fight' },
-      { kind: 'gameEnd', start: 1480, end: 1503, title: 'End of the game' }
+      { kind: 'death', start: 290, end: 313, title: 'Died in a team fight', ready: 313 },
+      { kind: 'gameEnd', start: 1480, end: 1503, title: 'End of the game', ready: 1503 }
     ])
   })
 })

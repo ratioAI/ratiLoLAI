@@ -367,7 +367,8 @@ export function captureFilter(source: CaptureSource, profile: ResolvedProfile): 
       profile.width && profile.height
         ? `width=${profile.width}:height=${profile.height}:resize_mode=scale_aspect:scale_mode=bilinear`
         : 'width=-2:height=-2'
-    return `gfxcapture=${target}:capture_cursor=1:max_framerate=${profile.fps}:${size},fps=${profile.fps}${tail}`
+    // the frame rate is made constant on the output (ffmpegRecordArgs), not with an fps filter here
+    return `gfxcapture=${target}:capture_cursor=1:max_framerate=${profile.fps}:${size}${tail}`
   }
   if (source.kind === 'ddagrab') {
     const crop = source.crop
@@ -404,6 +405,10 @@ export function ffmpegRecordArgs(
   }
   const hasAudio = !!audioPipe || source.kind === 'testsrc'
   args.push('-filter_complex', `${captureFilter(source, profile)}[v]`, '-map', '[v]')
+  // constant frame rate on the output instead of an fps filter: FFmpeg then counts the frames it repeats
+  // ("dup" in its progress line, the game window showed no new one in time) and drops, and the recorder
+  // logs the minutes in which the game ran below the recording's frame rate (reports of lag)
+  args.push('-fps_mode', 'cfr', '-r', String(profile.fps))
   if (hasAudio) args.push('-map', '0:a')
   args.push('-c:v', profile.encoder.id, ...profile.videoArgs)
   if (hasAudio) args.push('-c:a', 'aac', '-b:a', `${profile.audioKbps}k`, '-ac', '2')
@@ -559,7 +564,16 @@ export interface ClipWindow {
   start: number
   end: number
   title: string
+  /** from when it may be cut: not before `end`, and not while the multikill can still grow (MULTIKILL_SECONDS) */
+  ready: number
 }
+
+/**
+ * How long League lets a multikill grow: 10 s from a triple to the quadra, 30 s from a quadra to the
+ * penta. Until then the clip waits, so a quadra joins its triple's clip instead of making a second
+ * one with the same fight (2026-11-20: triple and quadra 8 s apart were two clips).
+ */
+export const MULTIKILL_SECONDS: Partial<Record<AutoClipKind, number>> = { triple: 10, quadra: 30 }
 
 /** Seconds before and after the moment that go into the clip. */
 export const AUTO_CLIP_TIMING: Record<AutoClipKind, { pre: number; post: number }> = {
@@ -615,6 +629,7 @@ export function mergeClipWindows(windows: readonly ClipWindow[]): ClipWindow[] {
     const last = merged[merged.length - 1]
     if (last && window.start <= last.end) {
       last.end = Math.max(last.end, window.end)
+      last.ready = Math.max(last.ready, window.ready)
       if (AUTO_CLIP_PRIORITY[window.kind] > AUTO_CLIP_PRIORITY[last.kind]) {
         last.kind = window.kind
         last.title = window.title
@@ -639,7 +654,14 @@ export function autoClipWindows(events: readonly FeedEvent[], ctx: AutoClipConte
   const add = (kind: AutoClipKind, event: FeedEvent): void => {
     if (!ctx.enabled[kind]) return
     const { pre, post } = AUTO_CLIP_TIMING[kind]
-    windows.push({ kind, start: Math.max(0, event.EventTime - pre), end: event.EventTime + post, title: AUTO_CLIP_TITLES[kind] })
+    const end = event.EventTime + post
+    windows.push({
+      kind,
+      start: Math.max(0, event.EventTime - pre),
+      end,
+      title: AUTO_CLIP_TITLES[kind],
+      ready: Math.max(end, event.EventTime + (MULTIKILL_SECONDS[kind] ?? 0))
+    })
   }
   for (const event of sorted) {
     if (event.EventID <= ctx.lastEventId) continue

@@ -10,8 +10,8 @@ export interface GameWindowSettings {
   /** game resolution, 0 when unknown */
   width: number
   height: number
-  /** where the values came from, for the log */
-  source: 'client' | 'game.cfg'
+  /** where the values came from, for the log (client + game.cfg: the mode from the client, the resolution from the file) */
+  source: 'client' | 'game.cfg' | 'client + game.cfg'
 }
 
 /** WindowMode in game.cfg and the client's settings: 0 = fullscreen, 1 = windowed, 2 = borderless. */

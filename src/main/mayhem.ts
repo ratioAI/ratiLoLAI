@@ -15,6 +15,8 @@ import {
 const CDRAGON = 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global'
 const ARAM_MAYHEM = 'https://arammayhem.com/data/v1/latest'
 const MAX_AGE_MS = 12 * 3600 * 1000
+/** after a failed download the saved copy is used for this long before the next try */
+const RETRY_MS = 10 * 60 * 1000
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { headers: { 'User-Agent': 'ratioAI (github.com/ratioAI/ratiLoLAI)' } })
@@ -30,21 +32,25 @@ async function fetchJson<T>(url: string): Promise<T> {
 export class MayhemService {
   private data: MayhemData | null = null
   private loading: Promise<MayhemData> | null = null
+  /** the saved copy stands in after a failed download until then */
+  private retryAt = 0
 
   constructor(
     private readonly cacheFile: string,
-    private language: string
+    private language: string,
+    private readonly log: (message: string) => void = () => undefined
   ) {}
 
   setLanguage(language: string): void {
     if (language !== this.language) {
       this.language = language
       this.data = null
+      this.retryAt = 0
     }
   }
 
   get(): Promise<MayhemData> {
-    if (this.data && Date.now() - this.data.fetchedAt < MAX_AGE_MS) return Promise.resolve(this.data)
+    if (this.data && (Date.now() - this.data.fetchedAt < MAX_AGE_MS || Date.now() < this.retryAt)) return Promise.resolve(this.data)
     // share one request between concurrent callers
     this.loading ??= this.load().finally(() => (this.loading = null))
     return this.loading
@@ -64,18 +70,32 @@ export class MayhemService {
         fetchJson<AugmentList[]>(`${CDRAGON}/default/v1/augment-lists.json`).catch(() => null)
       ])
       const data = buildMayhemData(english, localized ?? english, augments, combos, Date.now(), mayhemPool(augmentLists))
+      const count = Object.keys(data.augments).length
+      // A source that is down or half updated can give a list without augments. That is a failed
+      // download: it must not replace a good saved copy (the card recognition matches titles against it)
+      if (!count)
+        throw new Error(
+          `no augments in the answer (client list ${english.length}, Mayhem pool ${augmentLists ? 'ok' : 'missing'}, pick rates ${augments ? 'ok' : 'missing'})`
+        )
       this.data = data
+      this.retryAt = 0
       await mkdir(dirname(this.cacheFile), { recursive: true })
       await writeFile(this.cacheFile, JSON.stringify({ language: this.language, data }))
+      this.log(`Mayhem data: ${count} augments${augments ? '' : ' (no pick rates)'}`)
       return data
     } catch (err) {
-      // offline: fall back to the last saved copy, however old it is
+      // offline or a bad answer: fall back to the last saved copy, however old it is, and try again later
+      const reason = (err as Error).message
       try {
         const cached = JSON.parse(await readFile(this.cacheFile, 'utf8')) as { data: MayhemData }
+        if (!Object.keys(cached.data?.augments ?? {}).length) throw new Error('the saved copy has no augments')
         this.data = cached.data
+        this.retryAt = Date.now() + RETRY_MS
+        this.log(`Mayhem data: download failed (${reason}) – using the saved copy from ${new Date(cached.data.fetchedAt).toISOString().slice(0, 16)}`)
         return cached.data
-      } catch {
-        throw new Error(`Mayhem data unavailable: ${(err as Error).message}`)
+      } catch (cacheErr) {
+        this.log(`Mayhem data unavailable: ${reason}; ${(cacheErr as Error).message}`)
+        throw new Error(`Mayhem data unavailable: ${reason}`)
       }
     }
   }

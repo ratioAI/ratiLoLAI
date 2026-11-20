@@ -38,6 +38,11 @@ describe('augment card layout', () => {
     expect(cards.map((c) => c.x + c.width / 2)).toEqual([598, 966, 1334])
     expect(cards[0]).toMatchObject({ y: 192, width: 320, height: 528 })
   })
+  it('puts a row of four exactly in the middle, with the same spacing', () => {
+    const cards = cardRects(1920, 1080, 'height', 4)
+    expect(cards.map((c) => c.x + c.width / 2)).toEqual([408, 776, 1144, 1512])
+    expect(cards[3]).toMatchObject({ y: 192, width: 320, height: 528 })
+  })
   it('scales with the screen height', () => {
     const cards = cardRects(2560, 1440)
     expect(Math.abs(cards[1].x + cards[1].width / 2 - 1288)).toBeLessThanOrEqual(1)

@@ -166,6 +166,12 @@ export class CaptureService {
     const reply = await this.send({ type: 'grab', displayId: id, regions })
     if (!reply.ok || !reply.frames) {
       this.log(`grab failed on display ${id}: ${reply.error ?? '?'}`)
+      // The page lost its streams although we opened them: it was reloaded (in dev on every change of
+      // shared code) or its renderer restarted. Nothing else would ever open them again, so do it now.
+      if (reply.error?.startsWith('no stream for display') && this.openKey) {
+        this.log('capture: the capture page has no streams any more – opening them again')
+        this.reset()
+      }
       return null
     }
     return reply.frames

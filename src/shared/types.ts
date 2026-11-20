@@ -667,6 +667,13 @@ export interface LivePlayer {
 
 export interface LiveGameState {
   active: boolean
+  /**
+   * Riot's GameStart event is in the feed (or the clock runs): the loading screen is over. The game
+   * already answers during the loading screen, with level 1 and the clock at 0.
+   */
+  started: boolean
+  /** Riot's GameEnd event: "Win" or "Lose" once a Nexus fell, null while the game runs */
+  result: 'Win' | 'Lose' | null
   gameTime: number
   gameMode: string
   /** 12 = Howling Abyss (other numbers: Butcher's Bridge, Koeshin's Crossing, …) */

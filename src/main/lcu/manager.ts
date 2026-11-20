@@ -19,7 +19,7 @@ import { buildSummary, type CurvePoint, type GameSummary, type RawGame, type Raw
 import { modeResults, personalMayhemStats, type LcuHistory } from '../mayhem'
 import { mergeResults, type GameResults } from '../records'
 import { encounterTargets, toEncounter, type EncounterStats } from '@shared/encounters'
-import { fetchAllGameData, parseLiveData, parseLiveEvents } from '../live/liveClient'
+import { fetchAllGameData, parseLiveData, parseLiveEvents, riotIdsByChampion } from '../live/liveClient'
 import type { LiveEvent } from '@shared/liveEvents'
 import {
   buildItemSet,
@@ -63,6 +63,8 @@ export interface LcuManagerDeps {
   /** The gameflow phase changed (the recorder starts with InProgress and stops when the game is over). */
   phase?(phase: string): void
   log?(message: string): void
+  /** Keeps a raw answer of the game for diagnostics: everything Riot sends, not just what we parse. */
+  dump?(name: string, data: unknown): void
 }
 
 const POLL_MS = 3000
@@ -135,7 +137,12 @@ export class LcuManager {
    */
   async gameWindowSettings(): Promise<GameWindowSettings | null> {
     const fromClient = this.client ? await this.client.get<unknown>('/lol-game-settings/v1/game-settings').catch(() => null) : null
-    return parseClientGameSettings(fromClient) ?? (await readGameCfg([this.deps.settings().leaguePath, ...DEFAULT_LEAGUE_PATHS]))
+    const client = parseClientGameSettings(fromClient)
+    if (client?.width && client.height) return client
+    // the client often leaves the resolution out (0×0): game.cfg has it
+    const cfg = await readGameCfg([this.deps.settings().leaguePath, ...DEFAULT_LEAGUE_PATHS])
+    if (!client) return cfg
+    return cfg?.width && cfg.height ? { ...client, width: cfg.width, height: cfg.height, source: 'client + game.cfg' } : client
   }
 
   private setStatus(patch: Partial<ClientStatus>): void {
@@ -394,7 +401,11 @@ export class LcuManager {
     const pending = [...players]
     const worker = async (): Promise<void> => {
       for (let player = pending.shift(); player; player = pending.shift()) {
-        if (!player.riotId) player.riotId = await this.riotIdOf(player.puuid)
+        if (!player.riotId) {
+          // an empty answer must not wipe a name the game filled in meanwhile (fillLoadingNames)
+          const riotId = await this.riotIdOf(player.puuid)
+          if (riotId) player.riotId = riotId
+        }
         const history = await client
           .get<LcuHistory>(`/lol-match-history/v1/products/lol/${player.puuid}/matches?begIndex=0&endIndex=99`)
           .catch(() => null)
@@ -422,6 +433,28 @@ export class LcuManager {
         )
         .join(', ')}`
     )
+  }
+
+  /**
+   * Names the client left out: for some players the game session and the summoner lookup give no
+   * name (3 of 10 in a game on 2026-11-20, shown as "—" on the loading screen), while the game
+   * itself names everyone. Matched by champion, which is in a game only once.
+   */
+  private async fillLoadingNames(raw: unknown): Promise<void> {
+    const state = this.loadingState
+    if (!state?.players.some((player) => !player.riotId)) return
+    const byChampion = riotIdsByChampion(raw)
+    if (!byChampion.size) return
+    const champions = (await this.deps.staticData().catch(() => null))?.champions
+    if (!champions || this.loadingState !== state) return
+    const filled = state.players.filter((player) => {
+      const riotId = !player.riotId && byChampion.get(champions[player.championId]?.id.toLowerCase() ?? '')
+      if (riotId) player.riotId = riotId
+      return !!riotId
+    })
+    if (!filled.length) return
+    this.deps.log?.(`loading screen: ${filled.length} name${filled.length === 1 ? '' : 's'} the client left out taken from the game`)
+    this.deps.emit.loading({ ...state, players: [...state.players] })
   }
 
   /** below this many games a player's record is filled up from the Riot API */
@@ -508,21 +541,69 @@ export class LcuManager {
 
   /** Bumped on every stop, so a request still in flight doesn't schedule another poll. */
   private liveGeneration = 0
+  /** Polls in a row the game didn't answer while it was already known to be running. */
+  private liveMisses = 0
 
+  /**
+   * Polls the game every 2 s while Riot's gameflow phase is InProgress. That phase decides when the
+   * game is over (stopLivePolling): a poll the game doesn't answer (it skips one right when the loading
+   * screen ends) keeps the last state instead of looking like the end of the game. Only without a
+   * client connection, so without a phase to go by, a missing answer still ends it.
+   */
   private startLivePolling(): void {
     if (this.liveTimer) return
     const generation = this.liveGeneration
+    const dumped = new Set<string>()
+    let waitingLogged = false
+    this.liveMisses = 0
     const poll = async (): Promise<void> => {
-      const raw = await fetchAllGameData()
-      const state = parseLiveData(raw)
+      const answer = await fetchAllGameData()
       if (generation !== this.liveGeneration) return // game ended while the request was running
-      if (state) state.premades = this.premades
+      const state = answer.ok ? parseLiveData(answer.data) : null
+      const reason = answer.ok ? 'an answer without players' : answer.reason
+      const previous = this.liveState
+      if (!state && previous && this.client) {
+        if (++this.liveMisses === 1)
+          this.deps.log?.(`live data: no answer (${reason}) – the gameflow phase is still InProgress, keeping the last state`)
+        this.deps.liveEvents?.([], null)
+        this.liveTimer = setTimeout(poll, LIVE_POLL_MS)
+        return
+      }
+      if (state) {
+        if (this.liveMisses) {
+          const missed = `${this.liveMisses} missed poll${this.liveMisses === 1 ? '' : 's'}`
+          this.deps.log?.(`live data: answering again after ${missed} (clock ${Math.round(state.gameTime)} s)`)
+        }
+        this.liveMisses = 0
+        this.logLiveChanges(previous, state)
+        const dump = (name: string): void => {
+          if (dumped.has(name)) return
+          dumped.add(name)
+          this.deps.dump?.(name, answer.ok ? answer.data : null)
+        }
+        if (!state.started) dump('loading')
+        if (state.gameTime >= 60) dump('running')
+        if (state.result) dump('end')
+        if (answer.ok) void this.fillLoadingNames(answer.data)
+        state.premades = this.premades
+      } else if (!waitingLogged) {
+        waitingLogged = true
+        this.deps.log?.(`live data: the game doesn't answer yet (${reason})`)
+      }
       this.liveState = state
       this.deps.emit.live(state)
-      this.deps.liveEvents?.(state ? parseLiveEvents(raw) : [], state)
+      this.deps.liveEvents?.(state && answer.ok ? parseLiveEvents(answer.data) : [], state)
       this.liveTimer = setTimeout(poll, LIVE_POLL_MS)
     }
     this.liveTimer = setTimeout(poll, 0)
+  }
+
+  /** Logs what Riot's feed says about the game's course: loading screen, GameStart, GameEnd. */
+  private logLiveChanges(previous: LiveGameState | null, state: LiveGameState): void {
+    const clock = `clock ${Math.round(state.gameTime)} s`
+    if (!previous) this.deps.log?.(`live data: the game answers (${clock}, ${state.started ? 'running' : 'loading screen'})`)
+    else if (!previous.started && state.started) this.deps.log?.(`live data: GameStart – the loading screen is over (${clock})`)
+    if (state.result && !previous?.result) this.deps.log?.(`live data: GameEnd – ${state.result} (${clock})`)
   }
 
   private stopLivePolling(): void {

@@ -5,25 +5,48 @@ import type { LiveEvent } from '@shared/liveEvents'
 // the game serves this API with a self-signed certificate on localhost
 const agent = new https.Agent({ rejectUnauthorized: false })
 
+/** One request to the game: its data, or why there was none (for the log). */
+export type LiveAnswer = { ok: true; data: unknown } | { ok: false; reason: string }
+
 /** Riot's official in-game Live Client Data API (only available while a game is running). */
-export function fetchAllGameData(): Promise<unknown | null> {
+export function fetchAllGameData(): Promise<LiveAnswer> {
   return new Promise((resolve) => {
+    let timedOut = false
     const req = https.get({ host: '127.0.0.1', port: 2999, path: '/liveclientdata/allgamedata', agent, timeout: 2000 }, (res) => {
       let raw = ''
       res.setEncoding('utf8')
       res.on('data', (chunk) => (raw += chunk))
       res.on('end', () => {
-        if (res.statusCode !== 200) return resolve(null)
+        if (res.statusCode !== 200) return resolve({ ok: false, reason: `HTTP ${res.statusCode}` })
         try {
-          resolve(JSON.parse(raw))
+          resolve({ ok: true, data: JSON.parse(raw) })
         } catch {
-          resolve(null)
+          resolve({ ok: false, reason: `no JSON (${raw.length} bytes)` })
         }
       })
     })
-    req.on('timeout', () => req.destroy())
-    req.on('error', () => resolve(null))
+    req.on('timeout', () => {
+      timedOut = true
+      req.destroy()
+    })
+    req.on('error', (error: NodeJS.ErrnoException) =>
+      resolve({ ok: false, reason: timedOut ? 'timeout (2 s)' : (error.code ?? error.message) })
+    )
   })
+}
+
+/**
+ * Every player's Riot ID by champion (the Data Dragon key in lower case, from rawChampionName
+ * "game_character_displayname_Ahri"), from a raw answer. A champion is in a game only once.
+ */
+export function riotIdsByChampion(raw: unknown): Map<string, string> {
+  const byChampion = new Map<string, string>()
+  for (const player of (raw as RawLive | null)?.allPlayers ?? []) {
+    const champion = player.rawChampionName?.replace(/^game_character_displayname_/, '').toLowerCase()
+    const riotId = player.riotId ?? player.summonerName
+    if (champion && riotId) byChampion.set(champion, riotId)
+  }
+  return byChampion
 }
 
 interface RawLive {
@@ -128,8 +151,13 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
           ? [{ type: 'respawned', inhibitor: event.InhibRespawned, time: event.EventTime }]
           : []
   )
+  const feed = data.events?.Events ?? []
+  const gameEnd = feed.find((event) => event.EventName === 'GameEnd')
   return {
     active: true,
+    // the game answers during the loading screen too; GameStart comes when the clock starts
+    started: feed.some((event) => event.EventName === 'GameStart') || data.gameData.gameTime > 1,
+    result: gameEnd ? (gameEnd.Result === 'Win' ? 'Win' : 'Lose') : null,
     gameTime: data.gameData.gameTime,
     gameMode: data.gameData.gameMode,
     mapNumber: data.gameData.mapNumber ?? null,

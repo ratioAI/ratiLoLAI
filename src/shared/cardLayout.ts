@@ -5,6 +5,10 @@
  * width 320 px, top 192 px, bottom 720 px, title around y = 444 px) and then mapped onto the real
  * screen with a `CardGeometry`: a scale (screen px per reference px) and the screen centre.
  *
+ * Some choices offer four cards instead of three (seen November 2026: every choice of a game, the
+ * first one prismatic). Same cards, same spacing, centres at 408 / 776 / 1144 / 1512 px: the row of
+ * four is exactly centred, the row of three sits 6 px right of the centre.
+ *
  * How League scales its UI on screens that are not 16:9 is not something we want to assume, so
  * there are several candidate fits and the screen recognition checks which one matches the picture:
  *
@@ -26,12 +30,23 @@ export const REF = { width: 1920, height: 1080 }
 
 export type LayoutFit = 'height' | 'fit16x9'
 
+/** How many cards the choice offers. */
+export type CardCount = 3 | 4
+/** Most likely first. */
+export const CARD_COUNTS: readonly CardCount[] = [3, 4]
+
+/** Which fit and how many cards a picture of the choice shows (see detectLayout). */
+export interface CardLayout {
+  fit: LayoutFit
+  count: CardCount
+}
+
 /** Positions on the 1920x1080 reference screen, in reference pixels. */
 export const LAYOUT = {
   /** horizontal distance between card centres */
   spacing: 368,
-  /** the middle card sits slightly right of the screen centre */
-  centreOffset: 6,
+  /** how far right of the screen centre the row of cards sits, by number of cards */
+  centreOffset: { 3: 6, 4: 0 } as Record<CardCount, number>,
   cardWidth: 320,
   cardTop: 192,
   cardBottom: 720,
@@ -70,16 +85,16 @@ export const screenX = (geometry: CardGeometry, refX: number): number => geometr
 /** Screen y of a reference y (0-1080). */
 export const screenY = (geometry: CardGeometry, refY: number): number => geometry.originY + (refY - REF.height / 2) * geometry.unit
 
-export function cardCentres(width: number, height: number, fit: LayoutFit = 'height'): number[] {
+export function cardCentres(width: number, height: number, fit: LayoutFit = 'height', count: CardCount = 3): number[] {
   const geometry = cardGeometry(width, height, fit)
-  const mid = REF.width / 2 + LAYOUT.centreOffset
-  return [-1, 0, 1].map((k) => screenX(geometry, mid + k * LAYOUT.spacing))
+  const mid = REF.width / 2 + LAYOUT.centreOffset[count]
+  return Array.from({ length: count }, (_, k) => screenX(geometry, mid + (k - (count - 1) / 2) * LAYOUT.spacing))
 }
 
-export function cardRects(width: number, height: number, fit: LayoutFit = 'height'): Rect[] {
+export function cardRects(width: number, height: number, fit: LayoutFit = 'height', count: CardCount = 3): Rect[] {
   const geometry = cardGeometry(width, height, fit)
   const cardWidth = LAYOUT.cardWidth * geometry.unit
-  return cardCentres(width, height, fit).map((centreX) => ({
+  return cardCentres(width, height, fit, count).map((centreX) => ({
     x: Math.round(centreX - cardWidth / 2),
     y: Math.round(screenY(geometry, LAYOUT.cardTop)),
     width: Math.round(cardWidth),
@@ -87,11 +102,11 @@ export function cardRects(width: number, height: number, fit: LayoutFit = 'heigh
   }))
 }
 
-export function titleRects(width: number, height: number, fit: LayoutFit = 'height'): Rect[] {
+export function titleRects(width: number, height: number, fit: LayoutFit = 'height', count: CardCount = 3): Rect[] {
   const geometry = cardGeometry(width, height, fit)
   const w = Math.round(LAYOUT.titleWidth * geometry.unit)
   const h = Math.round(LAYOUT.titleHeight * geometry.unit)
-  return cardCentres(width, height, fit).map((centreX) => ({
+  return cardCentres(width, height, fit, count).map((centreX) => ({
     x: Math.round(centreX - w / 2),
     y: Math.round(screenY(geometry, LAYOUT.titleY) - h / 2),
     width: w,
@@ -99,9 +114,9 @@ export function titleRects(width: number, height: number, fit: LayoutFit = 'heig
   }))
 }
 
-/** True when all three cards (plus their side frames) lie inside a screen of this size. */
-export function layoutFitsOnScreen(width: number, height: number, fit: LayoutFit): boolean {
-  const rects = cardRects(width, height, fit)
+/** True when all cards (plus their side frames) lie inside a screen of this size. */
+export function layoutFitsOnScreen(width: number, height: number, fit: LayoutFit, count: CardCount = 3): boolean {
+  const rects = cardRects(width, height, fit, count)
   const margin = 20 * cardGeometry(width, height, fit).unit
   return rects.every(
     (rect) => rect.x - margin >= 0 && rect.y >= 0 && rect.x + rect.width + margin <= width && rect.y + rect.height <= height

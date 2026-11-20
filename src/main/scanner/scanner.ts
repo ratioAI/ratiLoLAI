@@ -14,6 +14,7 @@ import {
   titleRects,
   titleSignature,
   type Bitmap,
+  type CardLayout,
   type LayoutFit,
   type NameCandidate,
   type PlayerTick
@@ -347,9 +348,15 @@ export class AugmentScanner {
     try {
       await mkdir(this.snapshotDir, { recursive: true })
       for (const { display, bitmap } of this.lastPreviews) {
-        const metrics = cardMetrics(bitmap, this.fits.get(display.id) ?? 'height')
-          .map((card) => `${Math.round(card.edges * 100)}/${Math.round(card.dark * 100)}`)
-          .join(' ')
+        const metrics = ([3, 4] as const)
+          .map(
+            (count) =>
+              `${count} cards ` +
+              cardMetrics(bitmap, this.fits.get(display.id) ?? 'height', count)
+                .map((card) => `${Math.round(card.edges * 100)}/${Math.round(card.dark * 100)}`)
+                .join(' ')
+          )
+          .join(', ')
         const name = `miss-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}-${display.id}.jpg`
         let image: Bitmap | null = null
         if (this.capture && !this.capture.failed) {
@@ -424,13 +431,14 @@ export class AugmentScanner {
     for (const shot of shots) {
       const preview = shot.bitmap
       const displayId = shot.display.id
-      const fit = detectLayout(preview, this.fits.get(displayId) ?? null)
-      if (!fit) continue
-      if (this.fits.get(displayId) !== fit) {
-        this.fits.set(displayId, fit)
-        this.log(`card layout on display ${displayId}: ${fit} (${preview.width}×${preview.height} preview)`)
+      const layout = detectLayout(preview, this.fits.get(displayId) ?? null)
+      if (!layout) continue
+      if (this.fits.get(displayId) !== layout.fit) {
+        this.fits.set(displayId, layout.fit)
+        this.log(`card layout on display ${displayId}: ${layout.fit} (${preview.width}×${preview.height} preview)`)
       }
-      const signature = titleSignature(preview, fit)
+      // a row of four has another signature length, so switching between three and four counts as new cards
+      const signature = titleSignature(preview, layout.fit, layout.count)
       const sameCards = this.state.visible && this.state.displayId === displayId && !signatureChanged(this.signature, signature)
       // Same cards as last time, nothing to read again. If the last read failed, retry once a second.
       // When our own frames show up in the capture (overlay visible in screen shares) we re-read every
@@ -440,7 +448,7 @@ export class AugmentScanner {
       // a reroll animates for a moment, so read at most every 400 ms while the titles change
       if (this.state.visible && this.state.displayId === displayId && Date.now() - this.lastRead < 400) return this.state
 
-      this.log(`cards visible on display ${displayId} (preview ${previewMs} ms) – reading titles`)
+      this.log(`${layout.count} cards visible on display ${displayId} (preview ${previewMs} ms) – reading titles`)
       if (this.gameDisplay !== displayId) {
         this.gameDisplay = displayId
         this.knownDisplay.set(displayId)
@@ -448,7 +456,7 @@ export class AugmentScanner {
       }
       this.signature = signature
       this.lastRead = Date.now()
-      const offer = await this.readDisplay(shot.display, fit)
+      const offer = await this.readDisplay(shot.display, layout)
       // One unreadable read while the same selection is open (tooltip, cursor or animation over a
       // title) keeps the frames. Only a second one in a row drops them, which avoids flicker.
       if (!offer && this.state.offer && this.state.displayId === displayId && this.misreads++ < 1)
@@ -474,33 +482,33 @@ export class AugmentScanner {
     return shot ? toBitmap(shot.image) : null
   }
 
-  private async readDisplay(display: Display, fit: LayoutFit): Promise<AugmentOffer | null> {
+  private async readDisplay(display: Display, layout: CardLayout): Promise<AugmentOffer | null> {
     const startedAt = Date.now()
     const bitmap = await this.fullFrame(display)
     if (!bitmap) {
       this.log('full capture: display not found')
       return null
     }
-    const offer = await this.read(bitmap, display, fit)
-    this.log(
-      `OCR ${Date.now() - startedAt} ms: ${offer ? offer.cards.map((card) => `"${card.text}"→${card.augmentId ?? '?'}`).join(', ') : 'unreadable'}`
-    )
+    const offer = await this.read(bitmap, display, layout)
+    // without names (the Mayhem data is missing) nothing can be matched, however clear the titles are
+    const unreadable = this.candidates().length ? 'unreadable' : 'unreadable – no augment names loaded (Mayhem data missing)'
+    this.log(`OCR ${Date.now() - startedAt} ms: ${offer ? offer.cards.map((card) => `"${card.text}"→${card.augmentId ?? '?'}`).join(', ') : unreadable}`)
     return offer
   }
 
-  private async readTitles(bitmap: Bitmap, fit: LayoutFit = 'height'): Promise<string[]> {
+  private async readTitles(bitmap: Bitmap, layout: CardLayout = { fit: 'height', count: 3 }): Promise<string[]> {
     const texts: string[] = []
-    for (const rect of titleRects(bitmap.width, bitmap.height, fit)) {
+    for (const rect of titleRects(bitmap.width, bitmap.height, layout.fit, layout.count)) {
       const title = prepareTitle(bitmap, rect)
       texts.push(await this.ocr.read(nativeImage.createFromBitmap(title.data, { width: title.width, height: title.height }).toPNG()))
     }
     return texts
   }
 
-  private async read(bitmap: Bitmap, display: Display, fit: LayoutFit): Promise<AugmentOffer | null> {
+  private async read(bitmap: Bitmap, display: Display, layout: CardLayout): Promise<AugmentOffer | null> {
     const candidates = this.candidates()
-    const texts = await this.readTitles(bitmap, fit)
-    const cards = cardRects(bitmap.width, bitmap.height, fit)
+    const texts = await this.readTitles(bitmap, layout)
+    const cards = cardRects(bitmap.width, bitmap.height, layout.fit, layout.count)
     // capture pixels to DIP, per axis: the stream isn't always exactly the display's pixel size
     const scale = captureScale(bitmap, display)
     if (!scale.consistent)
@@ -518,7 +526,7 @@ export class AugmentScanner {
       }
     })
     if (!result.some((card) => card.augmentId !== null)) return null
-    return { displayId: display.id, fit, cards: result }
+    return { displayId: display.id, fit: layout.fit, cards: result }
   }
 
   /** Settings > "Test screen recognition": captures every screen now, saves the images and reports. */
@@ -537,9 +545,9 @@ export class AugmentScanner {
       const bitmap = toBitmap(shot.image)
       const file = join(dir, `screen-${i + 1}.png`)
       await writeFile(file, shot.image.toPNG())
-      const fit = detectLayout(bitmap, this.fits.get(shot.display.id) ?? null)
-      const visible = fit !== null
-      const titles = fit ? await this.readTitles(bitmap, fit).catch((err) => [`OCR error: ${String(err)}`]) : []
+      const layout = detectLayout(bitmap, this.fits.get(shot.display.id) ?? null)
+      const visible = layout !== null
+      const titles = layout ? await this.readTitles(bitmap, layout).catch((err) => [`OCR error: ${String(err)}`]) : []
       // black = every colour channel (alpha skipped) is close to 0
       const black = !bitmap.data.some((value, j) => j % 4 !== 3 && value > 12)
       screens.push({
@@ -547,7 +555,7 @@ export class AugmentScanner {
         size: `${bitmap.width}×${bitmap.height}`,
         scaleFactor: shot.display.scaleFactor,
         primary: shot.display.id === screen.getPrimaryDisplay().id,
-        layout: fit,
+        layout: layout?.fit ?? null,
         visible,
         black,
         titles,
@@ -560,10 +568,10 @@ export class AugmentScanner {
     return result
   }
 
-  /** Diagnostics: OCR the three title areas of a screenshot (RC_OCR_SELFTEST=<png>). */
+  /** Diagnostics: OCR the title areas of a screenshot (RC_OCR_SELFTEST=<png>). */
   async selfTest(image: Electron.NativeImage): Promise<{ visible: boolean; titles: string[] }> {
     const bitmap = toBitmap(image)
-    const fit = detectLayout(bitmap)
-    return { visible: fit !== null, titles: await this.readTitles(bitmap, fit ?? 'height') }
+    const layout = detectLayout(bitmap)
+    return { visible: layout !== null, titles: await this.readTitles(bitmap, layout ?? undefined) }
   }
 }

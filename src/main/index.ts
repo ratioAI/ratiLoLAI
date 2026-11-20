@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
-import { copyFile, readFile } from 'node:fs/promises'
+import { copyFile, readFile, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { basename, extname } from 'node:path'
 import { join } from 'node:path'
@@ -91,7 +91,7 @@ const ddragon = new DataDragon(join(userData, 'ddragon'), settings.get().languag
 const store = new StatsStore(join(userData, 'stats'))
 const riot = new RiotClient(() => settings.getApiKey())
 const profiles = new ProfileService(riot)
-const mayhem = new MayhemService(join(userData, 'mayhem.json'), settings.get().language)
+const mayhem = new MayhemService(join(userData, 'mayhem.json'), settings.get().language, (message) => diag.log(message))
 
 let mainWindow: BrowserWindow | null = null
 
@@ -257,9 +257,15 @@ const gameDisplay = {
 
 // screen recognition of the offered augment cards, only runs while an augment is pending
 let candidates: NameCandidate[] = []
+let candidatesTriedAt = 0
 const scanner = new AugmentScanner(
   join(userData, 'ocr'),
-  () => candidates,
+  () => {
+    // the names come from the Mayhem data: when it could not be loaded at the scanner's start (a source
+    // was down), every card stayed unreadable for the whole game. Try again, at most every 30 s
+    if (!candidates.length && Date.now() - candidatesTriedAt > 30_000) void loadCandidates()
+    return candidates
+  },
   (state) => {
     cards = state
     if (state.displayId !== null) overlay.moveToDisplay(state.displayId)
@@ -315,7 +321,7 @@ let cosmosSeed = Date.now()
 function refreshLoading(): void {
   const state = lcu.getLoading()
   const live = lcu.getLive()
-  const started = !!live?.active && live.gameTime > 1
+  const started = !!live?.active && live.started
   const shouldShow = !!state && !started && settings.get().overlay.loadingScreen
   if (shouldShow) {
     overlay.holdKey('Space', () => {
@@ -335,6 +341,7 @@ function refreshLoading(): void {
 }
 
 async function loadCandidates(): Promise<void> {
+  candidatesTriedAt = Date.now()
   const data = await mayhem.get().catch(() => null)
   if (data) candidates = Object.values(data.augments).map((augment) => ({ id: augment.id, names: [augment.name, augment.nameEn] }))
 }
@@ -347,19 +354,22 @@ function updateOverlay(live: LiveGameState | null): void {
   // KIWI is the game mode name of ARAM: Mayhem
   const nowMayhem = inGame && (live!.gameMode === 'KIWI' || (queueId !== null && (QUEUE_IDS.mayhem as readonly number[]).includes(queueId)))
   const aram = inGame && (nowMayhem || live!.gameMode === 'ARAM' || queueId === 450)
+  // Riot's event feed says where the game is: before GameStart it's still the loading screen, after
+  // GameEnd a Nexus has fallen. Augment frames and map timers only run in between
+  const playing = inGame && live!.started && !live!.result
   if (inGame && (!wasInGame || live!.gameMode !== lastTick.gameMode)) {
     diag.log(`game detected: gameMode=${live!.gameMode} queue=${queueId ?? '?'} → mayhem=${nowMayhem}`)
     diag.log(`monitors: ${describeDisplays().join(' | ')}; game screen remembered: ${gameDisplay.get() ?? 'none yet'}`)
     lastTick.gameMode = live!.gameMode
     void checkWindowMode()
   }
-  minimap.update(live, aram, nowMayhem)
+  minimap.update(playing ? live : null, aram, nowMayhem)
   // the game clock went backwards, so this is a new game: forget the last game's augments
   if (inGame) {
     if (live!.gameTime + 5 < ownedGameTime && owned.length) setOwned([])
     ownedGameTime = live!.gameTime
   }
-  if (nowMayhem && overlaySettings.enabled) {
+  if (nowMayhem && playing && overlaySettings.enabled) {
     if (!inMayhem) overlay.prepare(gameDisplay.get())
     inMayhem = true
     const me = live!.players.find((player) => player.riotId === live!.activePlayer)
@@ -378,7 +388,7 @@ function updateOverlay(live: LiveGameState | null): void {
       scanner.update({ level, dead, gameTime: live!.gameTime, itemsKey: (me?.items ?? []).join(',') })
     }
   } else {
-    if (inMayhem) diag.log('left the Mayhem game')
+    if (inMayhem) diag.log(live?.result ? `left the Mayhem game (${live.result})` : 'left the Mayhem game')
     inMayhem = false
     cards = { visible: false, offer: null, displayId: null }
     if (scanner.running) scanner.stop()
@@ -543,6 +553,8 @@ const recorder = new RecorderService({
     const display = gameScreen()
     return { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) }
   },
+  // asked fresh at each start: the app may have been opened during the game, without a champion select
+  gameVideo: () => lcu.gameWindowSettings().catch(() => null),
   log: (message) => diag.log(message)
 })
 
@@ -743,6 +755,11 @@ const lcu = new LcuManager({
     else if (!['Reconnect'].includes(phase)) setTimeout(() => exporter.onGameEnd(), 5000)
   },
   log: (message) => diag.log(message),
+  // logs/live-loading.json, live-running.json, live-end.json: the last game's full answers
+  dump: (name, data) =>
+    void writeFile(join(userData, 'logs', `live-${name}.json`), JSON.stringify(data, null, 1)).catch((error) =>
+      diag.log(`saving live-${name}.json failed: ${String(error)}`)
+    ),
   settings: () => settings.get(),
   staticData: () => ddragon.get(),
   build: async (championId, role, mode) => championBuild(await currentPatch(mode), championId, role, mode),
@@ -1211,6 +1228,8 @@ void app.whenReady().then(async () => {
     registerIpc()
     const fakeLive = (gameTime: number): LiveGameState => ({
       active: true,
+      started: true,
+      result: null,
       gameMode: 'KIWI',
       gameTime,
       activePlayer: 'me#1',
@@ -1288,6 +1307,7 @@ void app.whenReady().then(async () => {
   createWindow()
   void recorderEnv
     .init()
+    .then(() => recorder.recover())
     .then(() => recorder.refresh())
     .catch((error) => diag.log(`recorder: init failed – ${String(error)}`))
   lcu.start()

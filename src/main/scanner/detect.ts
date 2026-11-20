@@ -7,6 +7,7 @@
  */
 
 import {
+  CARD_COUNTS,
   cardCentres,
   cardGeometry,
   LAYOUT,
@@ -14,10 +15,22 @@ import {
   layoutFitsOnScreen,
   screenY,
   titleRects,
+  type CardCount,
+  type CardLayout,
   type LayoutFit,
   type Rect
 } from '@shared/cardLayout'
-export { cardCentres, cardRects, titleRects, layoutFits, LAYOUT, type LayoutFit, type Rect } from '@shared/cardLayout'
+export {
+  cardCentres,
+  cardRects,
+  titleRects,
+  layoutFits,
+  LAYOUT,
+  type CardCount,
+  type CardLayout,
+  type LayoutFit,
+  type Rect
+} from '@shared/cardLayout'
 
 /** Minimal view on a BGRA/RGBA bitmap. */
 export interface Bitmap {
@@ -34,23 +47,28 @@ function brightness(bitmap: Bitmap, x: number, y: number): number {
 }
 
 /**
- * Cheap check before running OCR. Returns true when at least two of the three cards show a light
- * side frame with the dark card body right next to it.
+ * Cheap check before running OCR. Returns true when at least two of the cards show a light side
+ * frame with the dark card body right next to it.
  */
-export function cardsVisible(bitmap: Bitmap, fit: LayoutFit = 'height'): boolean {
+export function cardsVisible(bitmap: Bitmap, fit: LayoutFit = 'height', count: CardCount = 3): boolean {
   // Frame-to-body contrast instead of a fixed brightness threshold, because gold frames are much
   // darker than prismatic ones. Works for silver, gold and prismatic cards.
-  return cardMetrics(bitmap, fit).filter((metrics) => metrics.edges >= 0.7 && metrics.dark >= 0.6).length >= 2
+  return cardMetrics(bitmap, fit, count).filter((metrics) => metrics.edges >= 0.7 && metrics.dark >= 0.6).length >= 2
 }
 
 /**
- * Which layout fit shows the cards on this picture, or null when no cards are visible. `preferred`
- * (the fit that matched on this screen last time) is tried first, so the usual case costs one check.
+ * Which fit and how many cards this picture shows, or null when no cards are visible. `preferred`
+ * (the fit that matched on this screen last time) is tried first, three cards before four, so the
+ * usual case costs one check. The rows of three and four don't line up (a frame of one falls on a
+ * card body of the other), so one can't pass for the other.
  */
-export function detectLayout(bitmap: Bitmap, preferred: LayoutFit | null = null): LayoutFit | null {
-  const fits = layoutFits(bitmap.width, bitmap.height).filter((fit) => layoutFitsOnScreen(bitmap.width, bitmap.height, fit))
+export function detectLayout(bitmap: Bitmap, preferred: LayoutFit | null = null): CardLayout | null {
+  const fits = layoutFits(bitmap.width, bitmap.height)
   const ordered = preferred && fits.includes(preferred) ? [preferred, ...fits.filter((fit) => fit !== preferred)] : fits
-  return ordered.find((fit) => cardsVisible(bitmap, fit)) ?? null
+  for (const fit of ordered)
+    for (const count of CARD_COUNTS)
+      if (layoutFitsOnScreen(bitmap.width, bitmap.height, fit, count) && cardsVisible(bitmap, fit, count)) return { fit, count }
+  return null
 }
 
 /** Mean brightness over a horizontal run of pixels. */
@@ -85,13 +103,13 @@ const FRAME_CONTRAST = 40
  * than the body just inside them (see FRAME_MIN), `dark` is the share of dark samples in the card
  * body. All distances are reference pixels (1080p) scaled by the geometry's unit.
  */
-export function cardMetrics(bitmap: Bitmap, fit: LayoutFit = 'height'): { edges: number; dark: number }[] {
+export function cardMetrics(bitmap: Bitmap, fit: LayoutFit = 'height', count: CardCount = 3): { edges: number; dark: number }[] {
   const geometry = cardGeometry(bitmap.width, bitmap.height, fit)
   const unit = geometry.unit
   const inside = (y: number): boolean => y >= 0 && y < bitmap.height
   const metrics: { edges: number; dark: number }[] = []
   const rowStep = Math.max(1, Math.round(6 * unit))
-  for (const centreX of cardCentres(bitmap.width, bitmap.height, fit)) {
+  for (const centreX of cardCentres(bitmap.width, bitmap.height, fit, count)) {
     let rows = 0
     let hits = 0
     for (let y = Math.round(screenY(geometry, 270)); y < screenY(geometry, 669.6); y += rowStep) {
@@ -206,7 +224,7 @@ export function matchAugment(text: string, candidates: NameCandidate[], minScore
  * Coarse fingerprint of each card (icon and title area, mean brightness per cell), one entry per
  * card. Runs on the small preview capture so we notice a reroll without OCR on every frame.
  */
-export function titleSignature(bitmap: Bitmap, fit: LayoutFit = 'height'): number[][] {
+export function titleSignature(bitmap: Bitmap, fit: LayoutFit = 'height', count: CardCount = 3): number[][] {
   const H = bitmap.height
   const geometry = cardGeometry(bitmap.width, H, fit)
   const unit = geometry.unit
@@ -228,8 +246,8 @@ export function titleSignature(bitmap: Bitmap, fit: LayoutFit = 'height'): numbe
       }
     }
   }
-  const centres = cardCentres(bitmap.width, H, fit)
-  return titleRects(bitmap.width, H, fit).map((rect, i) => {
+  const centres = cardCentres(bitmap.width, H, fit, count)
+  return titleRects(bitmap.width, H, fit, count).map((rect, i) => {
     const signature: number[] = []
     sampleGrid(rect.x, rect.y, rect.width, rect.height, 12, 2, signature)
     // augment icon above the title, it changes completely on a reroll

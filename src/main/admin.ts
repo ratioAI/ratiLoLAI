@@ -231,8 +231,11 @@ export class SimGame {
       isDead: false,
       respawnTimer: 0
     }))
+    const gameEnd = this.liveEvents.find((event) => event.EventName === 'GameEnd')
     return {
       active: true,
+      started: true,
+      result: gameEnd ? (gameEnd.Result === 'Win' ? 'Win' : 'Lose') : null,
       gameTime: this.gameTime,
       gameMode: this.options.mode === 'mayhem' ? 'KIWI' : 'ARAM',
       mapNumber: this.options.map,
