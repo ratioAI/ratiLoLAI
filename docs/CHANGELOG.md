@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.3
 
 - **Readable everywhere.** Panels, the side bar and the title bar let far less of the moving background through (they were 74–78 % opaque, bright swirls and stars showed behind the text). Cards in a colour of their own – *MVP*, *Most to blame*, both team tables of a game, the teams on the Live page, *Your history with this player*, discovered achievements – had almost no background at all; their tint now lies on top of the panel colour.
 - **Nothing is deleted with one click any more.** Deleting a clip, several clips or a whole-game recording asks first and says how much goes; so does removing the Riot API key or the Discord webhook. A clip the filter hides is no longer part of the selection.
