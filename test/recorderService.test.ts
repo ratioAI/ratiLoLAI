@@ -106,6 +106,7 @@ function setup(
   } as unknown as RecorderEnv
   let quitsOnQ = true
   let crashNext = false
+  let joinFails = false
   const service = new RecorderService({
     env,
     store,
@@ -132,6 +133,7 @@ function setup(
     // clips, thumbnails, screenshots: "FFmpeg" writes its output file
     run: async (_file, args) => {
       runs.push(args)
+      if (joinFails && args.includes('concat')) return { code: 1, stdout: '', stderr: 'No space left on device' }
       writeFileSync(args[args.length - 1], 'y'.repeat(args.includes('concat') ? 5000 : 300))
       return { code: 0, stdout: '', stderr: '' }
     }
@@ -153,6 +155,8 @@ function setup(
     window,
     hotkeys: () => hotkeys,
     crash: (on: boolean) => (crashNext = on),
+    /** joining the segments into one file fails from now on (disk full) */
+    failJoin: () => (joinFails = true),
     deaf: () => (quitsOnQ = false)
   }
 }
@@ -405,6 +409,39 @@ describe('RecorderService', () => {
     expect(ctx.saved).toHaveLength(1)
   })
 
+  it('keeps the game clock, the events of a fight and your health for the highlight videos', async () => {
+    const ctx = setup()
+    const ffmpeg = await started(ctx)
+    const events: FeedEvent[] = [{ EventID: 0, EventName: 'GameStart', EventTime: 0 }]
+    // the game clock runs 10 s behind the recording
+    ctx.clock.now += 40_000
+    ffmpeg.segments(20)
+    ctx.service.onLive(events, { ...live(30), activeHealth: 0.8 })
+    expect(await waitFor(() => (ctx.store.recordings()[0]?.gameOffset ?? null) !== null)).toBe(true)
+    expect(ctx.store.recordings()[0].gameOffset).toBeCloseTo(10, 0)
+    events.push(
+      { EventID: 1, EventName: 'ChampionKill', EventTime: 49, KillerName: 'You', VictimName: 'Foe', Assisters: [] },
+      { EventID: 2, EventName: 'MinionKill', EventTime: 49.5 }
+    )
+    ctx.clock.now += 22_000
+    ffmpeg.segments(31)
+    ctx.service.onLive(events, { ...live(52), activeHealth: 0.12, players: [...live(52).players, { ...live(52).players[0], riotId: 'Foe#EUW', team: 'CHAOS' }] })
+    await tick(30)
+    ctx.clock.now += 5000
+    ctx.service.onPhase('WaitingForStats')
+    expect(await waitFor(() => ctx.service.status().state === 'idle')).toBe(true)
+    const feed = JSON.parse(ctx.store.recordingFeed(ctx.store.recordings()[0].id)!)
+    expect(feed.me).toBe('You#DEV')
+    expect(feed.myTeam).toBe('ORDER')
+    expect(feed.teams).toEqual({ 'You#DEV': 'ORDER', 'Foe#EUW': 'CHAOS' })
+    // only what can make a highlight: the kill, not the minion
+    expect(feed.events.map((event: FeedEvent) => event.EventName)).toEqual(['ChampionKill'])
+    expect(feed.health).toEqual([
+      [30, 0.8],
+      [52, 0.12]
+    ])
+  })
+
   it('trims the ring in replay mode but keeps what a bookmark needs', async () => {
     const ctx = setup()
     const ffmpeg = await started(ctx)
@@ -485,6 +522,42 @@ describe('RecorderService', () => {
     expect(existsSync(ffmpeg.dir)).toBe(false)
     const items = await ctx.service.storageItems()
     expect(items).toEqual([expect.objectContaining({ type: 'session', kept: false, bytes: 5000 })])
+  })
+
+  it('keeps the segments of a whole game that could not be joined – the cleanup after the game must not take them', async () => {
+    const ctx = setup({ settings: { mode: 'session' } })
+    const ffmpeg = await started(ctx)
+    ffmpeg.segments(50)
+    ctx.failJoin()
+    ctx.clock.now += 100_000
+    ctx.service.onPhase('EndOfGame')
+    await tick(80)
+    expect(ctx.logs.join(' | ')).toContain('could not be joined')
+    // the only copy of the game is still there, and it counts as a whole-game recording
+    expect(readdirSync(ffmpeg.dir).filter((name) => name.startsWith('seg_'))).toHaveLength(50)
+    expect(await ctx.service.storageItems()).toEqual([expect.objectContaining({ type: 'session', kept: false, bytes: expect.any(Number) })])
+    expect((await ctx.service.cleanupPreview()).delete).toEqual([])
+    expect(ctx.service.status().state).toBe('idle')
+  })
+
+  it('comes back to idle when finishing a recording fails, and records the next game', async () => {
+    const ctx = setup({ settings: { mode: 'session' } })
+    const ffmpeg = await started(ctx)
+    ffmpeg.segments(5)
+    const update = ctx.store.updateRecording.bind(ctx.store)
+    ctx.store.updateRecording = () => {
+      throw new Error('database or disk is full')
+    }
+    ctx.service.onPhase('EndOfGame')
+    await tick(80)
+    expect(ctx.logs.join(' | ')).toContain('finishing the recording failed – Error: database or disk is full')
+    expect(ctx.service.status().state).toBe('idle')
+    expect(ctx.service.recording).toBe(false)
+    ctx.store.updateRecording = update
+    ctx.service.onPhase('None')
+    await started(ctx)
+    expect(ctx.spawned).toHaveLength(2)
+    expect(ctx.service.status().state).toBe('recording')
   })
 
   it('logs the minutes in which the game showed noticeably fewer frames than recorded (for reports of lag)', async () => {

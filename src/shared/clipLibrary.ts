@@ -21,7 +21,7 @@ export function clipKindLabel(kind: Clip['kind']): string {
 }
 
 export type ClipKindFilter = 'all' | 'manual' | 'auto' | 'bookmark' | 'export'
-export type ClipSort = 'newest' | 'oldest' | 'longest' | 'largest'
+export type ClipSort = 'newest' | 'oldest' | 'longest' | 'largest' | 'best'
 
 export interface ClipFilter {
   championId: number | null
@@ -65,7 +65,9 @@ export function sortClips(clips: readonly Clip[], sort: ClipSort): Clip[] {
     newest: (a, b) => b.createdAt - a.createdAt || b.id - a.id,
     oldest: (a, b) => a.createdAt - b.createdAt || a.id - b.id,
     longest: (a, b) => b.durationMs - a.durationMs || b.createdAt - a.createdAt,
-    largest: (a, b) => b.bytes - a.bytes || b.createdAt - a.createdAt
+    largest: (a, b) => b.bytes - a.bytes || b.createdAt - a.createdAt,
+    // most worth watching first (see @shared/highlights); clips not looked at yet go last
+    best: (a, b) => (b.highlight?.score ?? -1) - (a.highlight?.score ?? -1) || b.createdAt - a.createdAt
   }
   return [...clips].sort(by[sort])
 }

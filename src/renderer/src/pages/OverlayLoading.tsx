@@ -105,7 +105,7 @@ function Row({ player, side, champName }: { player: LoadingPlayer; side: 'ally' 
   const few = games > 0 && games < FEW_GAMES
   const team = TEAM[side]
   const mirrored = side === 'enemy'
-  const name = player.riotId.split('#')[0] || '—'
+  const name = player.hidden ? 'Hidden' : player.riotId.split('#')[0] || '—'
   return (
     <div
       className={`ld-row ${mirrored ? 'ld-row-enemy' : ''} ${player.me ? 'ld-row-me' : ''}`}
@@ -134,7 +134,11 @@ function Row({ player, side, champName }: { player: LoadingPlayer; side: 'ally' 
         </div>
       </div>
       <div className="ld-stat">
-        {player.loading ? (
+        {player.hidden ? (
+          <span className="ld-none" title="The game hides this player – ratioAI looks nothing up about them">
+            hidden
+          </span>
+        ) : player.loading ? (
           <Loader2 size={14} className="animate-spin text-muted" />
         ) : winRate === null ? (
           <span className="ld-none">no games</span>
@@ -206,11 +210,11 @@ export function OverlayLoading() {
           {/* team averages face each other in the middle */}
           <div className="flex w-[76px] flex-col items-center justify-center gap-1.5 pt-5">
             <span className="ld-avg" style={{ color: rateColor(ours.rate) }}>
-              {ours.rate === null ? '–' : `${ours.rate.toFixed(0)}%`}
+              {ours.rate === null ? '–' : `${ours.rate.toFixed(0)} %`}
             </span>
             <span className="ld-vs">VS</span>
             <span className="ld-avg" style={{ color: rateColor(theirs.rate) }}>
-              {theirs.rate === null ? '–' : `${theirs.rate.toFixed(0)}%`}
+              {theirs.rate === null ? '–' : `${theirs.rate.toFixed(0)} %`}
             </span>
             <span className="mt-1 text-center text-[9px] leading-tight tracking-wider text-white/35 uppercase">team average</span>
           </div>

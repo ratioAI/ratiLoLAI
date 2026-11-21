@@ -19,6 +19,7 @@ import type {
   OverlayDiagnostics,
   MinimapState,
   AugmentOffer,
+  MayhemData,
   PlayerHistory
 } from '@shared/types'
 import { toEncounter } from '@shared/encounters'
@@ -42,6 +43,19 @@ import type { GameWindowSettings } from './lcu/gameSettings'
 import { overlayNotice, type OverlayNotice } from '@shared/overlayNotice'
 import { cardRects, WINDOWS, type NameCandidate } from './scanner/detect'
 import { augmentTiersForChampion, makeTierLookup, type TierLookup } from '@shared/mayhem'
+import {
+  extraAugmentLevels,
+  extraSelections,
+  isHeadlinerAugment,
+  newContext,
+  NO_SELECTION,
+  observeLevel,
+  observeSelection,
+  trackRerolls,
+  withMapSkin,
+  type MayhemContext,
+  type SelectionTrack
+} from '@shared/mayhemContext'
 import { AchievementService } from './achievements'
 import { DiscordPoster } from './discord'
 import { isDiscordWebhook } from '@shared/discordPayload'
@@ -58,6 +72,8 @@ import { clipProtocolHandler, mediaTypeOf } from './recorder/protocol'
 import { Exporter } from './recorder/exporter'
 import { run as runProgram } from './recorder/ffmpeg'
 import { ClipSharer } from './recorder/share'
+import { HighlightService } from './recorder/highlights'
+import type { HighlightScope } from '@shared/highlights'
 import { quips as gameQuips } from '@shared/quips'
 import { newProject } from '@shared/editProject'
 import { normalizeProject, type EditProject } from '@shared/editProject'
@@ -78,7 +94,9 @@ import type { ExportRequest } from '@shared/types'
   }
 }
 
-if (!app.requestSingleInstanceLock()) app.quit()
+// A second start ends at once. app.quit() would let the rest of this file run first – and a second
+// instance that reaches recorder.recover() takes the first one's running recording for a leftover.
+if (!app.requestSingleInstanceLock()) app.exit(0)
 // rcclip:// plays clips in the window (read-only, ids instead of paths; see recorder/protocol.ts).
 // Must be declared before the app is ready; "stream" lets the video player seek.
 protocol.registerSchemesAsPrivileged([{ scheme: 'rcclip', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }])
@@ -226,6 +244,7 @@ function onDisplaysChanged(_event: unknown, _display: unknown, changed?: string[
 
 function refreshOverlay(): void {
   const current = settings.get()
+  // the frames show the champion's static tier per card (see CardFrames); nothing here rates the cards
   const offer = current.overlay.enabled && current.overlay.cardFrames && inMayhem ? cards.offer : null
   const key = offer ? JSON.stringify(offer) : ''
   if (key !== shownOffer) {
@@ -267,6 +286,7 @@ const scanner = new AugmentScanner(
     return candidates
   },
   (state) => {
+    trackSelection(state)
     cards = state
     if (state.displayId !== null) overlay.moveToDisplay(state.displayId)
     refreshOverlay()
@@ -279,23 +299,63 @@ const scanner = new AugmentScanner(
 scanner.snapshotDir = join(userData, 'logs')
 scanner.overlayInCapture = () => settings.get().overlay.showInCapture
 
-// augments picked in the running Mayhem game
+// augments picked in the running Mayhem game. Four from the levels, plus what Headliners add since
+// patch 26.21: Superfans' level 21, K/DA's photocards, Pentakill's own selections
+const MAX_OWNED = 8
 let owned: number[] = []
 let ownedGameTime = 0
 function setOwned(ids: number[]): void {
-  owned = [...new Set(ids)].slice(0, 4)
+  owned = [...new Set(ids)].slice(0, MAX_OWNED)
   emit('augmentsOwned', owned)
 }
 scanner.onPicked = (id) => {
-  // never more augments than the level allows (a card that just got covered up is not a pick)
+  // never more augments than the level allows (a card that just got covered up is not a pick).
+  // Pentakill's HEAVY … DOOM come from a selection of their own, on top of the normal ones
   if (owned.includes(id)) return
-  if (owned.length >= Math.max(1, scanner.schedule.earned)) {
-    diag.log(`ignoring pick ${id}: already ${owned.length} augments at this level`)
+  const headliner = (augmentId: number): boolean => isHeadlinerAugment(mayhemData?.augments[augmentId])
+  const regular = owned.filter((ownedId) => !headliner(ownedId)).length
+  const allowed = Math.max(1, scanner.schedule.earnedRegular + extraSelections(mayhemContext))
+  if (!headliner(id) && regular >= allowed) {
+    diag.log(`ignoring pick ${id}: already ${regular} augments at this level`)
     return
   }
   setOwned([...owned, id])
 }
 scanner.onUnpicked = (id) => setOwned(owned.filter((ownedId) => ownedId !== id))
+
+// --- What is known about the Mayhem game: the map's augment pool and the Headliner. The scanner
+// needs it to know which augments can show up and at which levels (see @shared/mayhemContext) ---
+let mayhemData: MayhemData | null = null
+let mayhemContext: MayhemContext = newContext()
+/** the selection that is open: what each card showed and which cards were rerolled (for the log) */
+let selection: SelectionTrack = NO_SELECTION
+
+function setContext(next: MayhemContext): void {
+  if (next === mayhemContext) return
+  for (const line of next.evidence.slice(mayhemContext.evidence.length)) diag.log(`game context: ${line}`)
+  mayhemContext = next
+  scanner.schedule.extraLevels = extraAugmentLevels(next)
+}
+
+function resetContext(): void {
+  mayhemContext = newContext()
+  scanner.schedule.extraLevels = []
+  selection = NO_SELECTION
+}
+
+/** Rerolls (one card changes while the rest stay) and what the cards tell about the game. */
+function trackSelection(state: ScanState): void {
+  if (!state.visible) {
+    selection = NO_SELECTION
+    return
+  }
+  if (!state.offer) return
+  const ids = state.offer.cards.map((card) => card.augmentId)
+  const { track, changed } = trackRerolls(selection, ids)
+  for (const i of changed) diag.log(`card ${i + 1} rerolled: ${selection.cards[i]} → ${ids[i]}`)
+  selection = track
+  if (mayhemData) setContext(observeSelection(mayhemContext, { augmentIds: ids, cardCount: ids.length }, mayhemData))
+}
 
 // health relic and inhibitor respawn timers on the minimap (ARAM, ARAM: Mayhem)
 const minimapPadsFile = join(userData, 'minimap-pads.json')
@@ -343,7 +403,10 @@ function refreshLoading(): void {
 async function loadCandidates(): Promise<void> {
   candidatesTriedAt = Date.now()
   const data = await mayhem.get().catch(() => null)
-  if (data) candidates = Object.values(data.augments).map((augment) => ({ id: augment.id, names: [augment.name, augment.nameEn] }))
+  if (data) {
+    mayhemData = data
+    candidates = Object.values(data.augments).map((augment) => ({ id: augment.id, names: [augment.name, augment.nameEn] }))
+  }
 }
 
 function updateOverlay(live: LiveGameState | null): void {
@@ -358,6 +421,7 @@ function updateOverlay(live: LiveGameState | null): void {
   // GameEnd a Nexus has fallen. Augment frames and map timers only run in between
   const playing = inGame && live!.started && !live!.result
   if (inGame && (!wasInGame || live!.gameMode !== lastTick.gameMode)) {
+    resetContext()
     diag.log(`game detected: gameMode=${live!.gameMode} queue=${queueId ?? '?'} → mayhem=${nowMayhem}`)
     diag.log(`monitors: ${describeDisplays().join(' | ')}; game screen remembered: ${gameDisplay.get() ?? 'none yet'}`)
     lastTick.gameMode = live!.gameMode
@@ -366,7 +430,11 @@ function updateOverlay(live: LiveGameState | null): void {
   minimap.update(playing ? live : null, aram, nowMayhem)
   // the game clock went backwards, so this is a new game: forget the last game's augments
   if (inGame) {
-    if (live!.gameTime + 5 < ownedGameTime && owned.length) setOwned([])
+    // the game clock went backwards, so this is a new game
+    if (live!.gameTime + 5 < ownedGameTime) {
+      if (owned.length) setOwned([])
+      resetContext()
+    }
     ownedGameTime = live!.gameTime
   }
   if (nowMayhem && playing && overlaySettings.enabled) {
@@ -379,6 +447,12 @@ function updateOverlay(live: LiveGameState | null): void {
       diag.log(`level ${level}${dead ? ', dead' : ''}${me ? '' : ' (player not found: ' + live!.activePlayer + ')'}`)
       lastTick = { ...lastTick, level, dead }
     }
+    // what Riot tells about the game: the client's map skin, levels above 18 (Superfans)
+    const mapSkin = lcu.getGameMapSkin()
+    if (mapSkin && mapSkin !== mayhemContext.mapSkin && mayhemData) setContext(withMapSkin(mayhemContext, mapSkin, mayhemData))
+    setContext(observeLevel(mayhemContext, level))
+    // again every tick: a scanner restart in the middle of the game resets the schedule
+    scanner.schedule.extraLevels = extraAugmentLevels(mayhemContext)
     if (overlaySettings.cardFrames) {
       if (!scanner.running) {
         scanner.start()
@@ -398,6 +472,12 @@ function updateOverlay(live: LiveGameState | null): void {
   refreshNotice()
 }
 
+/** Registers the augment hotkey and writes to the log when Windows refuses it (it used to fail without a word). */
+function setOverlayHotkey(accelerator: string): void {
+  if (!overlay.setHotkey(accelerator))
+    diag.log(`hotkeys: ${accelerator} could not be registered – another program holds the key, or it is not a key combination`)
+}
+
 function overlayDiagnostics(): OverlayDiagnostics {
   const live = lcu.getLive()
   return {
@@ -413,6 +493,7 @@ function overlayDiagnostics(): OverlayDiagnostics {
     overlayVisible: overlay.anyVisible,
     captureStream: capture.failed ? `failed: ${capture.failed}` : capture.active ? 'running' : 'off',
     windowMode: windowSettings?.mode ?? null,
+    hotkeysFailed: overlay.failedHotkeys(),
     displays: describeDisplays(),
     notice,
     log: diag.recent(40)
@@ -548,7 +629,10 @@ const recorder = new RecorderService({
   takenHotkeys: () => ({ augment: settings.get().overlay.hotkey }),
   emit: (status) => emit('recorder', status),
   clipSaved: (clip) => emit('clipSaved', clip),
-  hotkeys: (bindings) => overlay.setExtraHotkeys(bindings),
+  hotkeys: (bindings) => {
+    const failed = overlay.setExtraHotkeys(bindings)
+    if (failed.length) diag.log(`hotkeys: ${failed.join(', ')} could not be registered – another program holds the key, or it is not a key combination`)
+  },
   displaySize: () => {
     const display = gameScreen()
     return { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) }
@@ -581,6 +665,33 @@ const exporter = new Exporter({
   builtinMusic: (file) => readFile(join(__dirname, '../renderer', file)),
   log: (message) => diag.log(message)
 })
+
+// --- Highlight videos: the best clips of a game or a month as one montage ---
+const highlights = new HighlightService({
+  env: recorderEnv,
+  store: clips,
+  summary: (gameId) => games.get(gameId),
+  results: (from, to) =>
+    games
+      .list()
+      .filter((game) => game.createdAt >= from && game.createdAt < to)
+      .map((game) => game.win),
+  exporter,
+  busy: () => inGame || recorder.recording,
+  championName: async (id) => (await ddragon.get().catch(() => null))?.champions[id]?.name ?? null,
+  scored: (ids) => emit('highlightsScored', ids),
+  log: (message) => diag.log(message)
+})
+// clips from before the highlight scores (or saved while the app was busy) are looked at once, after the start settled
+setTimeout(() => void highlights.backfill().catch((error) => diag.log(`highlights: backfill failed – ${String(error)}`)), 90_000)
+
+/** A highlight scope from the window: a game id or a month ("2026-11"). */
+function toScope(raw: unknown): HighlightScope {
+  const scope = raw as { gameId?: unknown; month?: unknown } | null
+  if (scope && Number.isInteger(scope.gameId)) return { gameId: Number(scope.gameId) }
+  if (scope && typeof scope.month === 'string' && /^\d{4}-\d{2}$/.test(scope.month)) return { month: scope.month }
+  throw new Error('Unknown highlight scope.')
+}
 
 // --- Sharing clips through the Discord webhook ---
 const sharer = new ClipSharer({
@@ -797,8 +908,16 @@ const lcu = new LcuManager({
         diag.log(`saving game ${summary.gameId} failed: ${String(error)}`)
       }
       emit('gameSummary', saved)
-      // the clips recorded during this game now belong to it
-      recorder.onSummary(saved.gameId)
+      // The clips recorded during this game now belong to it – once the recorder has cut the last
+      // ones and joined the whole game. A summary that arrived before that found no recording to
+      // attach to, and the clips never got their game. Then their highlight scores (sound).
+      void recorder
+        .settled()
+        .then(() => {
+          recorder.onSummary(saved.gameId)
+          return highlights.afterGame(saved.gameId)
+        })
+        .catch((error) => diag.log(`highlights after game ${saved.gameId} failed: ${String(error)}`))
       // after the summary is on screen; the game is over, so reading the database is fine now
       void achievements
         .onGame(saved)
@@ -865,7 +984,7 @@ function registerIpc(): void {
     const next = settings.update(patch)
     ddragon.setLanguage(next.language)
     mayhem.setLanguage(next.language)
-    overlay.setHotkey(next.overlay.hotkey)
+    setOverlayHotkey(next.overlay.hotkey)
     overlay.setVisibleInCapture(next.overlay.showInCapture)
     updateOverlay(lcu.getLive())
     tierCache.clear()
@@ -906,6 +1025,11 @@ function registerIpc(): void {
     const summary = games.get(Number(gameId))
     if (!summary) return { ok: false, message: 'Game not found.' }
     return discord.post(summary)
+  })
+  handle('postWillToDiscord', async (gameId: number) => {
+    const summary = games.get(Number(gameId))
+    if (!summary) return { ok: false, message: 'Game not found.' }
+    return discord.postWill(summary)
   })
   handle('recorderSetup', () => recorderEnv.setup())
   handle('installFfmpeg', () => recorderEnv.install())
@@ -959,6 +1083,8 @@ function registerIpc(): void {
   })
   handle('mediaUrl', (path: string) => registerMedia(String(path)))
   handle('exportStart', (request: ExportRequest) => exporter.start(request))
+  handle('highlightPlan', async (scope: unknown) => (await highlights.plan(toScope(scope))).plan)
+  handle('createHighlightVideo', (scope: unknown) => highlights.create(toScope(scope)))
   handle('exportCancel', () => exporter.cancel())
   handle('exportStatus', () => exporter.status())
   handle('shareClipToDiscord', (id: number, options?: { quip?: boolean; again?: boolean }) =>
@@ -1001,7 +1127,7 @@ function registerIpc(): void {
     championBuild(patch, championId, role, assertMode(mode))
   )
   handle('crawlerStart', (mode: GameMode) => {
-    void startCrawl(assertMode(mode))
+    startCrawl(assertMode(mode)).catch((error) => diag.log(`crawler: could not start – ${String(error)}`))
   })
   handle('crawlerStop', () => crawler.stop())
   handle('crawlerStatus', () => crawler.getStatus())
@@ -1057,6 +1183,16 @@ function registerIpc(): void {
   handle('getMapTimers', () => minimapState)
   handle('listGames', () => games.list())
   handle('getGame', (id: number) => games.get(Number(id)))
+  handle('fillGameEffort', async (id: number) => {
+    const summary = games.get(Number(id))
+    if (!summary || summary.effort) return summary
+    const effort = await lcu.effortOf(summary)
+    if (!effort) return summary
+    const filled = { ...summary, effort }
+    games.save(filled)
+    diag.log(`will to win: signals of game ${filled.gameId} filled in from the client`)
+    return filled
+  })
   handle('getLeaderboard', () => games.leaderboard())
   handle('getAchievements', () => achievements.list())
   handle('markAchievementsSeen', (ids: string[]) => achievements.store.markSeen(Array.isArray(ids) ? ids.map(String) : []))
@@ -1149,6 +1285,12 @@ function createWindow(): void {
     }
   })
   mainWindow.once('ready-to-show', () => mainWindow?.show())
+  // The window only ever shows the app itself. A file or link dropped on it must not load there:
+  // any page in this window gets the app's whole API (delete clips, change settings).
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const current = mainWindow?.webContents.getURL() ?? ''
+    if (url.split('#')[0] !== current.split('#')[0]) event.preventDefault()
+  })
   mainWindow.webContents.on('render-process-gone', (_event, details) =>
     diag.log(`main window crashed: ${details.reason} (exit code ${details.exitCode})`)
   )
@@ -1311,7 +1453,7 @@ void app.whenReady().then(async () => {
     .then(() => recorder.refresh())
     .catch((error) => diag.log(`recorder: init failed – ${String(error)}`))
   lcu.start()
-  overlay.setHotkey(settings.get().overlay.hotkey)
+  setOverlayHotkey(settings.get().overlay.hotkey)
   overlay.setVisibleInCapture(settings.get().overlay.showInCapture)
   screen.on('display-added', onDisplaysChanged)
   screen.on('display-removed', onDisplaysChanged)
@@ -1326,6 +1468,8 @@ void app.whenReady().then(async () => {
 // a running recording is closed properly before the app goes (FFmpeg finishes its last segment)
 let recorderClosed = false
 app.on('before-quit', (event) => {
+  // an export still running would go on as an orphaned FFmpeg and leave a file nobody lists
+  exporter.cancel()
   if (recorderClosed || !recorder.recording) return
   event.preventDefault()
   void recorder

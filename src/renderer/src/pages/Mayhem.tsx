@@ -36,10 +36,10 @@ export function Mayhem() {
       <div className="panel mb-5 flex gap-3 border-gold/30 p-4 text-sm text-muted">
         <Info size={18} className="mt-0.5 shrink-0 text-gold" />
         <p>
-          Riot does not expose Mayhem matches in the official API and asks developers not to publish augment win rates. ratioAI therefore
-          rates augments by <b className="text-text">curated combos, pick rates and champion fit</b> (open dataset of arammayhem.com, China
-          servers) and shows your <b className="text-text">own</b> Mayhem results from the League client. Items & runes for Mayhem come from
-          your crawled ARAM games.
+          Mayhem matches are private in Riot&apos;s official API, and Riot&apos;s rules forbid showing win rates of augments. ratioAI
+          therefore rates augments by <b className="text-text">curated combos, pick rates and champion fit</b> (open dataset of
+          arammayhem.com, China servers) and shows which augments <b className="text-text">you</b> took in your Mayhem games, from the
+          League client. Items & runes for Mayhem come from your crawled ARAM games.
         </p>
       </div>
 
@@ -132,12 +132,15 @@ function AugmentBrowser() {
         ))}
       </div>
       <div className="max-h-[460px] space-y-1 overflow-y-auto pr-1">
+        {!augments.length && <p className="py-6 text-center text-sm text-muted">No augment matches.</p>}
         {augments.map((augment) => (
           <div key={augment.id} className="flex items-center gap-3 rounded-lg px-1.5 py-1 hover:bg-panel-2">
             <span className="w-7 text-right text-xs text-muted tabular-nums">{augment.pickRateRank}</span>
             <AugmentIcon augment={augment} size={32} />
             <span className="min-w-0 flex-1 truncate text-sm">{augment.name}</span>
-            <span className="w-14 text-right text-sm font-semibold tabular-nums">{augment.pickRate?.toFixed(1)} %</span>
+            <span className="w-14 text-right text-sm font-semibold tabular-nums" title="Pick rate: how often it is taken when offered">
+              {augment.pickRate?.toFixed(1)} %
+            </span>
             <span className="flex w-14 items-center justify-end text-xs tabular-nums">
               {augment.pickRateChange ? (
                 <span className={`flex items-center ${augment.pickRateChange > 0 ? 'text-win' : 'text-loss'}`}>
@@ -206,9 +209,6 @@ function PersonalStats({ connected }: { connected: boolean }) {
               <div key={augmentStats.id} className="flex items-center gap-3 text-sm">
                 <AugmentIcon augment={data?.augments[augmentStats.id]} size={30} />
                 <span className="flex-1 truncate">{data?.augments[augmentStats.id]?.name ?? `Augment #${augmentStats.id}`}</span>
-                <span style={{ color: wrColor(augmentStats.wins / augmentStats.games) }} className="font-semibold">
-                  {pct(augmentStats.wins / augmentStats.games, 0)}
-                </span>
                 <span className="w-16 text-right text-xs text-muted">{augmentStats.games} games</span>
               </div>
             ))}

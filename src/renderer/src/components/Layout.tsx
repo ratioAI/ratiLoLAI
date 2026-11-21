@@ -146,8 +146,10 @@ export function Layout({ children }: { children: ReactNode }) {
     const unsubscribers = [
       api.on('update', setUpdate),
       api.on('overlayNotice', setNotice),
-      // a finished game opens its summary page right away
-      api.on('gameSummary', (summary: GameSummary) => navigate(`/games/${summary.gameId}`))
+      // a finished game opens its summary page right away – unless you are in the middle of cutting a clip
+      api.on('gameSummary', (summary: GameSummary) => {
+        if (!window.location.hash.startsWith('#/clips/edit/')) navigate(`/games/${summary.gameId}`)
+      })
     ]
     return () => unsubscribers.forEach((off) => off())
   }, [navigate])
@@ -188,17 +190,17 @@ export function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="drag flex h-10 shrink-0 items-center gap-4 border-b border-line pr-40 pl-5 text-xs">
+        <header className="drag flex h-10 shrink-0 items-center gap-4 border-b border-line bg-bg-2 pr-40 pl-5 text-xs">
           <Wordmark className="text-[15px] text-text" />
           {isDemo && <span className="rounded-md bg-gold/15 px-2 py-0.5 font-semibold text-gold">Web demo · synthetic data</span>}
           <div className="flex-1" />
           {notice && (
             <span
-              className="no-drag flex max-w-[340px] items-center gap-1.5 truncate rounded-md bg-amber-400/15 px-2 py-0.5 font-semibold text-amber-300"
-              title={notice.detail}
+              className="no-drag flex max-w-[340px] items-center gap-1.5 rounded-md bg-amber-400/15 px-2 py-0.5 font-semibold text-amber-300"
+              title={`${notice.title} – ${notice.detail}`}
             >
               <MonitorX size={13} className="shrink-0" />
-              {notice.title}
+              <span className="truncate">{notice.title}</span>
             </span>
           )}
           {update?.status === 'ready' && (
@@ -210,7 +212,7 @@ export function Layout({ children }: { children: ReactNode }) {
           {crawler?.running && (
             <span className="flex items-center gap-2 text-muted">
               <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
-              Crawler ({crawler.mode === 'aram' ? 'ARAM' : 'Ranked'}): {num(crawler.matchesThisRun)} Matches
+              Crawler ({crawler.mode === 'aram' ? 'ARAM' : 'Ranked'}): {num(crawler.matchesThisRun)} matches
             </span>
           )}
           <div className="no-drag flex rounded-lg border border-line bg-panel p-0.5">
@@ -277,6 +279,31 @@ export function EmptyState({ icon, title, children }: { icon?: ReactNode; title:
     </div>
   )
 }
+
+/** A page (or panel) that is still fetching its data: never show "nothing here yet" in the meantime. */
+export function PageLoading() {
+  return (
+    <div className="flex justify-center py-16">
+      <Spinner />
+    </div>
+  )
+}
+
+/** The data could not be fetched: say so, with the reason and a way to try again. */
+export function LoadFailed({ what, error, onRetry }: { what: string; error: string; onRetry?: () => void }) {
+  return (
+    <EmptyState title={`${what} could not be loaded`}>
+      <p className="mb-3 break-words">{error}</p>
+      {onRetry && (
+        <button className="btn btn-ghost" onClick={onRetry}>
+          Try again
+        </button>
+      )}
+    </EmptyState>
+  )
+}
+
+export const errorText = (reason: unknown): string => (reason instanceof Error ? reason.message : String(reason))
 
 export function Spinner() {
   return <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent" />

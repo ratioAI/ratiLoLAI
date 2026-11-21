@@ -196,6 +196,8 @@ export class Crawler {
       if (signal.aborted) {
         this.update({ phase: 'done', message: 'Stopped' })
       } else {
+        // one worker failed: the others must stop too, or they keep crawling behind a "stopped" status
+        this.abortController?.abort()
         const errorMessage = err instanceof Error ? err.message : String(err)
         this.update({ phase: 'error', message: errorMessage, lastError: errorMessage })
       }

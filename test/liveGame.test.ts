@@ -119,7 +119,9 @@ describe('live polling during a game', () => {
     await polls(4) // two answers, then the game is closing and doesn't answer
     expect(live.at(-1)?.result).toBe('Win')
     expect(logs.some((line) => line.includes('GameEnd – Win'))).toBe(true)
-    expect(dumps).toEqual(['running', 'end'])
+    // the game session is kept too (where does the client name the map skin?)
+    expect(dumps).toEqual(['session', 'running', 'end'])
+    expect(logs).toContain('game session: map skin not in the session')
     phase('WaitingForStats')
     expect(live.at(-1)).toBeNull()
     expect(lcu.getLive()).toBeNull()
@@ -133,8 +135,9 @@ describe('live polling during a game', () => {
     expect(live.map((state) => state?.gameTime ?? null)).toEqual([30, null])
   })
 
-  it('takes names the client left out from the game, matched by champion', async () => {
-    // seen 2026-11-20: the game session and the summoner lookup had no name for 3 of 10 players
+  it('looks nothing up about a stranger the game hides (no name in the session), even when the game knows the name', async () => {
+    // seen 2026-11-20: the game session and the summoner lookup had no name for 3 of 10 players –
+    // players hidden by the game (streamer mode). Riot: products may not identify or analyse them
     const loading: (LoadingState | null)[] = []
     const logs: string[] = []
     const lcu = new LcuManager({
@@ -162,8 +165,13 @@ describe('live polling during a game', () => {
         teamTwo: [{ puuid: 'nameless', championId: 20 }]
       }
     }
-    // everything else (summoner lookup, match history) answers with nothing
-    ;(lcu as unknown as { client: unknown }).client = { get: async (path: string) => (path === '/lol-gameflow/v1/session' ? session : null) }
+    const asked: string[] = []
+    ;(lcu as unknown as { client: unknown }).client = {
+      get: async (path: string) => {
+        asked.push(path)
+        return path === '/lol-gameflow/v1/session' ? session : null
+      }
+    }
     const raw = answer(0) as { ok: true; data: { allPlayers: Record<string, unknown>[] } }
     raw.data.allPlayers[0].rawChampionName = 'game_character_displayname_Lux'
     raw.data.allPlayers.push({ ...raw.data.allPlayers[0], riotId: 'Hidden One#EUW', championName: 'Nunu & Willump', rawChampionName: 'game_character_displayname_Nunu', team: 'CHAOS' })
@@ -171,7 +179,14 @@ describe('live polling during a game', () => {
     ;(lcu as unknown as { onPhase(phase: string): void }).onPhase('InProgress')
     for (let i = 0; i < 3; i++) await vi.advanceTimersByTimeAsync(i === 0 ? 0 : 2000)
     const players = loading.at(-1)?.players ?? []
-    expect(players.map((player) => player.riotId)).toEqual(['Me#EUW', 'Hidden One#EUW'])
-    expect(logs.some((line) => /1 name the client left out taken from the game/.test(line))).toBe(true)
+    expect(players.map((player) => [player.riotId, !!player.hidden])).toEqual([
+      ['Me#EUW', false],
+      ['', true]
+    ])
+    expect(players[1]).toMatchObject({ record: null, loading: false })
+    expect(players[1].encounter ?? null).toBeNull()
+    // neither the summoner lookup nor the match history was asked about the hidden player
+    expect(asked.filter((path) => path.includes('nameless'))).toEqual([])
+    expect(logs.some((line) => line.includes('hidden player (no lookups)'))).toBe(true)
   })
 })

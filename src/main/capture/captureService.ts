@@ -51,9 +51,21 @@ export class CaptureService {
       webPreferences: { preload: this.preload, contextIsolation: true, sandbox: false, backgroundThrottling: false }
     })
     win.on('closed', () => {
+      // (a window replaced after a crash must not clear its successor)
+      if (this.captureWindow !== win) return
       this.captureWindow = null
       this.ready = null
       this.openKey = ''
+    })
+    // Its renderer died (GPU reset, out of memory): nothing answers any more, every grab would time
+    // out until the app is restarted. Start a new page and open the streams again.
+    win.webContents.on('render-process-gone', (_event, details) => {
+      if (this.captureWindow !== win) return
+      this.log(`capture: the capture page crashed (${details.reason}) – starting it again`)
+      this.captureWindow = null
+      this.ready = null
+      win.destroy()
+      this.reset()
     })
     this.captureWindow = win
     this.ready = (

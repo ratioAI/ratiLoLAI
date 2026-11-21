@@ -1,5 +1,6 @@
 import type { LeaderboardEntry } from './types'
 import { teamBlame, type GameSummary } from './summary'
+import { willToWin } from './will'
 
 /**
  * MVP / troll leaderboard over a list of games: you and your premades, each counted in the games
@@ -7,10 +8,11 @@ import { teamBlame, type GameSummary } from './summary'
  * this version works on plain summaries and is what the web demo and the tests use.
  */
 export function leaderboardFromSummaries(summaries: GameSummary[]): LeaderboardEntry[] {
-  const rows = new Map<string, LeaderboardEntry & { score: number; champions: Map<number, number>; latest: number }>()
+  const rows = new Map<string, LeaderboardEntry & { score: number; will: number; champions: Map<number, number>; latest: number }>()
   for (const summary of summaries) {
     const allies = summary.players.filter((player) => player.ally)
     const troll = allies.length > 1 ? teamBlame(summary)?.puuid : null
+    const will = willToWin(summary, true)?.score ?? null
     for (const player of allies) {
       if (!player.me && !player.premade) continue
       const row = rows.get(player.puuid) ?? {
@@ -23,7 +25,10 @@ export function leaderboardFromSummaries(summaries: GameSummary[]): LeaderboardE
         mvps: 0,
         trolls: 0,
         avgScore: 0,
+        avgWill: null,
+        willGames: 0,
         score: 0,
+        will: 0,
         champions: new Map<number, number>(),
         latest: -Infinity
       }
@@ -33,6 +38,10 @@ export function leaderboardFromSummaries(summaries: GameSummary[]): LeaderboardE
       if (summary.mvp === player.puuid) row.mvps++
       if (troll === player.puuid) row.trolls++
       row.score += player.score
+      if (will !== null) {
+        row.will += will
+        row.willGames++
+      }
       row.champions.set(player.championId, (row.champions.get(player.championId) ?? 0) + 1)
       if (summary.createdAt >= row.latest) {
         row.latest = summary.createdAt
@@ -42,10 +51,11 @@ export function leaderboardFromSummaries(summaries: GameSummary[]): LeaderboardE
     }
   }
   return [...rows.values()]
-    .map(({ score, champions, latest: _latest, ...row }) => ({
+    .map(({ score, will, champions, latest: _latest, ...row }) => ({
       ...row,
       championId: [...champions.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? row.championId,
-      avgScore: Math.round(score / row.games)
+      avgScore: Math.round(score / row.games),
+      avgWill: row.willGames ? Math.round(will / row.willGames) : null
     }))
     .sort((a, b) => b.mvps - a.mvps || b.games - a.games)
 }

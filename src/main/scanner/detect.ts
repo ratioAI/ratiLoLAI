@@ -272,8 +272,11 @@ export function signatureChanged(previous: number[][] | null, current: number[][
 // When to look at the screen at all
 // ---------------------------------------------------------------------------
 
-/** Levels at which ARAM: Mayhem grants an augment. */
-export const AUGMENT_LEVELS = [1, 7, 11, 15]
+/**
+ * Levels at which ARAM: Mayhem grants an augment. 21 only exists with the Superfans Headliner (level
+ * cap 21, an extra augment at 21); other Headliners add levels through AugmentSchedule.extraLevels.
+ */
+export const AUGMENT_LEVELS = [1, 7, 11, 15, 21]
 
 /** What the scheduler needs to know about the local player (from the Live Client Data API). */
 export interface PlayerTick {
@@ -315,6 +318,8 @@ export class AugmentSchedule {
   private misses = 0
   /** number of augment levels whose cards have been on screen */
   private handled = 0
+  /** augment levels the game's Headliner adds (Pentakill: DOOM at 18), see mayhemContext */
+  extraLevels: number[] = []
 
   update(tick: PlayerTick, now = Date.now()): void {
     if (this.dead && !tick.dead) this.openWindow(WINDOWS.respawn, now)
@@ -330,6 +335,11 @@ export class AugmentSchedule {
   }
 
   get earned(): number {
+    return [...AUGMENT_LEVELS, ...this.extraLevels].filter((augmentLevel) => this.level >= augmentLevel).length
+  }
+
+  /** Normal augments the level allows, without the Headliner's own selections (extraLevels). */
+  get earnedRegular(): number {
     return AUGMENT_LEVELS.filter((augmentLevel) => this.level >= augmentLevel).length
   }
 
@@ -389,5 +399,6 @@ export class AugmentSchedule {
     this.seen = false
     this.misses = 0
     this.handled = 0
+    this.extraLevels = []
   }
 }

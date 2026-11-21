@@ -30,6 +30,7 @@ import {
   type Segment,
   type StoredItem
 } from '@shared/recorder'
+import { emptyFeed, FEED_EVENTS, type LiveTeam, type RecordingFeed } from '@shared/highlights'
 import type { GameWindowSettings } from '../lcu/gameSettings'
 import type { ClipStore } from './clipStore'
 import { run } from './ffmpeg'
@@ -80,6 +81,12 @@ interface Recording {
   deleted: Set<string>
   /** recording time minus game time, in seconds; null until the game clock was seen */
   offset: number | null
+  /** the offset last written to the database (the highlight videos map clips to the game with it) */
+  savedOffset: number | null
+  /** what happened in the game, for the highlight videos; written now and then and at the end */
+  feed: RecordingFeed
+  /** game time the feed was last written */
+  feedSavedAt: number
   lastEventId: number | null
   lastGameTime: number
   /** automatic clips waiting for their lead-out (game seconds) */
@@ -315,9 +322,11 @@ export class RecorderService {
       if (state.gameTime + 5 < rec.lastGameTime) {
         rec.lastEventId = null
         rec.pending = []
+        rec.feed = emptyFeed()
       }
       rec.lastGameTime = state.gameTime
       rec.offset = this.streamNow(rec) - state.gameTime
+      this.keepFeed(rec, events, state)
       const me = state.activePlayer ?? ''
       const found = autoClipWindows(events, {
         me,
@@ -334,6 +343,43 @@ export class RecorderService {
     }
     if (rec.mode === 'replay') await this.trimRing(rec)
     this.emit()
+  }
+
+  /**
+   * Keeps what the highlight videos need: the game clock of the recording, the events that can make
+   * a highlight and your health. Written to the database once a minute and at the end.
+   */
+  private keepFeed(rec: Recording, events: readonly FeedEvent[], state: LiveGameState): void {
+    if (rec.test) return
+    const feed = rec.feed
+    feed.me = state.activePlayer ?? feed.me
+    for (const player of state.players) if (player.riotId && (player.team === 'ORDER' || player.team === 'CHAOS')) feed.teams[player.riotId] = player.team as LiveTeam
+    const mine = state.players.find((player) => player.riotId === feed.me)?.team
+    if (mine === 'ORDER' || mine === 'CHAOS') feed.myTeam = mine
+    const known = new Set(feed.events.map((event) => event.EventID))
+    for (const event of events) {
+      if (!FEED_EVENTS.has(event.EventName) || known.has(event.EventID)) continue
+      const { EventID, EventName, EventTime, KillerName, VictimName, Assisters, KillStreak, Acer, AcingTeam, Recipient, Result } = event
+      feed.events.push({ EventID, EventName, EventTime, KillerName, VictimName, Assisters, KillStreak, Acer, AcingTeam, Recipient, Result })
+    }
+    const last = feed.health[feed.health.length - 1]
+    if (state.started && state.activeHealth != null && (!last || state.gameTime - last[0] >= 1.5))
+      feed.health.push([Math.round(state.gameTime * 10) / 10, Math.round(state.activeHealth * 1000) / 1000])
+    if (rec.offset !== null && (rec.savedOffset === null || Math.abs(rec.offset - rec.savedOffset) > 1)) {
+      rec.savedOffset = rec.offset
+      this.deps.store.updateRecording(rec.id, { gameOffset: Math.round(rec.offset * 1000) / 1000 })
+    }
+    if (state.gameTime - rec.feedSavedAt >= 60) this.saveFeed(rec)
+  }
+
+  private saveFeed(rec: Recording): void {
+    if (rec.test || !rec.feed.me) return
+    rec.feedSavedAt = rec.lastGameTime
+    try {
+      this.deps.store.updateRecording(rec.id, { feed: JSON.stringify(rec.feed) })
+    } catch (error) {
+      this.deps.log(`recorder: saving the game feed failed – ${String(error)}`)
+    }
   }
 
   private streamNow(rec: Recording): number {
@@ -478,6 +524,9 @@ export class RecorderService {
       sizes: new Map(),
       deleted: new Set(),
       offset: null,
+      savedOffset: null,
+      feed: emptyFeed(),
+      feedSavedAt: 0,
       lastEventId: null,
       lastGameTime: 0,
       pending: [],
@@ -613,6 +662,8 @@ export class RecorderService {
 
   /** Resolves once a recording that just ended has made its last clips (at once when nothing is going on). */
   async settled(): Promise<void> {
+    // while FFmpeg is still closing its last segment, `finishing` is not set yet: wait for the stop itself
+    await (this.rec?.stopped ?? this.finishing)?.catch(() => undefined)
     await this.finishing?.catch(() => undefined)
   }
 
@@ -625,10 +676,37 @@ export class RecorderService {
     return work
   }
 
+  /**
+   * Whatever goes wrong while the clips are cut and the game is joined (disk full, the clips drive
+   * unplugged, the database refusing to write): the recorder must come back to idle. It used to
+   * stay "recording" until the app was restarted – no later game was recorded and every export
+   * waited for a game that was long over.
+   */
   private async doFinish(rec: Recording): Promise<void> {
+    let finished = false
+    try {
+      await this.wrapUp(rec)
+      finished = true
+    } catch (error) {
+      this.deps.log(`recorder: finishing the recording failed – ${String(error)}`)
+    }
+    if (this.rec === rec) this.rec = null
+    this.state = 'idle'
+    try {
+      this.deps.env.helper.quit()
+    } catch {
+      // the helper is gone already
+    }
+    // after a failure the segments are all that is left of the game: leave them alone
+    if (finished) await this.cleanupRun().catch((error) => this.deps.log(`recorder: cleanup failed – ${String(error)}`))
+    this.emit()
+  }
+
+  private async wrapUp(rec: Recording): Promise<void> {
     this.deps.hotkeys([])
     this.deps.env.helper.stop()
     await this.readSegments(rec)
+    this.saveFeed(rec)
     for (const window of rec.pending) await this.cutWindow(rec, window)
     rec.pending = []
     for (const mark of rec.bookmarks) await this.cut(rec, { start: mark - rec.replaySeconds, end: mark + 3 }, 'bookmark', 'Bookmark')
@@ -639,23 +717,19 @@ export class RecorderService {
       await this.removeRecordingDir(rec.dir)
       this.deps.store.updateRecording(rec.id, { endedAt: now, dir: kept?.file ?? '', bytes: kept?.bytes ?? 0 })
     } else {
-      // joining failed: the segments stay where they are
+      // joining failed: the segments stay where they are (storageItems keeps the cleanup away from them)
+      this.deps.log('recorder: the whole game could not be joined into one file – its segments stay in the recording folder')
       this.deps.store.updateRecording(rec.id, { endedAt: now, bytes: [...rec.sizes.values()].reduce((sum, bytes) => sum + bytes, 0) })
     }
-    if (this.rec === rec) this.rec = null
     // the game's summary is attached to this recording; one that broke off at the start holds nothing to attach to
     if (rec.test) this.lastRecordingId = null
     else if (rec.segments.length) {
       this.lastRecordingId = rec.id
       this.lastEndedAt = now
     }
-    this.state = 'idle'
-    this.deps.env.helper.quit()
     const { frames, dup, drop } = rec.picture
     const picture = frames ? ` (${frames} frames: ${Math.round((100 * dup) / frames)} % repeated, ${drop} dropped)` : ''
     this.deps.log(`recorder: recording ended after ${Math.round((now - rec.startedAt) / 1000)} s${picture}`)
-    await this.cleanupRun().catch((error) => this.deps.log(`recorder: cleanup failed – ${String(error)}`))
-    this.emit()
   }
 
   /** The whole game as one file: joining is a plain copy. Null when it failed (the segments stay then). */
@@ -923,13 +997,19 @@ export class RecorderService {
       if (!recording.dir || recording.id === this.rec?.id) continue
       const info = await stat(recording.dir).catch(() => null)
       if (!info) continue
-      // a file is a joined whole-game recording; a folder is what a recording left behind
+      // a file is a joined whole-game recording
       if (info.isFile()) items.push({ path: recording.dir, bytes: info.size, at: recording.startedAt, type: 'session', kept: recording.kept })
+      // A folder of a recording that ended is a whole game that could not be joined (disk full, too
+      // slow): its segments are the only copy. It counts as a whole-game recording, kept as long as
+      // those are – as a "replay leftover" the cleanup right after the game deleted it.
+      else if (recording.endedAt !== null)
+        items.push({ path: recording.dir, bytes: await dirSize(recording.dir), at: recording.startedAt, type: 'session', kept: recording.kept })
     }
     const known = new Set(items.map((item) => resolve(item.path)))
     for (const entry of await readdir(join(folder, 'recordings'), { withFileTypes: true }).catch(() => [])) {
       if (!entry.isDirectory()) continue
       const dir = join(folder, 'recordings', entry.name)
+      if (known.has(resolve(dir))) continue
       const active = this.rec?.dir === dir
       const info = await stat(dir).catch(() => null)
       items.push({ path: dir, bytes: active ? 0 : await dirSize(dir), at: info?.mtimeMs ?? 0, type: 'replay', active })
@@ -960,7 +1040,8 @@ export class RecorderService {
     for (const item of plan.delete) {
       if (item.type === 'replay') await this.removeRecordingDir(item.path)
       else if (item.type === 'session') {
-        await unlink(item.path).catch(() => undefined)
+        // a file – or the folder of a whole game that could not be joined
+        await unlink(item.path).catch(() => this.removeRecordingDir(item.path))
         const row = this.deps.store.recordings().find((recording) => recording.dir === item.path)
         if (row) this.deps.store.updateRecording(row.id, { dir: '', bytes: 0 })
       }

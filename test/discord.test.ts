@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   DISCORD_LIMITS,
   buildDiscordPayload,
+  buildWillPayload,
   discordModeOf,
   escapeDiscord,
   isDiscordWebhook,
@@ -126,6 +127,41 @@ describe('buildDiscordPayload', () => {
   })
 })
 
+describe('buildWillPayload', () => {
+  /** the demo game with a stranger on your team who stood in the fountain for 8 of 18 minutes */
+  const withEffort = () => {
+    const summary = demoGame(NOW)
+    const stranger = summary.players.find((player) => player.ally && !player.me && !player.premade)!
+    return {
+      summary: { ...summary, effort: { surrender: null, remake: false, buildings: [], idle: { [stranger.puuid]: 8 }, tracked: 18 } },
+      stranger
+    }
+  }
+
+  it('is nothing for a game without the signals (saved by an older version)', () => {
+    expect(buildWillPayload({ ...demoGame(NOW), effort: undefined }, { champion })).toBeNull()
+  })
+
+  it('shows both teams as bars, the verdict and each factor, and never pings', () => {
+    const { summary } = withEffort()
+    const payload = buildWillPayload(summary, { champion, ddragonVersion: '15.22.1' })!
+    const embed = payload.embeds[0]
+    expect(payload.allowed_mentions).toEqual({ parse: [] })
+    expect(embed.title).toBe('🔥 Will to win · VICTORY · ARAM: Mayhem · 18:41')
+    expect(embed.description).toMatch(/🔵 \*\*Your team \d+\*\* – /)
+    expect(embed.description).toMatch(/(🟦|⬛){10}/)
+    expect(embed.fields.map((field) => field.name.split(' · ')[0])).toEqual(['Teamplay', 'Fighting spirit', 'Closing drive', 'Presence'])
+    expect(embed.thumbnail?.url).toContain('15.22.1')
+  })
+
+  it('names a stranger who was away only by their champion', () => {
+    const { summary, stranger } = withEffort()
+    const presence = buildWillPayload(summary, { champion })!.embeds[0].fields.find((field) => field.name.startsWith('Presence'))!
+    expect(presence.value).toContain(`Champ${stranger.championId} away`)
+    expect(presence.value).not.toContain(stranger.riotId.split('#')[0])
+  })
+})
+
 describe('DiscordPoster', () => {
   const URL = 'https://discord.com/api/webhooks/1/token'
   const baseSettings: Settings['discord'] = {
@@ -208,5 +244,16 @@ describe('DiscordPoster', () => {
     await poster.post(game, true)
     expect((calls[0] as DiscordPayload).embeds[0].title.startsWith('[TEST] ')).toBe(true)
     expect(poster.posted(777)).toBe(false)
+  })
+
+  it('sends the will to win only when asked, without counting it as the game’s post', async () => {
+    const { poster, calls } = setup([])
+    const summary = { ...game, effort: { surrender: null, remake: false, buildings: [], idle: {}, tracked: 18 } }
+    const result = await poster.postWill(summary)
+    expect(result.ok).toBe(true)
+    expect(calls).toHaveLength(1)
+    expect((calls[0] as DiscordPayload).embeds[0].title).toContain('Will to win')
+    expect(poster.posted(777)).toBe(false)
+    expect((await poster.postWill({ ...game, effort: undefined })).ok).toBe(false)
   })
 })

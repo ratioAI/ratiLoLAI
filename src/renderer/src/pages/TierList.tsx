@@ -7,7 +7,7 @@ import { api } from '@/lib/api'
 import { num, pct, wrColor } from '@/lib/format'
 import { useApp, useAsync } from '@/lib/store'
 import { ChampIcon, RoleIcon, TierBadge } from '@/components/icons'
-import { EmptyState, PageHeader, Spinner } from '@/components/Layout'
+import { EmptyState, LoadFailed, PageHeader, Spinner } from '@/components/Layout'
 import { NoDataHint } from './NoDataHint'
 
 type SortKey = 'rank' | 'tier' | 'winRate' | 'pickRate' | 'banRate' | 'games' | 'name'
@@ -50,7 +50,7 @@ export function TierList() {
   const [tierFilter, setTierFilter] = useState<Tier | null>(null)
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'rank', dir: 1 })
 
-  const { value: list, loading } = useAsync(() => (patch ? api.getTierList(patch, mode) : Promise.resolve([])), [patch, statsVersion, mode])
+  const { value: list, loading, error } = useAsync(() => (patch ? api.getTierList(patch, mode) : Promise.resolve([])), [patch, statsVersion, mode])
 
   const rows = useMemo(() => {
     if (!list || !data) return []
@@ -82,15 +82,22 @@ export function TierList() {
     return filtered
   }, [list, data, role, query, tierFilter, sort, aram])
 
-  const Th = ({ k, children, className = '' }: { k: SortKey; children: React.ReactNode; className?: string }) => (
+  // A column head that sorts by its column. Called as a plain function, not used as a component: a
+  // component made anew on every render is mounted anew too, and its button would lose the focus.
+  const th = (k: SortKey, children: React.ReactNode, className = '') => (
     <th
-      className={`cursor-pointer px-3 py-3 font-semibold select-none hover:text-text ${className}`}
-      onClick={() => setSort((current) => ({ key: k, dir: current.key === k ? (-current.dir as 1 | -1) : 1 }))}
+      key={k}
+      className={`px-3 py-3 font-semibold select-none ${className}`}
+      aria-sort={sort.key === k ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined}
     >
-      <span className="inline-flex items-center gap-1">
+      {/* a real button, so the table can be sorted with the keyboard too */}
+      <button
+        className="inline-flex cursor-pointer items-center gap-1 font-semibold hover:text-text"
+        onClick={() => setSort((current) => ({ key: k, dir: current.key === k ? (-current.dir as 1 | -1) : 1 }))}
+      >
         {children}
         {sort.key === k && (sort.dir === 1 ? <ArrowDown size={12} /> : <ArrowUp size={12} />)}
-      </span>
+      </button>
     </th>
   )
 
@@ -115,7 +122,9 @@ export function TierList() {
         </div>
       </div>
 
-      {loading && !list ? (
+      {error && !list ? (
+        <LoadFailed what="The tier list" error={error} />
+      ) : loading && !list ? (
         <div className="flex justify-center p-16">
           <Spinner />
         </div>
@@ -128,17 +137,13 @@ export function TierList() {
           <table className="w-full text-sm">
             <thead className="border-b border-line text-left text-xs text-muted">
               <tr>
-                <Th k="rank" className="w-16 text-center">
-                  #
-                </Th>
-                <Th k="name">Champion</Th>
-                <Th k="tier">Tier</Th>
-                <Th k="winRate">Win rate</Th>
-                <Th k="pickRate">Pick rate</Th>
-                {!aram && <Th k="banRate">Ban rate</Th>}
-                <Th k="games" className="text-right">
-                  Games
-                </Th>
+                {th('rank', '#', 'w-16 text-center')}
+                {th('name', 'Champion')}
+                {th('tier', 'Tier')}
+                {th('winRate', 'Win rate')}
+                {th('pickRate', 'Pick rate')}
+                {!aram && th('banRate', 'Ban rate')}
+                {th('games', 'Games', 'text-right')}
               </tr>
             </thead>
             <tbody>
@@ -147,8 +152,15 @@ export function TierList() {
                 return (
                   <tr
                     key={`${entry.championId}:${entry.role}`}
-                    className="cursor-pointer border-b border-line/50 transition last:border-0 hover:bg-panel-2"
+                    className="cursor-pointer border-b border-line/50 transition last:border-0 hover:bg-panel-2 focus-visible:bg-panel-2"
                     onClick={() => navigate(`/champion/${entry.championId}/${entry.role}`)}
+                    // reachable with Tab, opened with Enter
+                    tabIndex={0}
+                    role="link"
+                    aria-label={`${champion?.name ?? 'Champion'}, ${entry.role}`}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && event.target === event.currentTarget) navigate(`/champion/${entry.championId}/${entry.role}`)
+                    }}
                   >
                     <td className="px-3 py-2 text-center font-semibold text-muted">
                       {sort.key === 'rank' && (role !== 'ALL' || aram) ? entry.rank : i + 1}

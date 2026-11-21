@@ -9,7 +9,8 @@ import {
   type AmFile,
   type AugmentList,
   type CherryAugment,
-  mayhemPool
+  mayhemPool,
+  mayhemPools
 } from '@shared/mayhem'
 
 const CDRAGON = 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global'
@@ -25,8 +26,8 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 /**
- * ARAM: Mayhem augment data. Riot blocks Mayhem matches in the public API and asks developers not to
- * publish augment win rates, so this only uses open data: the client augment list from CommunityDragon
+ * ARAM: Mayhem augment data. Mayhem matches are private in the public API, and Riot's policy forbids
+ * showing win rates of augments ("Products cannot display win rates for Augments"), so this only uses open data: the client augment list from CommunityDragon
  * and the CC BY 4.0 pick-rate / combo dataset of arammayhem.com.
  */
 export class MayhemService {
@@ -69,7 +70,16 @@ export class MayhemService {
         fetchJson<AmFile<AmComboRow>>(`${ARAM_MAYHEM}/combos.json`).catch(() => null),
         fetchJson<AugmentList[]>(`${CDRAGON}/default/v1/augment-lists.json`).catch(() => null)
       ])
-      const data = buildMayhemData(english, localized ?? english, augments, combos, Date.now(), mayhemPool(augmentLists))
+      // KIWI plus the pools of single map skins (KIWI_JADE), so their extra augments are known too
+      const data = buildMayhemData(
+        english,
+        localized ?? english,
+        augments,
+        combos,
+        Date.now(),
+        mayhemPool(augmentLists),
+        augmentLists ? mayhemPools(augmentLists) : undefined
+      )
       const count = Object.keys(data.augments).length
       // A source that is down or half updated can give a list without augments. That is a failed
       // download: it must not replace a good saved copy (the card recognition matches titles against it)
@@ -81,7 +91,8 @@ export class MayhemService {
       this.retryAt = 0
       await mkdir(dirname(this.cacheFile), { recursive: true })
       await writeFile(this.cacheFile, JSON.stringify({ language: this.language, data }))
-      this.log(`Mayhem data: ${count} augments${augments ? '' : ' (no pick rates)'}`)
+      const mapPools = Object.keys(mayhemPools(augmentLists)).filter((name) => name !== 'KIWI')
+      this.log(`Mayhem data: ${count} augments${augments ? '' : ' (no pick rates)'}${mapPools.length ? `, map pools: ${mapPools.join(', ')}` : ''}`)
       return data
     } catch (err) {
       // offline or a bad answer: fall back to the last saved copy, however old it is, and try again later
@@ -124,7 +135,8 @@ export function isMayhemGame(game: { queueId: number; gameMode: string }): boole
 /** Aggregates the player's own Mayhem games (augments are the playerAugmentN fields). */
 export function personalMayhemStats(history: LcuHistory, puuid: string | null): MayhemPersonal {
   const result: MayhemPersonal = { games: 0, wins: 0, augments: [], champions: [], recent: [] }
-  const augmentStats = new Map<number, { games: number; wins: number }>()
+  // picks only: Riot's policy forbids showing win rates of augments ("Products cannot display win rates for Augments")
+  const augmentStats = new Map<number, number>()
   const championStats = new Map<number, { games: number; wins: number }>()
 
   for (const game of history.games?.games ?? []) {
@@ -146,12 +158,7 @@ export function personalMayhemStats(history: LcuHistory, puuid: string | null): 
 
     result.games++
     if (win) result.wins++
-    for (const id of augments) {
-      const augmentRecord = augmentStats.get(id) ?? { games: 0, wins: 0 }
-      augmentRecord.games++
-      if (win) augmentRecord.wins++
-      augmentStats.set(id, augmentRecord)
-    }
+    for (const id of augments) augmentStats.set(id, (augmentStats.get(id) ?? 0) + 1)
     const championRecord = championStats.get(me.championId) ?? { games: 0, wins: 0 }
     championRecord.games++
     if (win) championRecord.wins++
@@ -159,7 +166,7 @@ export function personalMayhemStats(history: LcuHistory, puuid: string | null): 
     result.recent.push({ gameId: game.gameId, championId: me.championId, win, augments, createdAt: game.gameCreation })
   }
 
-  result.augments = [...augmentStats.entries()].map(([id, record]) => ({ id, ...record })).sort((a, b) => b.games - a.games)
+  result.augments = [...augmentStats.entries()].map(([id, games]) => ({ id, games })).sort((a, b) => b.games - a.games)
   result.champions = [...championStats.entries()]
     .map(([championId, record]) => ({ championId, ...record }))
     .sort((a, b) => b.games - a.games)

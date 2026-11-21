@@ -7,10 +7,10 @@ import { uiScale } from '@shared/overlayGeometry'
 export interface FrameSpec {
   rect: { x: number; y: number; width: number; height: number }
   tier: Tier
-  best: boolean
-  /** builds a combo with an augment we already own (drawn mint/gold with extra glow) */
-  combo?: boolean
 }
+
+/** Frames the shader can draw at once: four cards with the Maestro Headliner, otherwise three. */
+const SLOTS = 4
 
 /**
  * Per tier: two base colours, `psy` (0 = only the tier colours, 1 = full rainbow flow), border
@@ -24,8 +24,6 @@ const STYLE: Record<Tier, { a: string; b: string; psy: number; wobble: number; g
   C: { a: '#b4c2d1', b: '#8da0b3', psy: 0.05, wobble: 1.2, glow: 0.25 },
   D: { a: '#c0896b', b: '#8a3f2c', psy: 0, wobble: 0.8, glow: 0.2 }
 }
-
-const COMBO_STYLE = { a: '#5dffb0', b: '#ffd36b', psy: 0.9, wobble: 5, glow: 1.1 }
 
 const rgb = (hex: string): [number, number, number] => {
   const value = parseInt(hex.slice(1), 16)
@@ -43,10 +41,10 @@ uniform vec2 u_res;
 uniform float u_time;
 uniform float u_scale;
 uniform float u_ui;      // card size relative to 1080p (card width / 320 CSS px)
-uniform vec4 u_rect[3];
-uniform vec3 u_a[3];
-uniform vec3 u_b[3];
-uniform vec4 u_p[3];
+uniform vec4 u_rect[4];
+uniform vec3 u_a[4];
+uniform vec3 u_b[4];
+uniform vec4 u_p[4];
 
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise(vec2 p){
@@ -66,7 +64,7 @@ void main(){
   float k = max(u_ui, 0.01);
   vec3 col = vec3(0.0);
   float alpha = 0.0;
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 4; i++) {
     vec4 r = u_rect[i];
     vec4 prm = u_p[i];
     if (prm.w < 0.5) continue;   // w = 0 means this slot has no card
@@ -155,17 +153,17 @@ export function FrameCanvas({ frames, animation }: { frames: FrameSpec[]; animat
     window.addEventListener('resize', resize)
 
     const draw = (time: number) => {
-      // the shader has three fixed slots; unused ones keep w = 0 in u_p and are skipped
-      const rects = new Float32Array(12)
-      const colorsA = new Float32Array(9)
-      const colorsB = new Float32Array(9)
-      const params = new Float32Array(12)
-      framesRef.current.slice(0, 3).forEach((frame, i) => {
-        const style = frame.combo ? COMBO_STYLE : STYLE[frame.tier]
+      // the shader has SLOTS fixed slots; unused ones keep w = 0 in u_p and are skipped
+      const rects = new Float32Array(SLOTS * 4)
+      const colorsA = new Float32Array(SLOTS * 3)
+      const colorsB = new Float32Array(SLOTS * 3)
+      const params = new Float32Array(SLOTS * 4)
+      framesRef.current.slice(0, SLOTS).forEach((frame, i) => {
+        const style = STYLE[frame.tier]
         rects.set([frame.rect.x, frame.rect.y, frame.rect.width, frame.rect.height], i * 4)
         colorsA.set(rgb(style.a), i * 3)
         colorsB.set(rgb(style.b), i * 3)
-        params.set([style.psy, style.wobble, style.glow + (frame.best || frame.combo ? 0.35 : 0), 1], i * 4)
+        params.set([style.psy, style.wobble, style.glow, 1], i * 4)
       })
       gl.uniform2f(uRes, canvas.width, canvas.height)
       gl.uniform1f(uTime, time)

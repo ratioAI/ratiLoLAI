@@ -16,6 +16,8 @@ export function fetchAllGameData(): Promise<LiveAnswer> {
       let raw = ''
       res.setEncoding('utf8')
       res.on('data', (chunk) => (raw += chunk))
+      // the game closed in the middle of an answer: without a listener this is an uncaught error
+      res.on('error', (error: NodeJS.ErrnoException) => resolve({ ok: false, reason: error.code ?? error.message }))
       res.on('end', () => {
         if (res.statusCode !== 200) return resolve({ ok: false, reason: `HTTP ${res.statusCode}` })
         try {
@@ -35,22 +37,8 @@ export function fetchAllGameData(): Promise<LiveAnswer> {
   })
 }
 
-/**
- * Every player's Riot ID by champion (the Data Dragon key in lower case, from rawChampionName
- * "game_character_displayname_Ahri"), from a raw answer. A champion is in a game only once.
- */
-export function riotIdsByChampion(raw: unknown): Map<string, string> {
-  const byChampion = new Map<string, string>()
-  for (const player of (raw as RawLive | null)?.allPlayers ?? []) {
-    const champion = player.rawChampionName?.replace(/^game_character_displayname_/, '').toLowerCase()
-    const riotId = player.riotId ?? player.summonerName
-    if (champion && riotId) byChampion.set(champion, riotId)
-  }
-  return byChampion
-}
-
 interface RawLive {
-  activePlayer?: { riotId?: string; summonerName?: string }
+  activePlayer?: { riotId?: string; summonerName?: string; championStats?: { currentHealth?: number; maxHealth?: number } }
   allPlayers?: {
     riotId?: string
     summonerName?: string
@@ -122,6 +110,8 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
   const players: LivePlayer[] = data.allPlayers.map((player) => ({
     riotId: player.riotId ?? player.summonerName ?? '',
     championName: player.championName,
+    // "game_character_displayname_Ahri" → "Ahri", the same in every client language
+    championKey: player.rawChampionName?.replace(/^game_character_displayname_/, '') || null,
     team: player.team,
     level: player.level,
     kills: player.scores.kills,
@@ -173,6 +163,12 @@ export function parseLiveData(raw: unknown): LiveGameState | null {
         (player) => (player.riotId ?? player.summonerName) === (data.activePlayer?.riotId ?? data.activePlayer?.summonerName)
       )
       return activePlayer?.rawChampionName?.replace(/^game_character_displayname_/, '') ?? null
+    })(),
+    activeHealth: (() => {
+      const stats = data.activePlayer?.championStats
+      const max = Number(stats?.maxHealth)
+      const current = Number(stats?.currentHealth)
+      return max > 0 && Number.isFinite(current) ? Math.max(0, Math.min(1, current / max)) : null
     })(),
     players,
     events,

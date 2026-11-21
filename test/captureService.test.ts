@@ -5,6 +5,10 @@ import type { CaptureCommand, CaptureReply } from '../src/shared/capture'
 const page = vi.hoisted(() => ({
   streams: new Set<number>(),
   opens: 0,
+  /** hidden capture windows created so far */
+  windows: 0,
+  /** the renderer of the newest window dies */
+  crash: null as (() => void) | null,
   reply: null as ((id: number, reply: CaptureReply) => void) | null
 }))
 
@@ -27,7 +31,17 @@ vi.mock('electron', () => {
   }
   class BrowserWindow {
     webContents = {
-      send: (_channel: string, id: number, command: CaptureCommand) => queueMicrotask(() => page.reply?.(id, answer(command)))
+      send: (_channel: string, id: number, command: CaptureCommand) => queueMicrotask(() => page.reply?.(id, answer(command))),
+      on: (event: string, listener: (event: unknown, details: { reason: string }) => void) => {
+        if (event !== 'render-process-gone') return
+        page.crash = () => {
+          page.streams.clear()
+          listener({}, { reason: 'crashed' })
+        }
+      }
+    }
+    constructor() {
+      page.windows++
     }
     on(): void {}
     isDestroyed(): boolean {
@@ -71,5 +85,18 @@ describe('CaptureService', () => {
     expect(await capture.grab(1, whole)).toHaveLength(1)
     expect(page.opens).toBe(2)
     expect(logs).toContain('capture: the capture page has no streams any more – opening them again')
+  })
+
+  it('starts a new capture page and opens the streams again when its renderer crashed', async () => {
+    const logs: string[] = []
+    const capture = new CaptureService('preload.js', 'renderer', (line) => logs.push(line))
+    capture.demand('augments', { displays: [1], fps: 2 })
+    expect(await capture.grab(1, whole)).toHaveLength(1)
+    const before = page.windows
+    page.crash!()
+    // without the restart every grab from here on timed out until the app was restarted
+    expect(await capture.grab(1, whole)).toHaveLength(1)
+    expect(page.windows).toBe(before + 1)
+    expect(logs.join(' | ')).toContain('the capture page crashed (crashed)')
   })
 })

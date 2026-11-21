@@ -172,6 +172,23 @@ describe('Exporter', () => {
     expect(ctx.encodes).toHaveLength(2)
   })
 
+  it('runs one export at a time when a game starts and is over again at once (a dodge)', async () => {
+    const ctx = setup({ wait: true } as never)
+    ctx.exporter.start({ clipId: ctx.clip.id, project: project(ctx.clip.id), title: '', images: {} })
+    await encoding(ctx)
+    // the interrupted run has not ended yet when the game is already over
+    ctx.state.inGame = true
+    ctx.exporter.onGameStart()
+    ctx.state.inGame = false
+    ctx.exporter.onGameEnd()
+    // it stays "paused" until the interrupted run is gone, then starts again by itself
+    for (let i = 0; i < 600 && ctx.exporter.status()?.state !== 'done'; i++) await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(ctx.exporter.status()?.state).toBe('done')
+    // the first run was stopped, the second one made the file: one export in the library, not two
+    expect(ctx.encodes).toHaveLength(2)
+    expect(ctx.store.list().filter((clip) => clip.kind === 'export')).toHaveLength(1)
+  })
+
   it('can be cancelled, refuses a second export and reports failures', async () => {
     const ctx = setup({ wait: true } as never)
     ctx.exporter.start({ clipId: ctx.clip.id, project: project(ctx.clip.id), title: '', images: {} })

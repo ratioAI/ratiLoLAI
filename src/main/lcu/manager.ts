@@ -16,10 +16,11 @@ import type {
 import { QUEUE_IDS, statsModeOf } from '@shared/types'
 import { acceptDelayMs } from './acceptDelay'
 import { buildSummary, type CurvePoint, type GameSummary, type RawGame, type RawTimeline } from '@shared/summary'
+import { readEffort, type EffortSignals } from '@shared/will'
 import { modeResults, personalMayhemStats, type LcuHistory } from '../mayhem'
 import { mergeResults, type GameResults } from '../records'
 import { encounterTargets, toEncounter, type EncounterStats } from '@shared/encounters'
-import { fetchAllGameData, parseLiveData, parseLiveEvents, riotIdsByChampion } from '../live/liveClient'
+import { fetchAllGameData, parseLiveData, parseLiveEvents } from '../live/liveClient'
 import type { LiveEvent } from '@shared/liveEvents'
 import {
   buildItemSet,
@@ -70,6 +71,20 @@ export interface LcuManagerDeps {
 const POLL_MS = 3000
 const LIVE_POLL_MS = 2000
 
+/**
+ * The map skin mutator ("MapSkin_Map12_Bloom", "MapSkin_HA_Bilgewater", …) named anywhere in a
+ * gameflow session, null when there is none.
+ */
+export function findMapSkin(session: unknown): string | null {
+  let text: string
+  try {
+    text = JSON.stringify(session ?? null)
+  } catch {
+    return null
+  }
+  return /MapSkin_[A-Za-z0-9_]+/.exec(text)?.[0] ?? null
+}
+
 interface PerkPage {
   id: number
   name: string
@@ -98,6 +113,7 @@ export class LcuManager {
   private queue: { id: number | null; gameMode: string | null } = { id: null, gameMode: null }
   private importTimer: NodeJS.Timeout | null = null
   private gameQueueId: number | null = null
+  private gameMapSkin: string | null = null
   /** ARAM/Mayhem have no lock-in, so we import once the champion has been stable for this long. */
   private static readonly ARAM_IMPORT_DELAY_MS = 1500
   private pollTimer: NodeJS.Timeout | null = null
@@ -303,6 +319,37 @@ export class LcuManager {
     }
   }
 
+  /** games the client couldn't give us the will-to-win signals for in this session (too old, other account) */
+  private effortMissing = new Set<number>()
+
+  /**
+   * The will-to-win signals of a game saved before 1.3.3, read from the client's match history and
+   * timeline. Null when the client isn't connected or doesn't have the game (asked once per session).
+   */
+  async effortOf(summary: GameSummary): Promise<EffortSignals | null> {
+    const client = this.client
+    if (!client || this.effortMissing.has(summary.gameId)) return null
+    const game = await client.get<RawGame>(`/lol-match-history/v1/games/${summary.gameId}`).catch(() => null)
+    const timeline = game?.participants?.length
+      ? await client.get<RawTimeline>(`/lol-match-history/v1/game-timelines/${summary.gameId}`).catch(() => null)
+      : null
+    // same participantId → puuid mapping as buildSummary
+    const puuidOf = new Map(
+      (game?.participants ?? []).map((participant) => [
+        participant.participantId,
+        game?.participantIdentities?.find((identity) => identity.participantId === participant.participantId)?.player?.puuid ??
+          String(participant.participantId)
+      ])
+    )
+    const allies = new Set(summary.players.filter((player) => player.ally).map((player) => player.puuid))
+    const myTeam = game?.participants.find((participant) => allies.has(puuidOf.get(participant.participantId) ?? ''))?.teamId
+    if (!game || !myTeam) {
+      this.effortMissing.add(summary.gameId)
+      return null
+    }
+    return readEffort(game, timeline, myTeam, puuidOf)
+  }
+
   private premades: string[] = []
   private premadePuuids = new Set<string>()
   private loadingState: LoadingState | null = null
@@ -356,16 +403,26 @@ export class LcuManager {
     const myPuuid = this.status.summoner?.puuid
     const myTeam = (gameData.teamOne ?? []).some((player) => player.puuid === myPuuid) ? (gameData.teamOne ?? []) : (gameData.teamTwo ?? [])
     const everyone = [...(gameData.teamOne ?? []), ...(gameData.teamTwo ?? [])].filter((player) => player.puuid)
-    const players: LoadingPlayer[] = everyone.map((player) => ({
-      puuid: player.puuid!,
-      riotId: player.gameName ? `${player.gameName}#${player.tagLine ?? ''}` : (player.summonerName ?? ''),
-      championId: player.championId ?? 0,
-      ally: myTeam.includes(player),
-      me: player.puuid === myPuuid,
-      premade: this.premadePuuids.has(player.puuid!),
-      record: null,
-      loading: true
-    }))
+    const players: LoadingPlayer[] = everyone.map((player) => {
+      const riotId = player.gameName ? `${player.gameName}#${player.tagLine ?? ''}` : (player.summonerName ?? '')
+      const me = player.puuid === myPuuid
+      const premade = this.premadePuuids.has(player.puuid!)
+      // A stranger the game session doesn't name is hidden by the game (streamer mode, "Hide My Name").
+      // Riot does not allow identifying or analysing hidden players: no name lookup, no stats, no badge
+      const hidden = !riotId && !me && !premade
+      return {
+        puuid: player.puuid!,
+        riotId,
+        championId: player.championId ?? 0,
+        ally: myTeam.includes(player),
+        me,
+        premade,
+        record: null,
+        loading: !hidden,
+        hidden
+      }
+    })
+    const visible = players.filter((player) => !player.hidden)
     this.loadingState = { mode, players }
     this.deps.emit.loading(this.loadingState)
 
@@ -376,17 +433,18 @@ export class LcuManager {
     const local =
       (await this.deps.records
         ?.local(
-          players.map((player) => player.puuid),
+          visible.map((player) => player.puuid),
           mode
         )
         .catch(() => null)) ?? new Map()
     // Nemesis & co: strangers only, never you or the people you queued with
-    const strangers = encounterTargets(players)
+    const strangers = encounterTargets(visible)
     const met =
       (await this.deps.encounters?.(myPuuid ?? null, strangers, gameData.gameId ?? null).catch(() => null)) ??
       new Map<string, EncounterStats>()
     const fromClient = new Map<string, GameResults>()
     const update = (player: LoadingPlayer, ...extra: (GameResults | null)[]): void => {
+      if (player.hidden) return
       const record = mergeResults(local.get(player.puuid), fromClient.get(player.puuid), ...extra)
       player.record = record.games ? record : null
       player.encounter = strangers.includes(player.puuid) ? toEncounter(met.get(player.puuid), player.riotId) : null
@@ -398,14 +456,11 @@ export class LcuManager {
     publish()
 
     // names and client history, three at a time so we don't hammer the client while the game loads
-    const pending = [...players]
+    const pending = [...visible]
     const worker = async (): Promise<void> => {
       for (let player = pending.shift(); player; player = pending.shift()) {
-        if (!player.riotId) {
-          // an empty answer must not wipe a name the game filled in meanwhile (fillLoadingNames)
-          const riotId = await this.riotIdOf(player.puuid)
-          if (riotId) player.riotId = riotId
-        }
+        // only you and the people you queued with get here without a name (their names you see anyway)
+        if (!player.riotId) player.riotId = await this.riotIdOf(player.puuid)
         const history = await client
           .get<LcuHistory>(`/lol-match-history/v1/products/lol/${player.puuid}/matches?begIndex=0&endIndex=99`)
           .catch(() => null)
@@ -427,34 +482,13 @@ export class LcuManager {
     }
     this.deps.log?.(
       `loading screen records: ${players
-        .map(
-          (player) =>
-            `${player.riotId.split('#')[0] || '?'} ${player.record ? `${player.record.wins}/${player.record.games}` : '–'} (saved ${local.get(player.puuid)?.size ?? 0}, client ${fromClient.get(player.puuid)?.size ?? '✗'})`
+        .map((player) =>
+          player.hidden
+            ? 'hidden player (no lookups)'
+            : `${player.riotId.split('#')[0] || '?'} ${player.record ? `${player.record.wins}/${player.record.games}` : '–'} (saved ${local.get(player.puuid)?.size ?? 0}, client ${fromClient.get(player.puuid)?.size ?? '✗'})`
         )
         .join(', ')}`
     )
-  }
-
-  /**
-   * Names the client left out: for some players the game session and the summoner lookup give no
-   * name (3 of 10 in a game on 2026-11-20, shown as "—" on the loading screen), while the game
-   * itself names everyone. Matched by champion, which is in a game only once.
-   */
-  private async fillLoadingNames(raw: unknown): Promise<void> {
-    const state = this.loadingState
-    if (!state?.players.some((player) => !player.riotId)) return
-    const byChampion = riotIdsByChampion(raw)
-    if (!byChampion.size) return
-    const champions = (await this.deps.staticData().catch(() => null))?.champions
-    if (!champions || this.loadingState !== state) return
-    const filled = state.players.filter((player) => {
-      const riotId = !player.riotId && byChampion.get(champions[player.championId]?.id.toLowerCase() ?? '')
-      if (riotId) player.riotId = riotId
-      return !!riotId
-    })
-    if (!filled.length) return
-    this.deps.log?.(`loading screen: ${filled.length} name${filled.length === 1 ? '' : 's'} the client left out taken from the game`)
-    this.deps.emit.loading({ ...state, players: [...state.players] })
   }
 
   /** below this many games a player's record is filled up from the Riot API */
@@ -476,7 +510,9 @@ export class LcuManager {
     if (['PreEndOfGame', 'WaitingForStats', 'EndOfGame'].includes(phase) && this.currentGameId) {
       const gameId = this.currentGameId
       this.currentGameId = null
-      void this.fetchSummary(gameId)
+      this.fetchSummary(gameId).catch((error) =>
+        this.deps.log?.(`game summary ${gameId} failed – ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`)
+      )
     }
     if (phase === 'InProgress') {
       // remember queue and game id of the running game, the champ select queue is cleared when it ends
@@ -485,11 +521,18 @@ export class LcuManager {
         .then((session) => {
           this.gameQueueId = session?.gameData?.queue?.id ?? null
           this.currentGameId = session?.gameData?.gameId ?? null
+          // ARAM's map 12 comes in skins (Koeshin's Crossing, Butcher's Bridge, …), one with its own
+          // augment pool. Where the session keeps the skin isn't documented, so look for the mutator
+          // anywhere in it and keep the whole answer (logs/live-session.json) to check
+          this.gameMapSkin = findMapSkin(session)
+          this.deps.dump?.('session', session)
+          this.deps.log?.(`game session: map skin ${this.gameMapSkin ?? 'not in the session'}`)
         })
         .catch(() => undefined)
       this.startLivePolling()
     } else {
       this.gameQueueId = null
+      this.gameMapSkin = null
       this.stopLivePolling()
     }
   }
@@ -497,6 +540,11 @@ export class LcuManager {
   /** Queue id of the game in progress (2400 = ARAM: Mayhem), null when unknown. */
   getGameQueueId(): number | null {
     return this.gameQueueId
+  }
+
+  /** Map skin mutator of the game in progress ("MapSkin_Map12_Bloom"), null when the session names none. */
+  getGameMapSkin(): string | null {
+    return this.gameMapSkin
   }
 
   private onChampSelect(session: RawSession): void {
@@ -556,7 +604,18 @@ export class LcuManager {
     const dumped = new Set<string>()
     let waitingLogged = false
     this.liveMisses = 0
+    // One poll must never end the polling: an answer in a shape nobody expected, or an error in
+    // one of the listeners (overlay, recorder, minimap), used to skip the next timer – overlay,
+    // timers and automatic clips were then dead for the rest of the game without a line in the log.
     const poll = async (): Promise<void> => {
+      try {
+        await step()
+      } catch (error) {
+        this.deps.log?.(`live data: a poll failed – ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`)
+      }
+      if (generation === this.liveGeneration) this.liveTimer = setTimeout(poll, LIVE_POLL_MS)
+    }
+    const step = async (): Promise<void> => {
       const answer = await fetchAllGameData()
       if (generation !== this.liveGeneration) return // game ended while the request was running
       const state = answer.ok ? parseLiveData(answer.data) : null
@@ -566,7 +625,6 @@ export class LcuManager {
         if (++this.liveMisses === 1)
           this.deps.log?.(`live data: no answer (${reason}) – the gameflow phase is still InProgress, keeping the last state`)
         this.deps.liveEvents?.([], null)
-        this.liveTimer = setTimeout(poll, LIVE_POLL_MS)
         return
       }
       if (state) {
@@ -584,7 +642,6 @@ export class LcuManager {
         if (!state.started) dump('loading')
         if (state.gameTime >= 60) dump('running')
         if (state.result) dump('end')
-        if (answer.ok) void this.fillLoadingNames(answer.data)
         state.premades = this.premades
       } else if (!waitingLogged) {
         waitingLogged = true
@@ -593,7 +650,6 @@ export class LcuManager {
       this.liveState = state
       this.deps.emit.live(state)
       this.deps.liveEvents?.(state && answer.ok ? parseLiveEvents(answer.data) : [], state)
-      this.liveTimer = setTimeout(poll, LIVE_POLL_MS)
     }
     this.liveTimer = setTimeout(poll, 0)
   }

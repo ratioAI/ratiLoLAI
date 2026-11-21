@@ -8,6 +8,8 @@ export interface CherryAugment {
   nameTRA: string
   augmentSmallIconPath: string
   rarity: string // kSilver | kGold | kPrismatic
+  /** kDamage, kResilience, kSpeed, kAlly, kUtility, kGeneral, kClassicish, … */
+  augmentDisplayTags?: string[]
 }
 
 /** arammayhem.com open data (CC BY 4.0) */
@@ -28,15 +30,43 @@ export interface AmComboRow {
   url: string
 }
 
-/** augment-lists.json. The "KIWI" list is the ARAM: Mayhem augment pool. */
+/**
+ * augment-lists.json. The "KIWI" list is the ARAM: Mayhem augment pool. Since November 2026 there are
+ * more "KIWI_…" lists: map skins with their own pool. "KIWI_JADE" belongs to MapSkin_Map12_Jade
+ * (game-mode-mutators.json) and holds 44 augments the normal pool doesn't have, among them the
+ * "classic" upgrades like Upgrade: Deathfire Grasp or Doran's Biggest Fan.
+ */
 export interface AugmentList {
   modeName: string
   augmentList: string[]
 }
 
+/** The normal Mayhem pool. */
+export const MAIN_POOL = 'KIWI'
+
+const nameIdOf = (path: string): string => path.split('/').pop()!.toLowerCase()
+
+/** Every Mayhem pool (KIWI and the map pools), as augment name ids in lower case. */
+export function mayhemPools(lists: AugmentList[] | null | undefined): Record<string, Set<string>> {
+  const pools: Record<string, Set<string>> = {}
+  for (const list of lists ?? []) {
+    if (list.modeName === MAIN_POOL || list.modeName.startsWith(MAIN_POOL + '_'))
+      pools[list.modeName] = new Set(list.augmentList.map(nameIdOf))
+  }
+  return pools
+}
+
+/**
+ * The augment can show up on every map. False for augments only a map skin's pool has (KIWI_JADE);
+ * true when the pools aren't known (older data, augment-lists.json missing).
+ */
+export function inMainPool(augment: Pick<MayhemAugment, 'pools'>): boolean {
+  return !augment.pools?.length || augment.pools.includes(MAIN_POOL)
+}
+
+/** All augments that can show up in some Mayhem game, whatever the map. */
 export function mayhemPool(lists: AugmentList[] | null | undefined): Set<string> {
-  const kiwi = lists?.find((list) => list.modeName === 'KIWI')
-  return new Set((kiwi?.augmentList ?? []).map((path) => path.split('/').pop()!.toLowerCase()))
+  return new Set(Object.values(mayhemPools(lists)).flatMap((pool) => [...pool]))
 }
 
 export interface AmFile<T> {
@@ -106,16 +136,24 @@ export function buildMayhemData(
   augments: AmFile<AmAugmentRow> | null,
   combos: AmFile<AmComboRow> | null,
   fetchedAt = Date.now(),
-  pool?: Set<string>
+  pool?: Set<string>,
+  /** the single pools (see mayhemPools), so every augment knows on which maps it can show up */
+  pools?: Record<string, Set<string>>
 ): MayhemData {
   const byName = indexCherry(cherryEn, pool)
   const localName = new Map(cherryLocal.map((augment) => [augment.id, augment.nameTRA]))
   const result: Record<number, MayhemAugment> = {}
   const bySlug = new Map<string, number>()
+  const poolsOf = (cherry: CherryAugment): string[] | undefined => {
+    if (!pools) return undefined
+    const nameId = cherry.augmentNameId.toLowerCase()
+    return Object.keys(pools).filter((name) => pools[name].has(nameId))
+  }
 
   const add = (cherry: CherryAugment, slug: string, row?: AmAugmentRow): number => {
     const existing = result[cherry.id]
     if (!existing || row) {
+      const inPools = poolsOf(cherry)
       result[cherry.id] = {
         id: cherry.id,
         slug,
@@ -126,7 +164,9 @@ export function buildMayhemData(
         pickRate: row?.pickRate ?? existing?.pickRate ?? null,
         pickRateRank: row?.pickRateRank ?? existing?.pickRateRank ?? null,
         pickRateChange: row?.pickRateChange ?? existing?.pickRateChange ?? null,
-        url: row?.url ?? existing?.url ?? null
+        url: row?.url ?? existing?.url ?? null,
+        tags: (cherry.augmentDisplayTags ?? []).map((tag) => tag.replace(/^k/, '').toLowerCase()),
+        ...(inPools?.length ? { pools: inPools } : {})
       }
     }
     bySlug.set(slug, cherry.id)
@@ -215,16 +255,6 @@ export interface AugmentTier {
   source: 'combo' | 'rating'
   combo?: ComboType
   fits: boolean
-  /** set when this augment forms a combo with augments the player already has */
-  synergy?: Synergy
-}
-
-export interface Synergy {
-  type: ComboType
-  /** owned augments that are part of the combo */
-  with: number[]
-  /** augments still missing after taking this one (empty means the combo is complete) */
-  missing: number[]
 }
 
 export function championProfile(tags: string[]): Set<AugmentFit> {
@@ -244,7 +274,7 @@ export function championProfile(tags: string[]): Set<AugmentFit> {
 const shift = (tier: Tier, by: number): Tier => TIERS[Math.min(TIERS.length - 1, Math.max(1, TIERS.indexOf(tier) + by))]
 
 /**
- * Tier of every Mayhem augment for one champion. Riot asks not to publish Mayhem win rates, so this
+ * Tier of every Mayhem augment for one champion. Riot's policy forbids showing augment win rates, so this
  * combines curated champion combos, pick rate within the rarity and whether the augment fits the
  * champion's archetype. S+ is only given to curated top combos.
  */
@@ -274,55 +304,6 @@ export function augmentTiersForChampion(data: MayhemData, statics: StaticData, c
       if (!fits) tier = shift(tier, 2)
       else if (!fitTags.includes('any') && TIERS.indexOf(tier) >= 2) tier = shift(tier, -1)
       return { augment, tier, note, source: 'rating' as const, fits }
-    })
-    .sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || (b.augment.pickRate ?? 0) - (a.augment.pickRate ?? 0))
-}
-
-// ---------------------------------------------------------------------------
-// Combos with augments the player already owns
-// ---------------------------------------------------------------------------
-
-/** Best multi-augment combo that `augmentId` forms together with the owned augments. */
-export function synergyFor(combos: MayhemCombo[], owned: number[], augmentId: number): Synergy | null {
-  if (owned.includes(augmentId)) return null
-  let best: Synergy | null = null
-  // lower is better: fewer missing pieces first, then combo type, then more owned pieces
-  const score = (synergy: Synergy): number => synergy.missing.length * 10 + TYPE_ORDER.indexOf(synergy.type) - synergy.with.length * 0.1
-  for (const combo of combos) {
-    if (combo.augments.length < 2 || !combo.augments.includes(augmentId)) continue
-    const have = combo.augments.filter((id) => owned.includes(id))
-    if (!have.length) continue
-    const missing = combo.augments.filter((id) => id !== augmentId && !owned.includes(id))
-    // multi-augment builds often have no rating, count them as strong
-    const type = [...combo.types].sort((a, b) => TYPE_ORDER.indexOf(a) - TYPE_ORDER.indexOf(b))[0] ?? 'strong'
-    const candidate: Synergy = { type, with: have, missing }
-    // a trap only wins if there is nothing else
-    const better =
-      !best || (best.type === 'trap' && type !== 'trap') || ((best.type === 'trap') === (type === 'trap') && score(candidate) < score(best))
-    if (better) best = candidate
-  }
-  return best
-}
-
-/**
- * Augment tiers for a champion, adjusted for what the player already owns. Completing a combo
- * lifts the augment to at least the combo's tier, being one piece away lifts it one tier, and
- * completing a known trap drops it to D.
- */
-export function augmentTiersWithOwned(data: MayhemData, statics: StaticData, championId: number, owned: number[]): AugmentTier[] {
-  const base = augmentTiersForChampion(data, statics, championId)
-  if (!owned.length) return base
-  const combos = combosForChampion(data, statics, championId)
-  return base
-    .map((entry) => {
-      const synergy = synergyFor(combos, owned, entry.augment.id)
-      if (!synergy) return entry
-      let tier = entry.tier
-      if (synergy.type === 'trap') tier = synergy.missing.length ? tier : 'D'
-      else if (!synergy.missing.length)
-        tier = TIERS.indexOf(COMBO_TIER[synergy.type]) < TIERS.indexOf(tier) ? COMBO_TIER[synergy.type] : tier
-      else if (synergy.missing.length === 1) tier = TIERS[Math.max(0, TIERS.indexOf(tier) - 1)]
-      return { ...entry, tier, synergy }
     })
     .sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || (b.augment.pickRate ?? 0) - (a.augment.pickRate ?? 0))
 }

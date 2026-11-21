@@ -229,5 +229,16 @@ export const AUGMENT_NOTES: Record<number, [string, AugmentFit[]]> = {
   2144: ['Stronger shields on low-health allies', ['sup']],
   2148: ['Spell applies on-hit twice', ['onhit']],
   2157: ['Death’s Dance absorbs more and heals', ['ad']],
+  // patch 26.22 / 26.23 (effects as in the patch notes)
+  3081: ['Flat and percent armor and magic penetration', ['ad', 'ap']],
+  3262: ['Auto-cast slime burst, hits leave a healing blob', ['tank', 'ap']],
+  3263: ['Armor, MR and tenacity, more below 40 % health', ['tank']],
+  3264: ['Magic resist, then more bonus MR – anti-mage', ['tank']],
+  3265: ['Armor, then more bonus armor – anti-AD frontline', ['tank']],
+  // only in the Jade map's pool (KIWI_JADE): upgrades of classic items
+  7001: ["Jade map: classic Zz'Rot Portal upgrade for tanks", ['tank']],
+  7007: ['Jade map: classic Deathfire Grasp upgrade for mages', ['ap']],
+  7009: ['Jade map: classic Innervating Locket upgrade for enchanters', ['sup']],
+  7010: ['Jade map: time-warped Heartsteel – health-stacking tanks', ['tank']],
   12317: ['Turns all your augments Prismatic – late-game gamble', ['any']]
 }

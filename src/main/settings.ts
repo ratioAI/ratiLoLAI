@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
 import type { EditableSettings, Settings } from '@shared/types'
@@ -86,9 +86,18 @@ export class SettingsStore {
   constructor(private readonly file: string) {
     let loaded: Partial<Stored> = {}
     try {
-      loaded = JSON.parse(readFileSync(file, 'utf8')) as Partial<Stored>
-    } catch {
-      // no file yet on first start
+      const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+      if (parsed && typeof parsed === 'object') loaded = parsed as Partial<Stored>
+    } catch (error) {
+      // No file yet on first start. A file that is there but unreadable (cut off by a crash) is kept
+      // as .bad before the defaults overwrite it – it holds the encrypted API key and the webhook.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        try {
+          copyFileSync(file, `${file}.bad`)
+        } catch {
+          // nothing to rescue
+        }
+      }
     }
     this.data = {
       ...DEFAULT_SETTINGS,
@@ -179,6 +188,14 @@ export class SettingsStore {
 
   private save(): void {
     mkdirSync(dirname(this.file), { recursive: true })
-    writeFileSync(this.file, JSON.stringify(this.data, null, 2))
+    // written next to the file and swapped in: a crash in the middle never leaves half a file
+    const temporary = `${this.file}.tmp`
+    writeFileSync(temporary, JSON.stringify(this.data, null, 2))
+    try {
+      renameSync(temporary, this.file)
+    } catch {
+      // the file is held open by something (virus scanner): write it directly, as before
+      writeFileSync(this.file, JSON.stringify(this.data, null, 2))
+    }
   }
 }

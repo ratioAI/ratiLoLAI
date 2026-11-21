@@ -3,6 +3,7 @@
  * their augments) and its timeline (gold per minute, kills). If the client has no timeline we fall
  * back to the curve recorded during the live game.
  */
+import { readEffort, type EffortSignals } from './will'
 
 export interface SummaryPlayer {
   puuid: string
@@ -58,6 +59,8 @@ export interface GameSummary {
   highlights: string[]
   /** seed of the place in the universe where the game was played; missing in games saved before 1.0 */
   cosmos?: number
+  /** what the will-to-win scale is built from (see will.ts); missing in games saved before 1.3.3 */
+  effort?: EffortSignals
 }
 
 // --- raw League client shapes (only the fields we use) ------------------------------
@@ -78,8 +81,9 @@ export interface RawGame {
 export interface RawTimeline {
   frames?: {
     timestamp: number
-    participantFrames?: Record<string, { totalGold?: number }>
-    events?: { type: string; timestamp: number; killerId?: number; victimId?: number }[]
+    participantFrames?: Record<string, { totalGold?: number; position?: { x: number; y: number } }>
+    /** BUILDING_KILL: teamId is the side that lost the building */
+    events?: { type: string; timestamp: number; killerId?: number; victimId?: number; teamId?: number }[]
   }[]
 }
 
@@ -293,6 +297,7 @@ export function buildSummary(
     kills,
     mvp,
     blame,
-    highlights
+    highlights,
+    effort: readEffort(game, timeline, myTeam, new Map(players.map((player) => [player.pid, player.puuid])))
   }
 }

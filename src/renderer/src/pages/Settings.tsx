@@ -26,7 +26,9 @@ import { FFMPEG_BUILD } from '@shared/ffmpegBuild'
 import { PLATFORMS } from '@shared/types'
 import { api, isDemo } from '@/lib/api'
 import { useApp } from '@/lib/store'
-import { PageHeader } from '@/components/Layout'
+import { PageHeader, PageLoading, errorText } from '@/components/Layout'
+import { ConfirmDialog } from '@/components/Modal'
+import { acceleratorOf, validAccelerator } from '@shared/hotkey'
 
 const LANGUAGES = [
   ['en_US', 'English'],
@@ -44,6 +46,8 @@ export function Settings() {
   const [apiKey, setApiKey] = useState('')
   const [keyStatus, setKeyStatus] = useState<{ ok: boolean; message: string } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [removingKey, setRemovingKey] = useState(false)
   const [info, setInfo] = useState<{ version: string; update: UpdateState } | null>(null)
 
   useEffect(() => {
@@ -51,17 +55,35 @@ export function Settings() {
     return api.on('update', (update) => setInfo((current) => (current ? { ...current, update } : current)))
   }, [])
 
-  if (!settings) return null
+  if (!settings)
+    return (
+      <div className="p-8">
+        <PageLoading />
+      </div>
+    )
 
-  const save = async (patch: Partial<EditableSettings>) => setSettings(await api.saveSettings(patch))
+  // a setting that could not be written must not just snap back without a word
+  const save = async (patch: Partial<EditableSettings>) => {
+    try {
+      setSettings(await api.saveSettings(patch))
+      setSaveError(null)
+    } catch (reason) {
+      setSaveError(errorText(reason))
+    }
+  }
   const saveKey = async () => {
     setSaving(true)
     setKeyStatus(null)
-    const result = await api.setApiKey(apiKey)
-    setKeyStatus(result)
-    setSettings(await api.getSettings())
+    try {
+      const result = await api.setApiKey(apiKey)
+      setKeyStatus(result)
+      setSettings(await api.getSettings())
+      if (result.ok) setApiKey('')
+    } catch (reason) {
+      setKeyStatus({ ok: false, message: errorText(reason) })
+    }
     setSaving(false)
-    if (result.ok) setApiKey('')
+    setRemovingKey(false)
   }
   const previewChampion = (): number => {
     if (champSelect?.myChampionId) return champSelect.myChampionId
@@ -72,6 +94,14 @@ export function Settings() {
   return (
     <div className="page-enter mx-auto max-w-3xl p-8">
       <PageHeader title="Settings" />
+      {saveError && (
+        <div className="panel sticky top-3 z-20 mb-4 flex items-center gap-3 px-4 py-3 text-sm text-loss" role="alert">
+          <span className="min-w-0 flex-1">Your last change could not be saved: {saveError}</span>
+          <button className="btn btn-ghost px-2 py-1" onClick={() => setSaveError(null)} aria-label="Dismiss" title="Dismiss">
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       <Group title="Riot API">
         <p className="mb-3 text-sm text-muted">
@@ -86,11 +116,22 @@ export function Settings() {
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
           />
-          <button className="btn btn-primary" disabled={saving || (!apiKey && !settings.hasApiKey)} onClick={saveKey}>
-            {saving ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
-            {apiKey ? 'Save & test' : 'Remove key'}
-          </button>
+          {apiKey || !settings.hasApiKey ? (
+            <button className="btn btn-primary" disabled={saving || !apiKey} onClick={saveKey}>
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
+              Save & test
+            </button>
+          ) : (
+            <button className="btn btn-ghost text-loss" disabled={saving} onClick={() => setRemovingKey(true)}>
+              <KeyRound size={15} /> Remove key
+            </button>
+          )}
         </div>
+        {removingKey && (
+          <ConfirmDialog title="Remove the Riot API key?" confirmLabel="Remove key" onConfirm={saveKey} onCancel={() => setRemovingKey(false)}>
+            The crawler and the profile search stop working until you save a key again.
+          </ConfirmDialog>
+        )}
         {saving && apiKey && (
           <p className="mt-2 text-sm text-muted">Testing the key … a freshly generated key can take Riot a few seconds to activate.</p>
         )}
@@ -194,11 +235,7 @@ export function Settings() {
           </div>
         </Field>
         <Field label="Hotkey: look for the augment cards now">
-          <input
-            className="input w-44 text-center"
-            defaultValue={settings.overlay.hotkey}
-            onBlur={(event) => save({ overlay: { ...settings.overlay, hotkey: event.target.value.trim() } })}
-          />
+          <HotkeyInput value={settings.overlay.hotkey} onChange={(hotkey) => void save({ overlay: { ...settings.overlay, hotkey } })} />
         </Field>
         <div className="pt-3">
           <button className="btn btn-ghost" onClick={() => api.overlayPreview(previewChampion())}>
@@ -421,16 +458,22 @@ function DiscordSettings({
   const [url, setUrl] = useState('')
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null)
   const [busy, setBusy] = useState<'save' | 'test' | null>(null)
+  const [removing, setRemoving] = useState(false)
   const discord = settings.discord
   const set = (patch: Partial<SettingsT['discord']>) => save({ discord: { ...discord, ...patch } })
   const saveUrl = async () => {
     setBusy('save')
     setStatus(null)
-    const result = await api.setDiscordWebhook(url)
-    setStatus(result)
-    if (result.ok) setUrl('')
-    await refresh()
+    try {
+      const result = await api.setDiscordWebhook(url)
+      setStatus(result)
+      if (result.ok) setUrl('')
+      await refresh()
+    } catch (reason) {
+      setStatus({ ok: false, message: errorText(reason) })
+    }
     setBusy(null)
+    setRemoving(false)
   }
   const test = async () => {
     setBusy('test')
@@ -456,15 +499,25 @@ function DiscordSettings({
           value={url}
           onChange={(event) => setUrl(event.target.value)}
         />
-        <button className="btn btn-primary" disabled={!!busy || (!url && !settings.hasDiscordWebhook)} onClick={saveUrl}>
-          {busy === 'save' ? <Loader2 size={15} className="animate-spin" /> : <Webhook size={15} />}
-          {url || !settings.hasDiscordWebhook ? 'Save' : 'Remove'}
-        </button>
+        {url || !settings.hasDiscordWebhook ? (
+          <button className="btn btn-primary" disabled={!!busy || !url} onClick={saveUrl}>
+            {busy === 'save' ? <Loader2 size={15} className="animate-spin" /> : <Webhook size={15} />} Save
+          </button>
+        ) : (
+          <button className="btn btn-ghost text-loss" disabled={!!busy} onClick={() => setRemoving(true)}>
+            <Webhook size={15} /> Remove
+          </button>
+        )}
         <button className="btn btn-ghost" disabled={!!busy || !settings.hasDiscordWebhook} onClick={test}>
           {busy === 'test' ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} Test
         </button>
       </div>
       {status && <p className={`mt-2 text-sm ${status.ok ? 'text-win' : 'text-loss'}`}>{status.message}</p>}
+      {removing && (
+        <ConfirmDialog title="Remove the Discord webhook?" confirmLabel="Remove" onConfirm={saveUrl} onCancel={() => setRemoving(false)}>
+          Nothing is posted to your channel any more until you paste a webhook again.
+        </ConfirmDialog>
+      )}
       <Toggle label="Post finished games automatically" value={discord.enabled} onChange={(value) => set({ enabled: value })} />
       <Field label="Modes">
         <div className="flex flex-wrap justify-end gap-1.5">
@@ -569,8 +622,10 @@ function ClipsSettings({ settings, save }: { settings: SettingsT; save: (patch: 
   const available = setup?.encoders?.available ?? []
   const encoder = pickEncoder(available, recorder.encoder)
   const conflicts = hotkeyConflicts(hotkeys, { augment: settings.overlay.hotkey })
-  const saveHotkeys = () => {
-    if (!conflicts.length && JSON.stringify(hotkeys) !== JSON.stringify(recorder.hotkeys)) void set({ hotkeys })
+  // two features on one key are shown as a conflict and not saved until you change one of them
+  const saveHotkeys = (next: RecorderSettings['hotkeys']) => {
+    if (!hotkeyConflicts(next, { augment: settings.overlay.hotkey }).length && JSON.stringify(next) !== JSON.stringify(recorder.hotkeys))
+      void set({ hotkeys: next })
   }
   // the estimate uses the encoder that will record (HEVC when nothing was tested yet)
   const mbPerMinute = (quality: RecorderSettings['quality']) => estimateMbPerMinute(quality, encoder?.codec ?? 'hevc', recorder.fps, null)
@@ -700,12 +755,13 @@ function ClipsSettings({ settings, save }: { settings: SettingsT; save: (patch: 
         ] as const
       ).map(([name, label]) => (
         <Field key={name} label={label}>
-          <input
-            className="input w-56"
+          <HotkeyInput
             value={hotkeys[name]}
-            placeholder="off"
-            onChange={(event) => setHotkeys({ ...hotkeys, [name]: event.target.value })}
-            onBlur={saveHotkeys}
+            onChange={(hotkey) => {
+              const next = { ...hotkeys, [name]: hotkey }
+              setHotkeys(next)
+              saveHotkeys(next)
+            }}
           />
         </Field>
       ))}
@@ -825,12 +881,73 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
+/**
+ * A hotkey you set by pressing it: click the field, press the combination. Backspace or Delete
+ * turns the hotkey off, Escape leaves it as it was. Typed names used to be saved unchecked, and a
+ * typo meant the key silently did nothing in the game.
+ */
+function HotkeyInput({ value, onChange }: { value: string; onChange: (accelerator: string) => void }) {
+  const [recording, setRecording] = useState(false)
+  const broken = !!value && !validAccelerator(value)
+  // Windows gives a key to one program only. The augment hotkey is registered right away, the clip
+  // hotkeys with the next recording – so this is asked now and whenever the hotkey changes.
+  const [taken, setTaken] = useState(false)
+  useEffect(() => {
+    let current = true
+    const timer = setTimeout(
+      () =>
+        void api
+          .overlayDiagnostics()
+          .then((diagnostics) => current && setTaken(!!value && diagnostics.hotkeysFailed.includes(value)))
+          .catch(() => undefined),
+      300
+    )
+    return () => {
+      current = false
+      clearTimeout(timer)
+    }
+  }, [value])
+  return (
+    <span className="flex flex-col items-end gap-1">
+      <input
+        readOnly
+        className={`input w-56 cursor-pointer text-center ${recording ? 'border-accent' : broken ? 'border-loss' : ''}`}
+        value={recording ? 'Press the keys …' : value}
+        placeholder="off – click to set"
+        title="Click, then press the key combination. Backspace turns the hotkey off, Esc cancels."
+        onFocus={() => setRecording(true)}
+        onBlur={() => setRecording(false)}
+        onKeyDown={(event) => {
+          if (event.key === 'Tab') return
+          event.preventDefault()
+          event.stopPropagation()
+          if (event.key === 'Escape') return event.currentTarget.blur()
+          if (event.key === 'Backspace' || event.key === 'Delete') {
+            if (value) onChange('')
+            return event.currentTarget.blur()
+          }
+          const accelerator = acceleratorOf(event)
+          if (!accelerator) return
+          if (accelerator !== value) onChange(accelerator)
+          event.currentTarget.blur()
+        }}
+      />
+      {recording && <span className="text-[11px] text-muted">Letters and digits need Ctrl or Alt · Backspace = off</span>}
+      {broken && !recording && <span className="text-[11px] text-loss">“{value}” is not a key combination – set it again</span>}
+      {taken && !broken && !recording && (
+        <span className="max-w-56 text-right text-[11px] text-gold">Windows refused this key – another program is using it. Pick another one.</span>
+      )}
+    </span>
+  )
+}
+
 function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (value: boolean) => void }) {
   return (
     <Field label={label}>
       <button
         role="switch"
         aria-checked={value}
+        aria-label={label}
         onClick={() => onChange(!value)}
         className={`relative h-6 w-11 shrink-0 rounded-full transition ${value ? 'bg-accent' : 'bg-panel-2 ring-1 ring-line'}`}
       >

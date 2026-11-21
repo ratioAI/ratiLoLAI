@@ -142,6 +142,8 @@ export class OverlayManager {
   private displayId: number | null = null
   /** hotkeys of other features (the recorder's clip, bookmark and screenshot keys) */
   private extraKeys: string[] = []
+  private hotkeyFailed: string | null = null
+  private extraFailed: string[] = []
   /** offer the frames show right now (display-relative), to restore them after a page crash */
   private shownOffer: AugmentOffer | null = null
   /** bumped by every show/hide of the frames, so a slow show can't undo a later hide */
@@ -195,7 +197,7 @@ export class OverlayManager {
   }
 
   /**
-   * Frames around the offered cards. The window only covers the cards plus crest and glow. Returns
+   * Frames around the offered cards. The window only covers the cards plus their glow. Returns
    * false (and shows nothing) when the offer doesn't fit any current display, instead of guessing.
    */
   showFrames(offer: AugmentOffer): boolean {
@@ -242,7 +244,8 @@ export class OverlayManager {
     this.shownOffer = null
     this.framesToken++
     this.frames.hide()
-    void this.frames.send('framesOffer', null)
+    // only a window that exists needs to hear it: `send` would create one just to tell it "nothing"
+    this.frames.sendIfOpen('framesOffer', null)
   }
 
   /** Minimap timers. `rect` is in fractions of the display; returns the minimap's position inside the window (DIP). */
@@ -330,15 +333,24 @@ export class OverlayManager {
     for (const overlay of [this.frames, this.minimap, this.loading]) overlay.applyCapture()
   }
 
-  setHotkey(accelerator: string): void {
+  /** False when Windows refused the key: not a key combination, or another program holds it. */
+  setHotkey(accelerator: string): boolean {
     if (this.hotkey) globalShortcut.unregister(this.hotkey)
     this.hotkey = null
-    if (!accelerator) return
+    this.hotkeyFailed = null
+    if (!accelerator) return true
     try {
       if (globalShortcut.register(accelerator, () => this.onToggle())) this.hotkey = accelerator
     } catch {
       // invalid accelerator
     }
+    if (!this.hotkey) this.hotkeyFailed = accelerator
+    return !!this.hotkey
+  }
+
+  /** Hotkeys that could not be registered the last time they were asked for (for the settings page). */
+  failedHotkeys(): string[] {
+    return [...(this.hotkeyFailed ? [this.hotkeyFailed] : []), ...this.extraFailed]
   }
 
   /**
@@ -346,16 +358,24 @@ export class OverlayManager {
    * list releases them all (a global shortcut takes the key away from every other program, so they
    * are only held while a recording runs).
    */
-  setExtraHotkeys(bindings: { accelerator: string; run(): void }[]): void {
+  setExtraHotkeys(bindings: { accelerator: string; run(): void }[]): string[] {
     for (const key of this.extraKeys) globalShortcut.unregister(key)
     this.extraKeys = []
+    // releasing them (empty list) keeps what failed last time: the settings page shows it after the game
+    if (!bindings.length) return []
+    const failed: string[] = []
     for (const binding of bindings) {
+      let registered = false
       try {
-        if (globalShortcut.register(binding.accelerator, binding.run)) this.extraKeys.push(binding.accelerator)
+        registered = globalShortcut.register(binding.accelerator, binding.run)
       } catch {
-        // invalid accelerator or taken by another program
+        // invalid accelerator
       }
+      if (registered) this.extraKeys.push(binding.accelerator)
+      else failed.push(binding.accelerator)
     }
+    this.extraFailed = failed
+    return failed
   }
 
   /** Sends an app-wide event to every overlay window that exists. */

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { Crown, History, Info, Loader2, Orbit, Send, Skull, Sparkles, Trophy, X } from 'lucide-react'
 import type { AchievementState, GameListEntry } from '@shared/types'
@@ -6,22 +6,19 @@ import { explainImpact, teamBlame, type GameSummary, type SummaryPlayer } from '
 import { makeTierLookup, summaryAugmentTiers, type TierLookup } from '@shared/mayhem'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
-import { duration } from '@/lib/format'
+import { duration, formatDateTime, timeAgo } from '@/lib/format'
 import { ChampIcon, ItemIcon } from '@/components/icons'
-import { EmptyState, PageHeader } from '@/components/Layout'
+import { EmptyState, LoadFailed, PageHeader, PageLoading, errorText } from '@/components/Layout'
 import { AugmentFrame } from '@/components/AugmentFrame'
 import { useMayhemData } from '@/components/mayhem'
 import { WinCurve } from '@/components/WinCurve'
+import { WillScale } from '@/components/WillScale'
 import { quips, ratioApproved } from '@shared/quips'
 import { cosmicSeed, galaxyOf } from '@shared/universe'
 import { DiscoveryCard } from '@/components/AchievementToast'
 import { GameClips } from './Clips'
 
 const MODE: Record<string, string> = { KIWI: 'ARAM: Mayhem', ARAM: 'ARAM', CLASSIC: "Summoner's Rift" }
-const ago = (timestamp: number): string => {
-  const minutes = Math.round((Date.now() - timestamp) / 60_000)
-  return minutes < 60 ? `${minutes} min ago` : minutes < 1440 ? `${Math.round(minutes / 60)} h ago` : `${Math.round(minutes / 1440)} d ago`
-}
 
 type ResultFilter = 'all' | 'wins' | 'losses'
 const FILTERS: { key: ResultFilter; label: string }[] = [
@@ -35,6 +32,8 @@ const PAGE = 60
 /** The game history: every finished game, newest first, read from the game database. */
 export function Games() {
   const [list, setList] = useState<GameListEntry[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [reload, setReload] = useState(0)
   const [filter, setFilter] = useState<ResultFilter>('all')
   const [shown, setShown] = useState(PAGE)
   // '/games?with=<puuid>' (from a profile): only the games you shared with that player
@@ -42,20 +41,34 @@ export function Games() {
   const withPuuid = params.get('with')
   const [withGames, setWithGames] = useState<{ ids: Set<number>; name: string } | null>(null)
   useEffect(() => {
-    const load = () => void api.listGames().then(setList)
+    const load = () =>
+      void api
+        .listGames()
+        .then((games) => {
+          setList(games)
+          setLoadError(null)
+        })
+        .catch((reason) => setLoadError(errorText(reason)))
     load()
     return api.on('gameSummary', load)
-  }, [])
+  }, [reload])
   useEffect(() => {
     setWithGames(null)
     if (!withPuuid) return
+    let current = true
     // the player's name comes from the newest shared game
-    void api.getPlayerHistory(withPuuid).then(async (history) => {
-      const newest = history?.gameIds[0]
-      const summary = newest !== undefined ? await api.getGame(newest) : null
-      const name = summary?.players.find((player) => player.puuid === withPuuid)?.riotId.split('#')[0] ?? ''
-      setWithGames({ ids: new Set(history?.gameIds ?? []), name })
-    })
+    void api
+      .getPlayerHistory(withPuuid)
+      .then(async (history) => {
+        const newest = history?.gameIds[0]
+        const summary = newest !== undefined ? await api.getGame(newest) : null
+        const name = summary?.players.find((player) => player.puuid === withPuuid)?.riotId.split('#')[0] ?? ''
+        if (current) setWithGames({ ids: new Set(history?.gameIds ?? []), name })
+      })
+      .catch(() => current && setWithGames({ ids: new Set(), name: '' }))
+    return () => {
+      current = false
+    }
   }, [withPuuid])
   const filtered = (list ?? []).filter(
     (game) => (filter === 'all' || game.win === (filter === 'wins')) && (!withPuuid || !!withGames?.ids.has(game.gameId))
@@ -99,9 +112,29 @@ export function Games() {
           <Orbit size={15} /> Star map
         </Link>
       </PageHeader>
-      {!list?.length ? (
+      {!list ? (
+        loadError ? (
+          <LoadFailed what="Your games" error={loadError} onRetry={() => setReload((n) => n + 1)} />
+        ) : (
+          <PageLoading />
+        )
+      ) : !list.length ? (
         <EmptyState icon={<History size={28} />} title="No games yet">
           Play a game with ratioAI running – its summary appears here as soon as the client has the results.
+        </EmptyState>
+      ) : withPuuid && !withGames ? (
+        <PageLoading />
+      ) : !filtered.length ? (
+        <EmptyState icon={<History size={28} />} title="No game matches">
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              setFilter('all')
+              if (withPuuid) setParams({})
+            }}
+          >
+            Show all games
+          </button>
         </EmptyState>
       ) : (
         <div className="stagger space-y-2">
@@ -127,7 +160,7 @@ export function Games() {
                 </span>
               )}
               <span className="ml-auto text-right text-xs text-muted">
-                {ago(game.createdAt)}
+                {timeAgo(game.createdAt)}
                 <span className="block text-[10px] opacity-70">{galaxyOf(cosmicSeed(game.cosmos)).name}</span>
               </span>
             </Link>
@@ -253,8 +286,8 @@ function VerdictCard({ kind, p, s }: { kind: 'mvp' | 'blame'; p: SummaryPlayer; 
   return (
     <div
       tabIndex={0}
-      className="group relative flex-1 cursor-help rounded-2xl p-3 outline-none"
-      style={{ border: `1px solid ${accent}80`, background: `${accent}14` }}
+      className="tinted group relative flex-1 cursor-help rounded-2xl p-3 outline-none"
+      style={{ '--tint': accent } as CSSProperties}
     >
       <div className="mb-1 flex items-center gap-2 text-[11px] font-bold tracking-wider uppercase" style={{ color: accent }}>
         {mvp ? <Crown size={13} /> : <Skull size={13} />} {mvp ? 'MVP' : s.win ? 'Biggest troll' : 'Most to blame'}
@@ -370,14 +403,48 @@ export function GameDetail() {
   const { data: statics } = useApp()
   const { data: mayhem } = useMayhemData()
   const [summary, setSummary] = useState<GameSummary | null | undefined>(undefined)
+  // games saved before 1.3.3 lack the will-to-win signals: read them from the client once (false = not possible)
+  const [effortMissing, setEffortMissing] = useState(false)
   useEffect(() => {
-    void api.getGame(Number(id)).then(setSummary)
+    let current = true
+    setEffortMissing(false)
+    setSummary(undefined)
+    void api
+      .getGame(Number(id))
+      .catch(() => null)
+      .then(async (game) => {
+      if (!current) return
+      setSummary(game)
+      if (!game || game.effort) return
+      const filled = await api.fillGameEffort(game.gameId).catch(() => null)
+      if (!current) return
+      if (filled?.effort) setSummary(filled)
+      else setEffortMissing(true)
+    })
+    return () => {
+      current = false
+    }
   }, [id])
   // tiers are worked out per champion on first use, again whenever the augment or static data changes
   const lookup = useMemo(() => (mayhem && statics ? makeTierLookup(mayhem, statics) : null), [mayhem, statics])
   const tierOf: TierOf = (championId, augmentId) => lookup?.(championId, augmentId)
-  if (summary === undefined) return null
-  if (!summary) return <EmptyState title="Game not found" />
+  if (summary === undefined)
+    return (
+      <div className="p-8">
+        <PageLoading />
+      </div>
+    )
+  if (!summary)
+    return (
+      <div className="page-enter mx-auto max-w-3xl p-8">
+        <EmptyState icon={<History size={28} />} title="Game not found">
+          <p className="mb-3">This game is not in your history (any more).</p>
+          <Link to="/games" className="btn btn-ghost">
+            All games
+          </Link>
+        </EmptyState>
+      </div>
+    )
   const blame = teamBlame(summary)
   const augmentTiers = summaryAugmentTiers(summary, tierOf)
   const quipsByPlayer = quips(summary, augmentTiers)
@@ -388,8 +455,8 @@ export function GameDetail() {
         <h1 className={`font-display text-3xl font-extrabold ${summary.win ? 'text-[#5fb4ff]' : 'text-[#ff7a62]'}`}>
           {summary.win ? 'Victory' : 'Defeat'}
         </h1>
-        <span className="pb-1 text-sm text-muted">
-          {MODE[summary.mode] ?? summary.mode} · {duration(summary.duration)} · {new Date(summary.createdAt).toLocaleString()} ·{' '}
+        <span className="on-bg pb-1 text-sm text-muted">
+          {MODE[summary.mode] ?? summary.mode} · {duration(summary.duration)} · {formatDateTime(summary.createdAt)} ·{' '}
           {galaxyOf(cosmicSeed(summary.cosmos ?? summary.gameId)).name}
         </span>
         <span className="ml-auto" />
@@ -415,14 +482,19 @@ export function GameDetail() {
         </div>
       </div>
 
+      <WillScale summary={summary} />
+      {effortMissing && (
+        <p className="mt-2 text-xs text-muted">
+          Will to win: not available for this game – it was saved by an older version and the League client no longer has its details (or
+          isn&apos;t running).
+        </p>
+      )}
+
       {[true, false].map((ally) => (
         <div
           key={String(ally)}
-          className="mt-3 rounded-2xl px-3 py-2"
-          style={{
-            background: `linear-gradient(135deg, ${ally ? 'rgb(47 149 220 / 0.14)' : 'rgb(226 85 63 / 0.12)'}, rgb(20 13 40 / 0.78) 70%)`,
-            border: `1px solid ${ally ? 'rgb(47 149 220 / 0.55)' : 'rgb(226 85 63 / 0.55)'}`
-          }}
+          className="tinted mt-3 rounded-2xl px-3 py-2"
+          style={{ '--tint': ally ? '#2f95dc' : '#e2553f' } as CSSProperties}
         >
           <h2 className="mb-1 text-xs font-bold uppercase" style={{ color: ally ? '#5fb4ff' : '#ff7a62' }}>
             {ally ? 'Your team' : 'Enemy team'}

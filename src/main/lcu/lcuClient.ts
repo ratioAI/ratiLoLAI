@@ -56,6 +56,8 @@ export class LcuClient extends EventEmitter {
           let raw = ''
           res.setEncoding('utf8')
           res.on('data', (chunk) => (raw += chunk))
+          // the client closed in the middle of an answer: without a listener this is an uncaught error
+          res.on('error', reject)
           res.on('end', () => {
             const status = res.statusCode ?? 0
             let json: unknown = undefined

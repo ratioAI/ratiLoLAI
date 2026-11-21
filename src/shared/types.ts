@@ -4,6 +4,7 @@ import type { Encounter } from './encounters'
 import type { AchievementCategory, AchievementRank } from './achievements'
 import type { ClipKind, EncoderProbe, RecorderMode, RecorderSettings } from './recorder'
 import type { EditProject, ExportPresetId } from './editProject'
+import type { HighlightPlan, HighlightScope } from './highlights'
 // Types shared between the Electron main process and the React renderer.
 
 export const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
@@ -348,6 +349,11 @@ export interface LoadingPlayer {
   loading: boolean
   /** what your saved games say about this player (never set for you and your premades) */
   encounter?: Encounter | null
+  /**
+   * The game hides this player (streamer mode, "Hide My Name"): the session gives no name. Riot does
+   * not allow identifying or analysing hidden players, so they get no name, record or badge.
+   */
+  hidden?: boolean
 }
 
 /** You and one other player in your saved games (Profile page). */
@@ -412,6 +418,10 @@ export interface LeaderboardEntry {
   /** games as the worst player of your team */
   trolls: number
   avgScore: number
+  /** average will to win (0–100) of your team in their games that have it; null when none has */
+  avgWill: number | null
+  /** games the average will is taken over */
+  willGames: number
 }
 
 export type AcceptDelay = 'instant' | 'human' | 'slow'
@@ -458,6 +468,8 @@ export interface Clip {
   thumbUrl: string | null
   /** null for clips without a saved game (tests, games whose summary never came) */
   game: ClipGame | null
+  /** how worth watching it is (see @shared/highlights); null until it was looked at */
+  highlight?: { score: number; tier: 'S' | 'A' | 'B' | 'C'; label: string } | null
 }
 
 /** A whole-game recording (session mode), joined into one file after the game. */
@@ -499,6 +511,8 @@ export interface CleanupPreview {
 export interface ExportRequest {
   /** the clip the project belongs to (the export shows up next to it in the library) */
   clipId: number
+  /** belongs to no game (a month's recap made of many games) */
+  standalone?: boolean
   project: EditProject
   title: string
   /**
@@ -652,6 +666,8 @@ export interface ImportResult {
 export interface LivePlayer {
   riotId: string
   championName: string
+  /** Data Dragon id of the champion (from rawChampionName, e.g. "MonkeyKing"), language independent */
+  championKey?: string | null
   team: 'ORDER' | 'CHAOS'
   level: number
   kills: number
@@ -685,6 +701,8 @@ export interface LiveGameState {
   activeChampion: string | null
   /** Data Dragon id of the local player's champion (e.g. "MonkeyKing"), language independent */
   activeChampionKey?: string | null
+  /** the local player's health as a share of their maximum (0–1), null when the game didn't say */
+  activeHealth?: number | null
   /** Riot IDs of the players you queued with (from the client lobby) */
   premades?: string[]
   /** inhibitor kills / respawns from the event feed ("soon" = the 15 s warning before a respawn) */
@@ -784,6 +802,16 @@ export interface MayhemAugment {
   pickRateRank: number | null
   pickRateChange: number | null
   url: string | null
+  /**
+   * Riot's display tags of the augment without the "k" prefix, lower case ("damage", "resilience",
+   * "speed", "ally", "classicish", …). Missing in data saved before November 2026.
+   */
+  tags?: string[]
+  /**
+   * Augment pools of the game client the augment is in: "KIWI" is the normal Mayhem pool, other
+   * "KIWI_…" pools belong to a map skin ("KIWI_JADE" = MapSkin_Map12_Jade). Missing in older data.
+   */
+  pools?: string[]
 }
 
 export interface MayhemCombo {
@@ -805,7 +833,8 @@ export interface MayhemData {
 export interface MayhemPersonal {
   games: number
   wins: number
-  augments: { id: number; games: number; wins: number }[]
+  /** how often you took each augment – no win rate: Riot does not allow showing win rates of augments */
+  augments: { id: number; games: number }[]
   champions: { championId: number; games: number; wins: number }[]
   recent: { gameId: number; championId: number; win: boolean; augments: number[]; createdAt: number }[]
 }
@@ -825,6 +854,8 @@ export interface RcApi {
   testDiscordWebhook(): Promise<{ ok: boolean; message: string }>
   /** posts a saved game to the webhook now, whatever the automatic rules say */
   postGameToDiscord(gameId: number): Promise<{ ok: boolean; message: string }>
+  /** sends the will to win of a game (the button on the game page; never on its own) */
+  postWillToDiscord(gameId: number): Promise<{ ok: boolean; message: string }>
   getPatches(mode: GameMode): Promise<{ patch: string; matches: number; updatedAt: number }[]>
   getTierList(patch: string, mode: GameMode): Promise<TierEntry[]>
   getChampionBuild(patch: string, championId: number, role: StatRole | undefined, mode: GameMode): Promise<ChampionBuild | null>
@@ -854,6 +885,8 @@ export interface RcApi {
   getMapTimers(): Promise<MinimapState | null>
   listGames(): Promise<GameListEntry[]>
   getGame(gameId: number): Promise<GameSummary | null>
+  /** reads the will-to-win signals of a game saved before 1.3.3 from the League client; the summary as it is if that isn't possible */
+  fillGameEffort(gameId: number): Promise<GameSummary | null>
   getLeaderboard(): Promise<LeaderboardEntry[]>
   getAchievements(): Promise<AchievementState[]>
   /** the unlock animation of these has played */
@@ -896,6 +929,10 @@ export interface RcApi {
   /** starts an export in the background; progress comes as 'exportProgress' events */
   exportStart(request: ExportRequest): Promise<ExportJob>
   exportCancel(): Promise<void>
+  /** which clips of a game or a month a highlight video would show, with their scores */
+  highlightPlan(scope: HighlightScope): Promise<HighlightPlan>
+  /** makes that video (an export with the Discord preset); progress comes as 'exportProgress' events */
+  createHighlightVideo(scope: HighlightScope): Promise<ExportJob>
   exportStatus(): Promise<ExportJob | null>
   /** posts a clip to the Discord webhook; a clip that was posted before needs `again` */
   shareClipToDiscord(id: number, options?: { quip?: boolean; again?: boolean }): Promise<{ ok: boolean; message: string; alreadyPosted?: boolean }>
@@ -1038,7 +1075,12 @@ export interface AugmentOffer {
   /** only for the settings preview: rate the cards for this champion instead of the live one */
   championId?: number
   /** card rectangles relative to the display, in DIP */
-  cards: { augmentId: number | null; text: string; score: number; rect: { x: number; y: number; width: number; height: number } }[]
+  cards: {
+    augmentId: number | null
+    text: string
+    score: number
+    rect: { x: number; y: number; width: number; height: number }
+  }[]
 }
 
 /** Live status of the overlay and screen recognition (Settings > Diagnostics). */
@@ -1057,6 +1099,8 @@ export interface OverlayDiagnostics {
   captureStream: string
   /** League's window mode as far as we know it ('fullscreen' | 'windowed' | 'borderless') */
   windowMode: string | null
+  /** hotkeys Windows refused the last time they were registered (held by another program, or no key combination) */
+  hotkeysFailed: string[]
   /** one line per monitor: id, position, size in DIP, Windows scaling */
   displays: string[]
   /** what keeps the overlay from working, if anything */
@@ -1116,6 +1160,8 @@ export interface RcEvents {
   /** a clip was saved (hotkey, automatic, bookmark) */
   clipSaved: Clip
   exportProgress: ExportJob
+  /** clips got (new) highlight scores */
+  highlightsScored: number[]
   /** map timers for the main window (the minimap overlay gets its own copy with positions) */
   mapTimers: MinimapState | null
   minimap: MinimapState | null

@@ -190,7 +190,7 @@ function SharedHistory({ p }: { p: ProfileData }) {
       </div>
     )
   return (
-    <div className="panel p-5" style={{ borderColor: `${color}55`, background: `linear-gradient(135deg, ${color}14, transparent 70%)` }}>
+    <div className="tinted rounded-2xl p-5" style={{ ['--tint' as string]: color }}>
       <h3 className="mb-3 text-xs font-bold tracking-wide text-muted uppercase">Your history with this player</h3>
       <div className="mb-3 flex items-center gap-2" title={encounterTitle(encounter)}>
         <EncounterIcon kind={encounter.kind} size={18} />

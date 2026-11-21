@@ -52,6 +52,7 @@ export function Champions() {
           <RoleTabs value={role} onChange={setRole} />
         </div>
       )}
+      {!champions.length && <p className="panel px-6 py-10 text-center text-sm text-muted">No champion matches your search.</p>}
       <div className="stagger grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-3">
         {champions.map((champion) => {
           const entry = bestEntry.get(champion.key)

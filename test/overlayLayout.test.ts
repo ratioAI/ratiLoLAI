@@ -281,7 +281,7 @@ describe('frameWindowBounds', () => {
     expect(fourK.scale).toBe(2)
   })
 
-  it('clamps the padding at the display edge (720p: the crest area would stick out at the top)', () => {
+  it('clamps the padding at the display edge (720p: the glow would stick out at the top)', () => {
     const placed = frameWindowBounds({ x: 0, y: 0, width: 1280, height: 720 }, cardRects(1280, 720))!
     expect(placed.bounds.y).toBeGreaterThanOrEqual(0)
     expect(placed.bounds.y + placed.bounds.height).toBeLessThanOrEqual(720)

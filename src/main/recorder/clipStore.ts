@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Clip, ClipGame } from '@shared/types'
+import type { HighlightTier } from '@shared/highlights'
 import type { ClipKind } from '@shared/recorder'
 
 export interface RecordingRow {
@@ -11,6 +12,8 @@ export interface RecordingRow {
   dir: string
   bytes: number
   kept: boolean
+  /** recording seconds minus game seconds; null when the game clock was never seen (or before 1.3.3) */
+  gameOffset: number | null
 }
 
 interface ClipRow {
@@ -34,12 +37,16 @@ interface ClipRow {
   g_mode: string | null
   g_queue: number | null
   g_created: number | null
+  h_score: number | null
+  h_tier: string | null
+  h_label: string | null
 }
 
 const CLIP_SELECT = `
   SELECT c.*, g.champion_id AS g_champion, g.kills AS g_kills, g.deaths AS g_deaths, g.assists AS g_assists,
-         g.win AS g_win, g.mode AS g_mode, g.queue_id AS g_queue, g.created_at AS g_created
-  FROM clips c LEFT JOIN games g ON g.game_id = c.game_id`
+         g.win AS g_win, g.mode AS g_mode, g.queue_id AS g_queue, g.created_at AS g_created,
+         h.score AS h_score, h.tier AS h_tier, h.label AS h_label
+  FROM clips c LEFT JOIN games g ON g.game_id = c.game_id LEFT JOIN clip_signals h ON h.clip_id = c.id`
 
 function toClip(row: ClipRow): Clip {
   const game: ClipGame | null =
@@ -68,7 +75,8 @@ function toClip(row: ClipRow): Clip {
     url: `rcclip://clip/${row.id}`,
     // the creation time busts the cache when a thumbnail is made again
     thumbUrl: row.thumb ? `rcclip://thumb/${row.id}?v=${row.created_at}` : null,
-    game
+    game,
+    highlight: row.h_score === null || row.h_score === undefined ? null : { score: row.h_score, tier: (row.h_tier ?? 'C') as HighlightTier, label: row.h_label ?? '' }
   }
 }
 
@@ -85,7 +93,10 @@ export class ClipStore {
     return Number(this.db.prepare('INSERT INTO recordings (started_at, dir) VALUES (?, ?)').run(startedAt, dir).lastInsertRowid)
   }
 
-  updateRecording(id: number, patch: Partial<Pick<RecordingRow, 'gameId' | 'endedAt' | 'dir' | 'bytes' | 'kept'>>): void {
+  updateRecording(
+    id: number,
+    patch: Partial<Pick<RecordingRow, 'gameId' | 'endedAt' | 'dir' | 'bytes' | 'kept' | 'gameOffset'>> & { feed?: string }
+  ): void {
     const sets: string[] = []
     const values: (string | number | null)[] = []
     if (patch.gameId !== undefined) (sets.push('game_id = ?'), values.push(patch.gameId))
@@ -93,6 +104,8 @@ export class ClipStore {
     if (patch.dir !== undefined) (sets.push('dir = ?'), values.push(patch.dir))
     if (patch.bytes !== undefined) (sets.push('bytes = ?'), values.push(Math.round(patch.bytes)))
     if (patch.kept !== undefined) (sets.push('kept = ?'), values.push(patch.kept ? 1 : 0))
+    if (patch.gameOffset !== undefined) (sets.push('game_offset = ?'), values.push(patch.gameOffset))
+    if (patch.feed !== undefined) (sets.push('feed = ?'), values.push(patch.feed))
     if (sets.length) this.db.prepare(`UPDATE recordings SET ${sets.join(', ')} WHERE id = ?`).run(...values, id)
   }
 
@@ -104,8 +117,15 @@ export class ClipStore {
       endedAt: row.ended_at === null ? null : Number(row.ended_at),
       dir: String(row.dir),
       bytes: Number(row.bytes),
-      kept: !!row.kept
+      kept: !!row.kept,
+      gameOffset: row.game_offset === null || row.game_offset === undefined ? null : Number(row.game_offset)
     }
+  }
+
+  /** What the recorder kept of the recording's game (JSON, see RecordingFeed), null when nothing. */
+  recordingFeed(id: number): string | null {
+    const row = this.db.prepare('SELECT feed FROM recordings WHERE id = ?').get(id) as { feed: string | null } | undefined
+    return row?.feed ?? null
   }
 
   recording(id: number): RecordingRow | null {
@@ -225,6 +245,7 @@ export class ClipStore {
       if (row.thumb) files.push(row.thumb)
       this.db.prepare('DELETE FROM clips WHERE id = ?').run(id)
       this.db.prepare('DELETE FROM edits WHERE clip_id = ?').run(id)
+      this.db.prepare('DELETE FROM clip_signals WHERE clip_id = ?').run(id)
     }
     return files
   }
@@ -240,6 +261,39 @@ export class ClipStore {
         favorite: number
       }[]
     ).map((row) => ({ id: row.id, file: row.file, bytes: row.bytes, createdAt: row.created_at, favorite: !!row.favorite }))
+  }
+
+  // --- highlight signals ---
+
+  /** The sound analysis (JSON) of clips that were analyzed, by clip id. */
+  audioOf(ids: number[]): Map<number, string | null> {
+    const found = new Map<number, string | null>()
+    const select = this.db.prepare('SELECT audio FROM clip_signals WHERE clip_id = ?')
+    for (const id of ids) {
+      const row = select.get(id) as { audio: string | null } | undefined
+      if (row) found.set(id, row.audio)
+    }
+    return found
+  }
+
+  /** Stores a clip's sound analysis (null = it has no sound or FFmpeg could not read it). */
+  saveAudio(clipId: number, audio: string | null, now: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO clip_signals (clip_id, audio, analyzed_at) VALUES (?, ?, ?)
+         ON CONFLICT (clip_id) DO UPDATE SET audio = excluded.audio, analyzed_at = excluded.analyzed_at`
+      )
+      .run(clipId, audio, now)
+  }
+
+  /** Stores a clip's highlight score (shown in the library); needs its sound analysis row first. */
+  saveScore(clipId: number, score: { score: number; tier: string; label: string }): void {
+    this.db.prepare('UPDATE clip_signals SET score = ?, tier = ?, label = ? WHERE clip_id = ?').run(score.score, score.tier, score.label, clipId)
+  }
+
+  /** Clips that were posted to Discord. */
+  sharedIds(): Set<number> {
+    return new Set((this.db.prepare('SELECT clip_id FROM clip_posts').all() as { clip_id: number }[]).map((row) => row.clip_id))
   }
 
   // --- editor projects ---

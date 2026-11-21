@@ -12,13 +12,13 @@ export interface Box {
   height: number
 }
 
-/** Space around the cards (crest above them, glow around them) at the 1080p reference size, in DIP. */
-export const FRAME_PAD = { top: 100, side: 60, bottom: 52 }
+/** Space around the cards for the frames' glow at the 1080p reference size, in DIP. */
+export const FRAME_PAD = { top: 60, side: 60, bottom: 52 }
 
 /**
- * Size of the overlay UI relative to the 1080p reference (1 = cards 320 DIP wide). The crest, label
- * and note grow and shrink with the cards, so they look the same on 720p, 1440p, 4K and at any
- * Windows scaling. Clamped so text stays readable and nothing explodes on odd input.
+ * Size of the overlay UI relative to the 1080p reference (1 = cards 320 DIP wide). The frames' width
+ * and glow grow and shrink with the cards, so they look the same on 720p, 1440p, 4K and at any
+ * Windows scaling. Clamped so nothing explodes on odd input.
  */
 export function uiScale(cardWidthDip: number): number {
   if (!Number.isFinite(cardWidthDip) || cardWidthDip <= 0) return 1

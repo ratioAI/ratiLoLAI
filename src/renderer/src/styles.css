@@ -3,11 +3,13 @@
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
   --font-display: 'Syne', 'Inter', ui-sans-serif, sans-serif;
-  /* "mushroom trip" palette: deep indigo night, translucent violet glass, iridescent accents */
+  /* "mushroom trip" palette: deep indigo night, violet glass, iridescent accents.
+     The surfaces let only a hint of the moving background through: at 0.78 bright swirls and stars
+     showed behind the text and made it hard to read. */
   --color-bg: #07050f;
-  --color-bg-2: rgb(13 9 27 / 0.74);
-  --color-panel: rgb(20 13 40 / 0.78);
-  --color-panel-2: rgb(38 24 70 / 0.82);
+  --color-bg-2: rgb(13 9 27 / 0.9);
+  --color-panel: rgb(20 13 40 / 0.93);
+  --color-panel-2: rgb(38 24 70 / 0.95);
   --color-line: rgb(176 140 255 / 0.18);
   --color-muted: #a39cc0;
   --color-text: #f1edfb;
@@ -53,6 +55,20 @@ body {
   background: transparent;
 }
 
+/* Keyboard focus is always visible (only for the keyboard: a mouse click draws no ring). */
+:where(a, button, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent-2);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+tr:focus-visible {
+  outline-offset: -2px;
+}
+/* tooltips (item, rune and augment details) open for the keyboard too */
+.tooltip:focus-within > .tooltip-body {
+  opacity: 1;
+}
+
 .drag {
   -webkit-app-region: drag;
 }
@@ -93,6 +109,22 @@ body {
   box-shadow:
     0 10px 40px -12px rgb(0 0 0 / 0.6),
     inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+/* A container in a colour of its own (team, rank, verdict): the tint lies ON TOP of the panel
+   colour. Never put a see-through gradient straight on the page – the background shows through
+   the text. Set --tint to the colour. */
+.tinted {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--tint) 16%, transparent), transparent 70%), var(--color-panel);
+  border: 1px solid color-mix(in srgb, var(--tint) 50%, transparent);
+  box-shadow: 0 10px 40px -12px rgb(0 0 0 / 0.6);
+}
+/* text that sits directly on the moving background (page titles, their meta line) */
+.on-bg {
+  text-shadow:
+    0 1px 2px rgb(7 5 15 / 0.9),
+    0 0 12px rgb(7 5 15 / 0.8);
 }
 
 .input {
@@ -316,136 +348,6 @@ html.overlay-mode #root {
   overflow: hidden;
 }
 
-/* ---- Frames drawn directly over the in-game augment cards ----
-   The animated border + glow is a WebGL canvas (components/FrameCanvas.tsx); everything here is
-   static on purpose, so the overlay only repaints at the canvas' capped frame rate. */
-.card-frame {
-  position: absolute;
-  pointer-events: none;
-  animation: card-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
-}
-@keyframes card-in {
-  from {
-    opacity: 0;
-    transform: scale(1.06);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-.card-frame .cf-crest {
-  position: absolute;
-  left: 50%;
-  top: 0;
-  transform: translate(-50%, -78%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  filter: drop-shadow(0 calc(6px * var(--cf-scale, 1)) calc(14px * var(--cf-scale, 1)) rgba(0, 0, 0, 0.7));
-}
-/* every size below is the 1080p size times --cf-scale (card width / 320 DIP, set per card) */
-.card-frame .cf-shield {
-  position: relative;
-  width: calc(66px * var(--cf-scale, 1));
-  height: calc(58px * var(--cf-scale, 1));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  clip-path: polygon(50% 0, 100% 22%, 100% 70%, 50% 100%, 0 70%, 0 22%);
-  background: var(--cf-text);
-}
-.card-frame .cf-shield::after {
-  content: '';
-  position: absolute;
-  inset: calc(3px * var(--cf-scale, 1));
-  clip-path: polygon(50% 0, 100% 22%, 100% 70%, 50% 100%, 0 70%, 0 22%);
-  background: radial-gradient(circle at 50% 35%, #1b2433, #06090e 75%);
-}
-.card-frame .cf-tier {
-  position: relative;
-  z-index: 1;
-  font-family: 'Beaufort for LOL', 'Cinzel', Georgia, serif;
-  font-weight: 900;
-  font-size: calc(30px * var(--cf-scale, 1));
-  line-height: 1;
-  letter-spacing: -0.02em;
-  background: var(--cf-text);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-.card-frame .cf-label {
-  margin-top: calc(-6px * var(--cf-scale, 1));
-  position: relative;
-  z-index: 2;
-  padding: calc(2px * var(--cf-scale, 1)) calc(10px * var(--cf-scale, 1));
-  border-radius: 999px;
-  font-size: calc(10px * var(--cf-scale, 1));
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  color: #0b0e14;
-  background: var(--cf-text);
-  box-shadow: 0 calc(2px * var(--cf-scale, 1)) calc(8px * var(--cf-scale, 1)) rgba(0, 0, 0, 0.6);
-}
-.card-frame .cf-note {
-  position: absolute;
-  left: 8%;
-  right: 8%;
-  top: 72.5%;
-  padding: calc(7px * var(--cf-scale, 1)) calc(10px * var(--cf-scale, 1));
-  border-radius: calc(10px * var(--cf-scale, 1));
-  background: rgba(6, 9, 14, 0.86);
-  border: 1px solid var(--cf-accent);
-  box-shadow: 0 0 calc(18px * var(--cf-scale, 1)) calc(-4px * var(--cf-scale, 1)) var(--cf-accent);
-  color: #f0e6d2;
-  font-size: calc(12px * var(--cf-scale, 1));
-  line-height: 1.3;
-  text-align: center;
-  /* a long combo note must not spill out of the card */
-  overflow-wrap: anywhere;
-}
-
-.card-frame[data-tier='S+'] {
-  --cf-accent: #7ef0ff;
-  --cf-text: linear-gradient(180deg, #fffbe6, #f5c451 45%, #7ef0ff);
-}
-.card-frame[data-tier='S'] {
-  --cf-accent: #c47bff;
-  --cf-text: linear-gradient(180deg, #fbe9ff, #c47bff 55%, #7a2ee0);
-}
-.card-frame[data-tier='A'] {
-  --cf-accent: #6ea4ff;
-  --cf-text: linear-gradient(180deg, #e6f2ff, #6ea4ff 60%, #2f5fd0);
-}
-.card-frame[data-tier='B'] {
-  --cf-accent: #3dd68c;
-  --cf-text: linear-gradient(180deg, #e3ffef, #3dd68c);
-}
-.card-frame[data-tier='C'] {
-  --cf-accent: #b4c2d1;
-  --cf-text: linear-gradient(180deg, #ffffff, #b4c2d1);
-}
-.card-frame[data-tier='D'] {
-  --cf-accent: #c0896b;
-  --cf-text: linear-gradient(180deg, #f3d3bf, #9b6a4f);
-}
-
-/* a card that builds a combo with an owned augment wears the combo colours (crest + label) */
-.card-frame[data-combo] {
-  --cf-accent: #5dffb0;
-  --cf-text: linear-gradient(180deg, #f0fff8, #5dffb0 55%, #ffd36b);
-}
-
-/* the note becomes a combo hint when the card builds a combo with an owned augment */
-.card-frame .cf-note.cf-note-combo {
-  border-color: #5dffb0;
-  box-shadow: 0 0 calc(18px * var(--cf-scale, 1)) calc(-2px * var(--cf-scale, 1)) rgba(93, 255, 176, 0.8);
-  font-weight: 700;
-}
-
 /* ---- Minimap timers ----
    Static on purpose (the window is re-rendered once a second): health relics get a ring that fills
    up with the seconds left in the middle, inhibitors a pill in team colour with a progress bar. */
@@ -559,32 +461,6 @@ html.overlay-mode .aug-frame .aug-glow {
 .nav-active svg {
   color: #f3b8ff;
   filter: drop-shadow(0 0 6px rgb(229 139 255 / 0.7));
-}
-
-/* combos you are building (Live / Mayhem pages): glowing mint card; one step away → breathing glow */
-.combo-live {
-  background:
-    linear-gradient(rgb(20 40 38 / 0.85), rgb(28 18 52 / 0.85)) padding-box,
-    linear-gradient(120deg, #5dffb0, #b58bff 55%, #ffd36b) border-box;
-  border: 1px solid transparent;
-  box-shadow: 0 0 18px -6px rgb(93 255 176 / 0.8);
-}
-.combo-live.combo-hot {
-  animation: combo-breathe 2.4s ease-in-out infinite;
-}
-@keyframes combo-breathe {
-  0%,
-  100% {
-    box-shadow: 0 0 14px -6px rgb(93 255 176 / 0.7);
-  }
-  50% {
-    box-shadow: 0 0 26px -2px rgb(93 255 176 / 1);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .combo-live.combo-hot {
-    animation: none;
-  }
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -826,6 +702,8 @@ html.overlay-mode .btn-primary {
 
 /* ---- Loading-screen panel ---- */
 .ld-panel {
+  /* solid floor: if the sky canvas cannot be drawn, the game must not shine through the table */
+  background: #07050f;
   border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow:

@@ -23,6 +23,17 @@ import { UNIVERSE } from '@shared/universe'
 import { isDiscordWebhook } from '@shared/discordPayload'
 import { estimateExportMb, planExport, projectDuration, type EditProject } from '@shared/editProject'
 import { DEFAULT_RECORDER, ENCODERS, mergeRecorderSettings, type EncoderProbe } from '@shared/recorder'
+import {
+  buildHighlightProject,
+  monthRange,
+  pickHighlights,
+  reelSeconds,
+  scoreHighlight,
+  REEL_GAME,
+  REEL_MONTH,
+  type HighlightPlan,
+  type HighlightScope
+} from '@shared/highlights'
 import type {
   AchievementState,
   AdminApi,
@@ -563,6 +574,42 @@ export function createMockApi(): RcApi {
 
   const champSelect = async (): Promise<ChampSelectState> => demoChampSelect(await getStatic())
 
+  /** The demo's highlight video: the demo clips have no game feed or sound, so they are judged by their kind. */
+  const demoHighlights = (scope: HighlightScope): { plan: HighlightPlan; project: EditProject | null } => {
+    const range = 'month' in scope ? monthRange(scope.month) : null
+    const clips = demoClips().filter(
+      (clip) => clip.kind !== 'export' && ('gameId' in scope ? clip.gameId === scope.gameId : !!range && clip.createdAt >= range.from && clip.createdAt < range.to)
+    )
+    const reel = clips.map((clip) => ({
+      score: scoreHighlight({ clipId: clip.id, kind: clip.kind, durationMs: clip.durationMs, favorite: clip.favorite, shared: false, gameStart: null, feed: null, game: null, audio: null, baseline: null }),
+      recordingId: clip.recordingId,
+      gameId: clip.gameId,
+      championId: clip.game?.championId ?? null,
+      startMs: clip.startMs,
+      endMs: clip.endMs,
+      createdAt: clip.createdAt
+    }))
+    const month = 'month' in scope
+    const picked = pickHighlights(reel, month ? REEL_MONTH : REEL_GAME)
+    const title = month ? `Recap ${scope.month}` : 'Highlights'
+    const ids = new Set(picked.map((clip) => clip.score.clipId))
+    return {
+      plan: {
+        scope,
+        title,
+        subtitle: null,
+        clips: reel
+          .map(({ score }) => ({ ...score, picked: ids.has(score.clipId) }))
+          .sort((a, b) => b.score - a.score)
+          .map(({ clipId, score, tier, label, reasons, core, picked: isPicked }) => ({ clipId, score, tier, label, reasons, core, picked: isPicked })),
+        picked: picked.map((clip) => clip.score.clipId),
+        seconds: reelSeconds(picked),
+        empty: !clips.length ? 'No clips here.' : picked.length ? null : 'Nothing here is worth a highlight video yet.'
+      },
+      project: buildHighlightProject(picked, month ? 'month' : 'game', { title: title.toUpperCase() })
+    }
+  }
+
   initDemoSessions()
   // '#/games?demo-journey' plays the flight to the next galaxy (screenshots)
   if (window.location.hash.includes('demo-journey')) setTimeout(() => emit('journey', { seed: 1_790_000_123_456 }), 300)
@@ -589,6 +636,7 @@ export function createMockApi(): RcApi {
     },
     testDiscordWebhook: async () => ({ ok: true, message: 'Web demo: nothing is sent to Discord.' }),
     postGameToDiscord: async () => ({ ok: true, message: 'Web demo: nothing is sent to Discord.' }),
+    postWillToDiscord: async () => ({ ok: true, message: 'Web demo: nothing is sent to Discord.' }),
     recorderSetup: async () => ({
       ffmpeg: { status: 'ready', version: '8.1' },
       encoders: demoEncoders,
@@ -744,6 +792,12 @@ export function createMockApi(): RcApi {
       }
     },
     exportStatus: async () => (demoJob ? { ...demoJob } : null),
+    highlightPlan: async (scope) => demoHighlights(scope).plan,
+    createHighlightVideo: async (scope) => {
+      const { plan, project } = demoHighlights(scope)
+      if (!project) throw new Error(plan.empty ?? 'Nothing here is worth a highlight video yet.')
+      return api.exportStart({ clipId: plan.picked[0], project, title: plan.title, images: {}, standalone: 'month' in scope })
+    },
     shareClipToDiscord: async () => ({ ok: true, message: 'Web demo: nothing is sent to Discord.' }),
     copyClipFile: async () => false,
     saveClipAs: async () => false,
@@ -810,6 +864,7 @@ export function createMockApi(): RcApi {
       overlayVisible: false,
       captureStream: 'off',
       windowMode: null,
+      hotkeysFailed: [],
       displays: [],
       notice: null,
       log: ['web demo – no game running']
@@ -832,6 +887,7 @@ export function createMockApi(): RcApi {
         }
       }),
     getGame: async (gameId) => demoHistory().find((summary) => summary.gameId === gameId) ?? demoHistory()[0],
+    fillGameEffort: async (gameId) => demoHistory().find((summary) => summary.gameId === gameId) ?? demoHistory()[0],
     getLeaderboard: async () => leaderboardFromSummaries(demoHistory()),
     getAchievements: async (): Promise<AchievementState[]> => {
       const [mayhem, statics] = await Promise.all([getMayhem(), getStatic()]).catch(() => [null, null] as const)
@@ -948,18 +1004,12 @@ export function createMockApi(): RcApi {
         augments: [0, 1, 2, 3].map(() => pick(rand, ids.slice(0, 40))),
         createdAt: Date.now() - i * 1000 * 60 * 60 * 7
       }))
-      const perAugment = new Map<number, { games: number; wins: number }>()
-      for (const game of recent)
-        for (const id of game.augments) {
-          const totals = perAugment.get(id) ?? { games: 0, wins: 0 }
-          totals.games++
-          totals.wins += game.win ? 1 : 0
-          perAugment.set(id, totals)
-        }
+      const perAugment = new Map<number, number>()
+      for (const game of recent) for (const id of game.augments) perAugment.set(id, (perAugment.get(id) ?? 0) + 1)
       return {
         games: recent.length,
         wins: recent.filter((game) => game.win).length,
-        augments: [...perAugment.entries()].map(([id, totals]) => ({ id, ...totals })).sort((a, b) => b.games - a.games),
+        augments: [...perAugment.entries()].map(([id, games]) => ({ id, games })).sort((a, b) => b.games - a.games),
         champions: [],
         recent
       }
@@ -1277,6 +1327,17 @@ export function demoSummary(index = 0): GameSummary {
               },
               ...(minute % 3 === 0
                 ? [{ type: 'CHAMPION_KILL', timestamp: minute * 60_000 - 5_000, killerId: 6 + (minute % 5), victimId: 2 }]
+                : []),
+              // turrets: ours take two while ahead, theirs two on the way back (teamId = the side that loses it)
+              ...([5, 8, 16, 18].includes(minute)
+                ? [
+                    {
+                      type: 'BUILDING_KILL',
+                      timestamp: minute * 60_000 - 10_000,
+                      killerId: minute < 9 ? 2 : 7,
+                      teamId: minute < 9 ? 200 : 100
+                    }
+                  ]
                 : [])
             ]
           : []

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronRight, Download, Loader2, Sparkles, Swords } from 'lucide-react'
 import type { ChampionBuild, ImportResult, Matchup, Option, RunePage, StatRole } from '@shared/types'
 import { ROLE_LABELS } from '@shared/types'
@@ -7,7 +7,7 @@ import { api } from '@/lib/api'
 import { duration, num, pct, wrColor } from '@/lib/format'
 import { useApp, useAsync } from '@/lib/store'
 import { ChampIcon, ItemIcon, RoleIcon, RuneIcon, SpellIcon, TierBadge } from '@/components/icons'
-import { Spinner } from '@/components/Layout'
+import { EmptyState, LoadFailed, Spinner } from '@/components/Layout'
 import { NoDataHint } from './NoDataHint'
 import { MayhemChampionPanel } from '@/components/mayhem'
 
@@ -25,16 +25,27 @@ export function ChampionPage() {
   const aram = mode === 'aram'
   const role = aram ? 'ARAM' : (params.role as StatRole | undefined)
   const navigate = useNavigate()
-  const { value: build, loading } = useAsync(
+  const { value: loadedBuild, loading, error } = useAsync(
     () => (patch ? api.getChampionBuild(patch, championId, role === 'ARAM' && !aram ? undefined : role, mode) : Promise.resolve(null)),
     [patch, championId, role, statsVersion, mode]
   )
+  // while the next champion's build loads, the last one must not be shown (or imported) under the new name
+  const build = loadedBuild && loadedBuild.championId === championId ? loadedBuild : null
   const [selectedRunePage, setSelectedRunePage] = useState(0)
   useEffect(() => setSelectedRunePage(0), [championId, role])
 
   const champion = data?.champions[championId]
   if (!data) return null
-  if (!champion) return <div className="p-8">Unbekannter Champion.</div>
+  if (!champion)
+    return (
+      <div className="page-enter mx-auto max-w-3xl p-8">
+        <EmptyState title="Unknown champion">
+          <Link to="/champions" className="btn btn-ghost">
+            All champions
+          </Link>
+        </EmptyState>
+      </div>
+    )
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-8">
@@ -85,13 +96,15 @@ export function ChampionPage() {
             </div>
           )}
         </div>
-        {build && <ImportBar build={build} connected={client.connected} />}
+        {build && <ImportBar key={`${build.championId}-${build.role}`} build={build} connected={client.connected} />}
       </div>
 
       {loading && !build ? (
         <div className="flex justify-center p-16">
           <Spinner />
         </div>
+      ) : error && !build ? (
+        <LoadFailed what="The build" error={error} />
       ) : !build ? (
         <NoDataHint />
       ) : (

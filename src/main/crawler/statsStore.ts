@@ -10,6 +10,12 @@ interface Stored {
 }
 
 /** Persists aggregated statistics per patch as JSON files in the user data folder. */
+/** A patch becomes part of a file name: only "16.23" may get there, never a path. */
+function checkedPatch(patch: string): string {
+  if (typeof patch !== 'string' || !/^\d{1,3}\.\d{1,3}$/.test(patch)) throw new Error(`Not a patch: ${String(patch).slice(0, 40)}`)
+  return patch
+}
+
 export class StatsStore {
   private cache = new Map<string, Stored>()
   private dirty = new Set<string>()
@@ -21,10 +27,10 @@ export class StatsStore {
     return mode === 'ranked' ? '' : `${mode}-`
   }
   private statsFile(patch: string, mode: GameMode): string {
-    return join(this.dir, `stats-${this.prefix(mode)}${patch}.json`)
+    return join(this.dir, `stats-${this.prefix(mode)}${checkedPatch(patch)}.json`)
   }
   private processedFile(patch: string, mode: GameMode): string {
-    return join(this.dir, `processed-${this.prefix(mode)}${patch}.json`)
+    return join(this.dir, `processed-${this.prefix(mode)}${checkedPatch(patch)}.json`)
   }
   private key(patch: string, mode: GameMode): string {
     return `${mode}:${patch}`

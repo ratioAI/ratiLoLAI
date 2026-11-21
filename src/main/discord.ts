@@ -3,7 +3,7 @@ import type { Settings, StaticData } from '@shared/types'
 import type { GameSummary } from '@shared/summary'
 import { quips } from '@shared/quips'
 import { summaryAugmentTiers, type TierLookup } from '@shared/mayhem'
-import { buildDiscordPayload, discordModeOf, isDiscordWebhook, type DiscordPayload } from '@shared/discordPayload'
+import { buildDiscordPayload, buildWillPayload, discordModeOf, isDiscordWebhook, type DiscordPayload } from '@shared/discordPayload'
 
 /** Only games that ended at most this long ago are posted on their own (no imports, no old games). */
 export const DISCORD_MAX_AGE_MS = 30 * 60_000
@@ -105,6 +105,30 @@ export class DiscordPoster {
       return { ok: false, message }
     } finally {
       this.inFlight.delete(summary.gameId)
+    }
+  }
+
+  /**
+   * Sends the will to win of a game – only ever from the button on the game page, never on its own,
+   * and not counted as the game's post (that one can still go out).
+   */
+  async postWill(summary: GameSummary): Promise<PostResult> {
+    const url = this.deps.webhook()
+    if (!url) return { ok: false, message: 'No Discord webhook saved.' }
+    const statics = await this.deps.staticData().catch(() => null)
+    const payload = buildWillPayload(summary, {
+      champion: (id) => statics?.champions[id],
+      ddragonVersion: statics?.version
+    })
+    if (!payload) return { ok: false, message: 'This game has no will to win (too short, a remake or saved by an older version).' }
+    try {
+      const result = await this.send(url, payload)
+      this.deps.log(`discord: will to win of game ${summary.gameId} ${result.ok ? 'posted' : `failed – ${result.message}`}`)
+      return result
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.deps.log(`discord: posting the will to win failed – ${message}`)
+      return { ok: false, message }
     }
   }
 

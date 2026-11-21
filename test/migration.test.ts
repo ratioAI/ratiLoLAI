@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { BASE_SCHEMA, DB_VERSION, GameStore, migrate } from '../src/main/games'
 import { buildSummary, type GameSummary, type RawGame } from '../src/shared/summary'
+import { willToWin } from '../src/shared/will'
 
 /** A game as 1.1 saved it: no multikill or pentas in the summary. */
 function oldSummary(gameId: number, kills: number[]): GameSummary {
@@ -164,14 +165,15 @@ describe('migration v4 (clips)', () => {
 
   it('adds recordings, clips and edits to a v3 database and keeps what is there', () => {
     const db = v3Db()
-    expect(migrate(db)).toBe(4)
-    expect(DB_VERSION).toBe(4)
+    expect(migrate(db)).toBe(DB_VERSION)
+    expect(DB_VERSION).toBe(5)
     expect(tables(db)).toEqual(expect.arrayContaining(['recordings', 'clips', 'edits', 'games', 'achievements', 'flights']))
     expect((db.prepare('SELECT COUNT(*) AS n FROM games').get() as { n: number }).n).toBe(1)
     expect((db.prepare('SELECT seen FROM achievements').get() as { seen: number }).seen).toBe(1)
     const columns = (table: string): string[] =>
       (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).map((column) => column.name)
-    expect(columns('recordings')).toEqual(['id', 'game_id', 'started_at', 'ended_at', 'dir', 'bytes', 'kept'])
+    // game_offset and feed come with version 5
+    expect(columns('recordings')).toEqual(['id', 'game_id', 'started_at', 'ended_at', 'dir', 'bytes', 'kept', 'game_offset', 'feed'])
     expect(columns('clips')).toEqual([
       'id',
       'game_id',
@@ -193,11 +195,45 @@ describe('migration v4 (clips)', () => {
     const db = v3Db()
     migrate(db)
     db.exec("INSERT INTO clips (game_id, created_at, start_ms, end_ms, file, kind) VALUES (1, 10, 0, 30000, 'a.mp4', 'manual')")
-    expect(migrate(db)).toBe(4)
+    expect(migrate(db)).toBe(DB_VERSION)
     // even when the version was reset, the tables are created with IF NOT EXISTS
     db.exec('PRAGMA user_version = 3')
-    expect(migrate(db)).toBe(4)
+    expect(migrate(db)).toBe(DB_VERSION)
     expect((db.prepare('SELECT COUNT(*) AS n FROM clips').get() as { n: number }).n).toBe(1)
     expect((db.prepare('SELECT title, favorite, bytes FROM clips').get() as Record<string, unknown>)).toEqual({ title: '', favorite: 0, bytes: 0 })
+  })
+})
+
+describe('migration v5 (will to win, highlight signals)', () => {
+  /** A game saved by the 1.3.3 development build: the summary already has the will-to-win signals. */
+  const withEffort = (gameId: number): GameSummary => ({
+    ...oldSummary(gameId, [5, 4, 2, 1]),
+    effort: { surrender: null, remake: false, buildings: [], idle: {}, tracked: 0 }
+  })
+
+  it('fills the will of games whose summary has the signals and leaves the others empty', () => {
+    const db = legacyDb([withEffort(1), oldSummary(2, [5, 4, 2, 1])])
+    db.exec('PRAGMA user_version = 4')
+    // version 4 had the clip tables; they are created again (IF NOT EXISTS) by the earlier steps in a real run
+    db.exec('CREATE TABLE recordings (id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER, started_at INTEGER NOT NULL, ended_at INTEGER, dir TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, kept INTEGER NOT NULL DEFAULT 0)')
+    expect(migrate(db)).toBe(5)
+    const wills = db.prepare('SELECT game_id, will FROM games ORDER BY game_id').all() as { game_id: number; will: number | null }[]
+    expect(wills[0].will).toBe(willToWin(withEffort(1), true)!.score)
+    expect(wills[1].will).toBeNull()
+    expect(tables(db)).toContain('clip_signals')
+  })
+
+  it('keeps the will of a saved game up to date and averages it on the leaderboard', () => {
+    const store = new GameStore(':memory:')
+    store.save(withEffort(1))
+    store.save(oldSummary(2, [5, 4, 2, 1]))
+    const expected = willToWin(withEffort(1), true)!.score
+    const me = store.leaderboard().find((entry) => entry.me)!
+    expect(me.games).toBe(2)
+    expect(me.willGames).toBe(1)
+    expect(me.avgWill).toBe(expected)
+    // the second game gets its signals later (opened in the app): it now counts too
+    store.save(withEffort(2))
+    expect(store.leaderboard().find((entry) => entry.me)!.willGames).toBe(2)
   })
 })

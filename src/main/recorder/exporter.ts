@@ -76,6 +76,8 @@ export class Exporter {
   private job: ExportJob | null = null
   private request: ExportRequest | null = null
   private handle: { cancel?: () => void } = {}
+  /** counts the runs, so a run that was interrupted can tell that it is not the current one any more */
+  private runToken = 0
   private cancelled = false
   private nextId = 1
   private running: Promise<ExportJob> | null = null
@@ -142,12 +144,21 @@ export class Exporter {
   /** The game is over: a waiting export starts (again). */
   onGameEnd(): void {
     if (this.job?.state !== 'paused' || this.deps.inGame()) return
+    // The run the game interrupted may still be in a step that cannot be stopped (preparing the
+    // files, the GIF palette). Starting next to it meant two runs in one temporary folder, and the
+    // first one deleted it under the second when it ended. Wait for it, then look again.
+    const previous = this.running
+    if (previous) {
+      void previous.catch(() => undefined).then(() => this.onGameEnd())
+      return
+    }
     this.set({ state: 'running', progress: 0, message: null })
     void this.execute()
   }
 
   private execute(): Promise<ExportJob> {
-    this.running = this.doExport()
+    const token = ++this.runToken
+    const work: Promise<ExportJob> = this.doExport(token)
       .catch((error) => {
         // a pause or a cancel kills FFmpeg on purpose
         if (this.job?.state === 'paused') return this.job
@@ -156,11 +167,15 @@ export class Exporter {
         this.deps.log(`export: failed – ${message}`)
         return this.set({ state: 'error', message })
       })
-      .finally(() => (this.running = null))
-    return this.running
+      .finally(() => {
+        if (this.running === work) this.running = null
+      })
+    this.running = work
+    return work
   }
 
-  private async doExport(): Promise<ExportJob> {
+  private async doExport(token: number): Promise<ExportJob> {
+    const stopped = (): boolean => this.stopped(token)
     const request = this.request!
     const project = request.project
     const ffmpeg = this.deps.env.ffmpeg.path
@@ -193,15 +208,15 @@ export class Exporter {
         if (plan.container === 'gif') {
           const gif = ffmpegGifArgs(project, plan, target, join(tmp, 'palette.png'))
           const palette = await (this.deps.run ?? run)(ffmpeg, gif.palette, { timeoutMs: 600_000, lowPriority: true })
-          if (this.stopped()) throw new Error('stopped')
+          if (stopped()) throw new Error('stopped')
           if (palette.code !== 0) throw new Error(`The GIF palette failed: ${palette.stderr.trim().slice(-300)}`)
           result = await runFfmpeg(ffmpeg, gif.encode, (seconds) => progress(seconds, 0.3, 0.7), this.handle)
         } else {
           // cancelled or paused while the files were being prepared: do not start FFmpeg at all
-          if (this.stopped()) throw new Error('stopped')
+          if (stopped()) throw new Error('stopped')
           result = await runFfmpeg(ffmpeg, ffmpegExportArgs(project, plan, target, this.encoderFor(plan, available)), (seconds) => progress(seconds), this.handle)
         }
-        if (this.stopped()) throw new Error('stopped')
+        if (stopped()) throw new Error('stopped')
         if (result.code !== 0) throw new Error(`FFmpeg failed: ${result.stderr.trim().slice(-300) || `exit code ${result.code}`}`)
         bytes = (await stat(out).catch(() => null))?.size ?? 0
         if (!bytes) throw new Error('The export is empty.')
@@ -218,8 +233,8 @@ export class Exporter {
       const thumbed = await (this.deps.run ?? run)(ffmpeg, ffmpegThumbArgs(out, Math.min(1, duration / 2), thumb), { timeoutMs: 30_000, lowPriority: true })
       const owner = this.deps.store.clip(request.clipId)
       const clip = this.deps.store.addClip({
-        gameId: owner?.gameId ?? null,
-        recordingId: owner?.recordingId ?? null,
+        gameId: request.standalone ? null : (owner?.gameId ?? null),
+        recordingId: request.standalone ? null : (owner?.recordingId ?? null),
         createdAt: this.now(),
         startMs: 0,
         endMs: Math.round(duration * 1000),
@@ -240,8 +255,9 @@ export class Exporter {
     }
   }
 
-  private stopped(): boolean {
-    return this.cancelled || this.job?.state !== 'running'
+  /** True when this run should end: cancelled, paused for a game, or no longer the current run. */
+  private stopped(token: number): boolean {
+    return token !== this.runToken || this.cancelled || this.job?.state !== 'running'
   }
 
   /** H.264 for Discord (plays everywhere), AV1 for WebM when the GPU has it, otherwise the best encoder. */

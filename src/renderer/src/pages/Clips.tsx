@@ -22,7 +22,8 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import type { CleanupPreview, Clip, ClipStorageInfo, SessionRecording } from '@shared/types'
+import type { CleanupPreview, Clip, ClipStorageInfo, ExportJob, SessionRecording } from '@shared/types'
+import { monthOf, type HighlightPlan, type HighlightScope, type HighlightTier } from '@shared/highlights'
 import {
   NO_CLIP_FILTER,
   clipDuration,
@@ -36,9 +37,11 @@ import {
   type ClipSort
 } from '@shared/clipLibrary'
 import { api, isDemo } from '@/lib/api'
+import { formatDate, formatDateTime } from '@/lib/format'
 import { useApp } from '@/lib/store'
 import { ChampIcon } from '@/components/icons'
-import { EmptyState, PageHeader, formatBytes } from '@/components/Layout'
+import { EmptyState, PageHeader, Spinner, formatBytes } from '@/components/Layout'
+import { ConfirmDialog, Modal, modalOpen } from '@/components/Modal'
 
 const MODE: Record<string, string> = { KIWI: 'ARAM: Mayhem', ARAM: 'ARAM', CLASSIC: "Summoner's Rift" }
 const KINDS: [ClipKindFilter, string][] = [
@@ -56,6 +59,7 @@ const DATES: [number | null, string][] = [
 ]
 const SORTS: [ClipSort, string][] = [
   ['newest', 'Newest'],
+  ['best', 'Most worth watching'],
   ['oldest', 'Oldest'],
   ['longest', 'Longest'],
   ['largest', 'Largest']
@@ -111,8 +115,7 @@ export function ShareToDiscord({ clip, primary }: { clip: Clip; primary?: boolea
         </span>
       )}
       {notice && (
-        <div className="fixed inset-0 z-[140] flex items-center justify-center p-8" style={{ background: 'rgb(4 2 10 / 0.84)' }} onClick={() => setNotice(false)}>
-          <div className="panel w-full max-w-md p-6" onClick={(event) => event.stopPropagation()}>
+        <Modal onClose={() => setNotice(false)} label="Your own music" className="max-w-md p-6" z={140}>
             <h2 className="mb-3 font-display text-xl font-extrabold">Your own music</h2>
             <p className="mb-5 text-sm leading-relaxed text-muted">
               This clip has a song you added yourself. When you share it, you are responsible for having the rights to that music – ratioAI
@@ -137,10 +140,156 @@ export function ShareToDiscord({ clip, primary }: { clip: Clip; primary?: boolea
                 <Send size={15} /> Share
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </>
+  )
+}
+
+const TIER_COLOR: Record<HighlightTier, string> = { S: '#f2c14e', A: '#c47bff', B: '#6ea4ff', C: '#8a93a6' }
+
+/** How worth watching a clip is: tier and score (see @shared/highlights). */
+export function HighlightBadge({ highlight, className = '' }: { highlight: NonNullable<Clip['highlight']>; className?: string }) {
+  return (
+    <span
+      className={`clip-badge tabular-nums ${className}`}
+      style={{ color: TIER_COLOR[highlight.tier], boxShadow: `inset 0 0 0 1px ${TIER_COLOR[highlight.tier]}66` }}
+      title={`${highlight.label || 'Clip'} – highlight score ${highlight.score} of 100`}
+    >
+      {highlight.tier} {highlight.score}
+    </span>
+  )
+}
+
+const clock = (seconds: number): string => `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, '0')}`
+
+/** The text of a failed IPC call without Electron's prefix. */
+const reasonOf = (reason: unknown): string =>
+  (reason instanceof Error ? reason.message : String(reason)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+
+/**
+ * The highlight video of a game or a month: which clips it would show (with their scores and why),
+ * a button that makes it (exported for Discord in the background) and, once it is done, play,
+ * edit and share.
+ */
+export function HighlightVideo({ scope, onPlay }: { scope: HighlightScope; onPlay: (clip: Clip) => void }) {
+  const [plan, setPlan] = useState<HighlightPlan | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [job, setJob] = useState<ExportJob | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const key = JSON.stringify(scope)
+  useEffect(() => {
+    let current = true
+    setLoading(true)
+    setError(null)
+    setJob(null)
+    api
+      .highlightPlan(JSON.parse(key) as HighlightScope)
+      .then((next) => current && setPlan(next))
+      .catch((reason: unknown) => current && setError(reasonOf(reason)))
+      .finally(() => current && setLoading(false))
+    return () => {
+      current = false
+    }
+  }, [key])
+  useEffect(() => api.on('exportProgress', (next) => setJob((current) => (current && current.id === next.id ? next : current))), [])
+  const create = async () => {
+    setError(null)
+    try {
+      setJob(await api.createHighlightVideo(JSON.parse(key) as HighlightScope))
+    } catch (reason) {
+      setError(reasonOf(reason))
+    }
+  }
+  const running = !!job && (job.state === 'running' || job.state === 'paused')
+  const picked = plan ? plan.picked.flatMap((id) => plan.clips.filter((clip) => clip.clipId === id)) : []
+  return (
+    <div className="rounded-xl border border-line bg-bg-2/60 px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Sparkles size={15} className="text-accent" />
+        <span className="text-sm font-semibold">{'month' in scope ? 'Month recap' : 'Highlight video'}</span>
+        {loading ? (
+          <span className="flex items-center gap-1.5 text-xs text-muted">
+            <Loader2 size={12} className="animate-spin" /> Looking at the clips…
+          </span>
+        ) : plan?.empty ? (
+          <span className="text-xs text-muted">{plan.empty}</span>
+        ) : (
+          plan && (
+            <span className="text-xs text-muted tabular-nums">
+              best {picked.length} of {plan.clips.length} clip{plan.clips.length === 1 ? '' : 's'} · {clock(plan.seconds)}
+            </span>
+          )
+        )}
+        <span className="flex-1" />
+        {job?.state === 'done' && job.clip ? (
+          <>
+            <button className="btn btn-ghost px-2.5 py-1.5 text-xs" onClick={() => onPlay(job.clip!)}>
+              <Film size={13} /> Play
+            </button>
+            <Link to={`/clips/edit/${job.clip.id}`} className="btn btn-ghost px-2.5 py-1.5 text-xs">
+              <Pencil size={13} /> Edit
+            </Link>
+            <ShareToDiscord clip={job.clip} primary />
+          </>
+        ) : running ? (
+          <>
+            <span className="flex w-40 items-center gap-2" title={job!.message ?? undefined}>
+              <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                <span className="block h-full rounded-full bg-accent transition-[width]" style={{ width: `${Math.round(job!.progress * 100)}%` }} />
+              </span>
+              <span className="w-8 text-right text-xs text-muted tabular-nums">{job!.state === 'paused' ? 'wait' : `${Math.round(job!.progress * 100)}%`}</span>
+            </span>
+            <button className="btn btn-ghost px-2.5 py-1.5 text-xs" onClick={() => api.exportCancel()}>
+              <X size={13} /> Cancel
+            </button>
+          </>
+        ) : (
+          <button className="btn btn-primary px-3 py-1.5 text-xs" disabled={loading || !picked.length} onClick={create}>
+            <Clapperboard size={13} /> {job?.state === 'error' || job?.state === 'cancelled' ? 'Try again' : 'Create video'}
+          </button>
+        )}
+      </div>
+      {!!picked.length && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {picked.map((clip, i) => (
+            <span
+              key={clip.clipId}
+              className="flex items-center gap-1.5 rounded-lg bg-white/5 px-2 py-1 text-[11px]"
+              title={clip.reasons.length ? clip.reasons.join(' · ') : undefined}
+            >
+              <span className="text-muted tabular-nums">{i + 1}.</span>
+              <b style={{ color: TIER_COLOR[clip.tier] }} className="tabular-nums">
+                {clip.tier} {clip.score}
+              </b>
+              <span className="text-text">{clip.label}</span>
+              <span className="text-muted tabular-nums">{clock(clip.core.out - clip.core.in)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {(error || job?.state === 'error') && <p className="mt-1.5 text-xs text-loss">{error ?? job?.message}</p>}
+      {job?.state === 'paused' && <p className="mt-1.5 text-xs text-muted">{job.message}</p>}
+    </div>
+  )
+}
+
+/** The month recap on the Clips page: one of the months that have clips. */
+function MonthRecap({ clips, onPlay }: { clips: Clip[]; onPlay: (clip: Clip) => void }) {
+  const months = useMemo(
+    () => [...new Set(clips.filter((clip) => clip.kind !== 'export').map((clip) => monthOf(clip.createdAt)))].sort().reverse(),
+    [clips]
+  )
+  const [month, setMonth] = useState<string>(() => months[0] ?? monthOf(Date.now()))
+  const label = (value: string): string => {
+    const [year, index] = value.split('-').map(Number)
+    return new Date(year, index - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+  }
+  return (
+    <div className="mb-5 space-y-2">
+      <Select<string> label="Month" value={month} options={months.map((value): [string, string] => [value, label(value)])} onChange={setMonth} />
+      <HighlightVideo scope={{ month }} onPlay={onPlay} />
+    </div>
   )
 }
 
@@ -202,10 +351,11 @@ function ClipCard({
           />
         )}
         <span className="clip-badge absolute bottom-2 right-2 tabular-nums">{clipDuration(clip.durationMs)}</span>
+        {clip.highlight && <HighlightBadge highlight={clip.highlight} className="absolute bottom-2 left-2" />}
         <span className={`clip-badge absolute top-2 left-2 ${clip.kind.startsWith('auto:') ? 'clip-badge-auto' : ''}`}>{clipKindLabel(clip.kind)}</span>
       </button>
       <button
-        className={`absolute top-2 right-2 rounded-full p-1.5 transition ${clip.favorite ? 'text-gold' : 'text-white/60 opacity-0 group-hover:opacity-100'}`}
+        className={`absolute top-2 right-2 rounded-full p-1.5 transition ${clip.favorite ? 'text-gold' : 'text-white/60 opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`}
         style={{ background: 'rgb(7 5 15 / 0.65)' }}
         onClick={onFavorite}
         title={clip.favorite ? 'Remove from favorites' : 'Favorite'}
@@ -225,7 +375,7 @@ function ClipCard({
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">{clipTitle(clip)}</div>
           <div className="text-[11px] text-muted">
-            {new Date(clip.createdAt).toLocaleDateString()} · {formatBytes(clip.bytes)}
+            {formatDate(clip.createdAt)} · {formatBytes(clip.bytes)}
           </div>
         </div>
         <ClipGameLine clip={clip} />
@@ -260,19 +410,22 @@ export function ClipPlayer({
   const [mark, setMark] = useState<{ in: number; out: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
   const url = clip?.url ?? session?.url ?? ''
 
   const toggleFavorite = useCallback(async () => {
     if (!clip) return
-    const next = await api.updateClip(clip.id, { favorite: !favorite })
+    const next = await api.updateClip(clip.id, { favorite: !favorite }).catch(() => null)
+    if (!next) return setNote('The clip could not be changed.')
     setFavorite(!favorite)
-    if (next) onChanged?.(next)
+    onChanged?.(next)
   }, [clip, favorite, onChanged])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const element = video.current
-      if (!element || (event.target as HTMLElement | null)?.tagName === 'INPUT') return
+      // a dialog on top (delete?, music notice) has the keyboard
+      if (modalOpen() || !element || (event.target as HTMLElement | null)?.tagName === 'INPUT') return
       const key = event.key.toLowerCase()
       if (key === 'escape') return onClose()
       if (key === ' ' || key === 'k') {
@@ -294,8 +447,12 @@ export function ClipPlayer({
   const rename = async () => {
     setRenaming(false)
     if (!clip || title === clip.title) return
-    const next = await api.updateClip(clip.id, { title })
+    const next = await api.updateClip(clip.id, { title }).catch(() => null)
     if (next) onChanged?.(next)
+    else {
+      setTitle(clip.title)
+      setNote('The clip could not be renamed.')
+    }
   }
   const remove = async () => {
     if (!clip) return
@@ -327,11 +484,19 @@ export function ClipPlayer({
               maxLength={120}
               onChange={(event) => setTitle(event.target.value)}
               onBlur={rename}
-              onKeyDown={(event) => event.key === 'Enter' && void rename()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void rename()
+                else if (event.key === 'Escape') {
+                  // Escape drops the new name instead of closing the player
+                  event.stopPropagation()
+                  setTitle(clip.title)
+                  setRenaming(false)
+                }
+              }}
             />
           ) : (
             <h2 className="min-w-0 flex-1 truncate font-display text-lg font-extrabold">
-              {clip ? title.trim() || clipKindLabel(clip.kind) : `Whole game · ${new Date(session!.startedAt).toLocaleString()}`}
+              {clip ? title.trim() || clipKindLabel(clip.kind) : `Whole game · ${formatDateTime(session!.startedAt)}`}
             </h2>
           )}
           {game && <ClipGameLine clip={{ game }} size={26} />}
@@ -383,11 +548,16 @@ export function ClipPlayer({
             </button>
           )}
           {clip && (
-            <button className="btn btn-ghost text-loss" onClick={remove}>
+            <button className="btn btn-ghost text-loss" onClick={() => setConfirming(true)}>
               <Trash2 size={15} /> Delete
             </button>
           )}
         </div>
+        {confirming && clip && (
+          <ConfirmDialog title="Delete this clip?" onConfirm={remove} onCancel={() => setConfirming(false)}>
+            “{title.trim() || clipKindLabel(clip.kind)}” ({formatBytes(clip.bytes)}) is removed from the disk for good.
+          </ConfirmDialog>
+        )}
       </div>
     </div>
   )
@@ -397,7 +567,19 @@ export function ClipPlayer({
 function StorageBar({ storage, onCleaned }: { storage: ClipStorageInfo | null; onCleaned: () => void }) {
   const [preview, setPreview] = useState<CleanupPreview | null>(null)
   const [busy, setBusy] = useState(false)
+  const [looking, setLooking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   if (!storage) return null
+  const look = async (): Promise<void> => {
+    setLooking(true)
+    setError(null)
+    try {
+      setPreview(await api.cleanupPreview())
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }
+    setLooking(false)
+  }
   const share = (bytes: number): string => `${Math.min(100, (bytes / Math.max(1, storage.quotaBytes)) * 100)}%`
   const over = storage.usedBytes > storage.quotaBytes
   return (
@@ -412,13 +594,17 @@ function StorageBar({ storage, onCleaned }: { storage: ClipStorageInfo | null; o
         <span className={`tabular-nums ${over ? 'text-gold' : ''}`}>
           {formatBytes(storage.usedBytes)} / {formatBytes(storage.quotaBytes)}
         </span>
-        <button className="btn btn-ghost px-2.5 py-1 text-xs" onClick={async () => setPreview(await api.cleanupPreview())}>
-          <Sparkles size={13} /> Clean up
+        <button className="btn btn-ghost px-2.5 py-1 text-xs" disabled={looking} onClick={() => void look()}>
+          {looking ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Clean up
         </button>
+        {error && !preview && (
+          <span className="max-w-56 truncate text-loss" title={error}>
+            Clean up failed: {error}
+          </span>
+        )}
       </div>
       {preview && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-8" style={{ background: 'rgb(4 2 10 / 0.8)' }} onClick={() => setPreview(null)}>
-          <div className="panel w-full max-w-lg p-6" onClick={(event) => event.stopPropagation()}>
+        <Modal onClose={() => setPreview(null)} label="Clean up" className="max-w-lg p-6">
             <h2 className="mb-3 font-display text-xl font-extrabold">Clean up</h2>
             {preview.items.length ? (
               <>
@@ -442,6 +628,7 @@ function StorageBar({ storage, onCleaned }: { storage: ClipStorageInfo | null; o
             {preview.overQuota && (
               <p className="mb-4 text-sm text-gold">Your clips alone are above the limit. Delete some, or raise the limit in the settings.</p>
             )}
+            {error && <p className="mb-4 text-sm text-loss">The cleanup did not work: {error}</p>}
             <div className="flex justify-end gap-2">
               <button className="btn btn-ghost" onClick={() => setPreview(null)}>
                 {preview.items.length ? 'Cancel' : 'Close'}
@@ -452,9 +639,15 @@ function StorageBar({ storage, onCleaned }: { storage: ClipStorageInfo | null; o
                   disabled={busy}
                   onClick={async () => {
                     setBusy(true)
-                    await api.cleanupRun().catch(() => null)
+                    setError(null)
+                    try {
+                      await api.cleanupRun()
+                      setPreview(null)
+                    } catch (reason) {
+                      // stay open and say so – closing would look like it had worked
+                      setError(reason instanceof Error ? reason.message : String(reason))
+                    }
                     setBusy(false)
-                    setPreview(null)
                     onCleaned()
                   }}
                 >
@@ -462,8 +655,7 @@ function StorageBar({ storage, onCleaned }: { storage: ClipStorageInfo | null; o
                 </button>
               )}
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </>
   )
@@ -489,13 +681,15 @@ function Select<T extends string | number>({ value, options, onChange, label }: 
 /** A whole-game recording: play it, keep it past the cleanup, or delete it. */
 export function SessionRow({ session, onPlay, onChanged }: { session: SessionRecording; onPlay: () => void; onChanged: () => void }) {
   const daysLeft = session.expiresAt === null ? null : Math.ceil((session.expiresAt - Date.now()) / 86_400_000)
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
   return (
     <div className="panel flex items-center gap-4 p-3">
       <button className="btn btn-ghost px-2.5" onClick={onPlay} title="Play">
         <Film size={16} />
       </button>
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold">{new Date(session.startedAt).toLocaleString()}</div>
+        <div className="text-sm font-semibold">{formatDateTime(session.startedAt)}</div>
         <div className="text-[11px] text-muted">
           {clipDuration(session.durationMs)} · {formatBytes(session.bytes)} ·{' '}
           {session.kept ? 'kept' : daysLeft !== null && daysLeft > 0 ? `deleted in ${daysLeft} d` : 'deleted with the next cleanup'}
@@ -504,22 +698,34 @@ export function SessionRow({ session, onPlay, onChanged }: { session: SessionRec
       <ClipGameLine clip={{ game: session.game }} />
       <button
         className={`btn ${session.kept ? 'btn-primary' : 'btn-ghost'}`}
+        disabled={busy}
+        title={session.kept ? 'Kept: the cleanup never deletes it' : 'Keep it past the automatic cleanup'}
         onClick={async () => {
-          await api.keepRecording(session.id, !session.kept)
+          setBusy(true)
+          await api.keepRecording(session.id, !session.kept).catch(() => undefined)
+          setBusy(false)
           onChanged()
         }}
       >
         <Check size={15} /> {session.kept ? 'Kept' : 'Keep'}
       </button>
-      <button
-        className="btn btn-ghost text-loss"
-        onClick={async () => {
-          await api.deleteRecording(session.id)
-          onChanged()
-        }}
-      >
+      <button className="btn btn-ghost text-loss" onClick={() => setConfirming(true)}>
         <Trash2 size={15} /> Delete
       </button>
+      {confirming && (
+        <ConfirmDialog
+          title="Delete this recording?"
+          onConfirm={async () => {
+            await api.deleteRecording(session.id)
+            setConfirming(false)
+            onChanged()
+          }}
+          onCancel={() => setConfirming(false)}
+        >
+          The whole game ({clipDuration(session.durationMs)}, {formatBytes(session.bytes)}) is removed from the disk for good. Clips you
+          already cut from it stay.
+        </ConfirmDialog>
+      )}
     </div>
   )
 }
@@ -534,15 +740,28 @@ export function Clips() {
   const [sort, setSort] = useState<ClipSort>('newest')
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [open, setOpen] = useState<{ clip?: Clip; session?: SessionRecording } | null>(null)
+  const [recap, setRecap] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
 
   const load = useCallback(() => {
-    void api.listClips().then(setClips)
-    void api.listRecordings().then(setSessions)
-    void api.clipStorage().then(setStorage)
+    void api
+      .listClips()
+      .then((list) => {
+        setClips(list)
+        setLoadError(null)
+      })
+      .catch((reason) => setLoadError(reason instanceof Error ? reason.message : String(reason)))
+    void api.listRecordings().then(setSessions).catch(() => undefined)
+    void api.clipStorage().then(setStorage).catch(() => undefined)
   }, [])
   useEffect(() => {
     load()
-    const unsubscribers = [api.on('clipSaved', load), api.on('gameSummary', load)]
+    const unsubscribers = [
+      api.on('clipSaved', load),
+      api.on('gameSummary', load),
+      api.on('highlightsScored', () => void api.listClips().then(setClips).catch(() => undefined))
+    ]
     return () => unsubscribers.forEach((off) => off())
   }, [load])
 
@@ -560,15 +779,25 @@ export function Clips() {
       else next.add(id)
       return next
     })
+  // a clip the filter hides must not stay selected: "Delete" would remove what you cannot see
+  useEffect(() => {
+    setSelected((current) => {
+      const visible = new Set(shown.map((clip) => clip.id))
+      const next = new Set([...current].filter((id) => visible.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [shown])
   const favorite = async (clip: Clip) => {
-    const next = await api.updateClip(clip.id, { favorite: !clip.favorite })
+    const next = await api.updateClip(clip.id, { favorite: !clip.favorite }).catch(() => null)
     if (next) setClips((current) => current?.map((entry) => (entry.id === next.id ? next : entry)) ?? null)
   }
   const deleteSelected = async () => {
     await api.deleteClips([...selected])
+    setConfirming(false)
     setSelected(new Set())
     load()
   }
+  const selectedBytes = (clips ?? []).filter((clip) => selected.has(clip.id)).reduce((sum, clip) => sum + clip.bytes, 0)
   const filtered = JSON.stringify(filter) !== JSON.stringify(NO_CLIP_FILTER)
 
   let body: ReactNode
@@ -584,7 +813,21 @@ export function Clips() {
         Switch the mode to “Whole game” in Settings › Clips to keep entire games. They are deleted after a few days unless you keep them.
       </EmptyState>
     )
-  } else if (!clips?.length) {
+  } else if (!clips) {
+    // still reading the library (or it failed) – not the same as "no clips yet"
+    body = loadError ? (
+      <EmptyState icon={<Clapperboard size={28} />} title="The clips could not be loaded">
+        <p className="mb-3">{loadError}</p>
+        <button className="btn btn-ghost" onClick={load}>
+          Try again
+        </button>
+      </EmptyState>
+    ) : (
+      <div className="flex justify-center py-16">
+        <Spinner />
+      </div>
+    )
+  } else if (!clips.length) {
     body = (
       <EmptyState icon={<Clapperboard size={28} />} title="No clips yet">
         Turn on “Record my games” in Settings › Clips. During a game, press the clip hotkey to save the last seconds – pentakills and aces are
@@ -637,12 +880,19 @@ export function Clips() {
             </button>
           ))}
         </div>
+        {!!clips?.length && (
+          <button className={`btn ${recap ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setRecap(!recap)} title="The best clips of a month as one video">
+            <Sparkles size={15} /> Month recap
+          </button>
+        )}
         {!isDemo && (
           <button className="btn btn-ghost" onClick={() => api.openClipFolder()}>
             <FolderOpen size={15} /> Open folder
           </button>
         )}
       </PageHeader>
+
+      {recap && tab === 'clips' && !!clips?.length && <MonthRecap clips={clips} onPlay={(clip) => setOpen({ clip })} />}
 
       {tab === 'clips' && !!clips?.length && (
         <div className="mb-5 flex flex-wrap items-center gap-2">
@@ -701,7 +951,7 @@ export function Clips() {
               <button className="btn btn-ghost px-2.5 py-1.5 text-xs" onClick={() => setSelected(new Set())}>
                 None
               </button>
-              <button className="btn btn-ghost px-2.5 py-1.5 text-xs text-loss" onClick={deleteSelected}>
+              <button className="btn btn-ghost px-2.5 py-1.5 text-xs text-loss" onClick={() => setConfirming(true)}>
                 <Trash2 size={13} /> Delete
               </button>
             </>
@@ -720,6 +970,16 @@ export function Clips() {
       )}
 
       {body}
+
+      {confirming && (
+        <ConfirmDialog
+          title={selected.size === 1 ? 'Delete this clip?' : `Delete ${selected.size} clips?`}
+          onConfirm={deleteSelected}
+          onCancel={() => setConfirming(false)}
+        >
+          {selected.size === 1 ? 'It is' : 'They are'} removed from the disk for good ({formatBytes(selectedBytes)}).
+        </ConfirmDialog>
+      )}
 
       {open && (
         <ClipPlayer
@@ -749,7 +1009,8 @@ export function GameClips({ gameId }: { gameId: number }) {
   }, [gameId])
   useEffect(() => {
     load()
-    return api.on('clipSaved', load)
+    const unsubscribers = [api.on('clipSaved', load), api.on('highlightsScored', load)]
+    return () => unsubscribers.forEach((off) => off())
   }, [load])
   if (!clips.length && !session) return null
   return (
@@ -765,6 +1026,11 @@ export function GameClips({ gameId }: { gameId: number }) {
           <SessionRow session={session} onPlay={() => setOpen({ session })} onChanged={load} />
         </div>
       )}
+      {clips.some((clip) => clip.kind !== 'export') && (
+        <div className="mb-3">
+          <HighlightVideo scope={{ gameId }} onPlay={(clip) => setOpen({ clip })} />
+        </div>
+      )}
       {clips.length > 0 && (
         <div className="flex gap-3 overflow-x-auto pb-1">
           {clips.map((clip) => (
@@ -777,6 +1043,7 @@ export function GameClips({ gameId }: { gameId: number }) {
                 </span>
               )}
               <span className={`clip-badge absolute top-2 left-2 ${clip.kind.startsWith('auto:') ? 'clip-badge-auto' : ''}`}>{clipTitle(clip)}</span>
+              {clip.highlight && <HighlightBadge highlight={clip.highlight} className="absolute bottom-2 left-2" />}
               <span className="clip-badge absolute right-2 bottom-2 tabular-nums">{clipDuration(clip.durationMs)}</span>
             </button>
           ))}

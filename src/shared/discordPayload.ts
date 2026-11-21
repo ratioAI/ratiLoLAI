@@ -10,6 +10,7 @@
 import { teamBlame, type GameSummary, type SummaryPlayer } from './summary'
 import { selectModeOfQueue, type SelectMode } from './types'
 import { DDRAGON } from './staticData'
+import { WILL_FACTOR_NAMES, willFactorText, willPresenceText, willSurrenderText, willToWin, willVerdict } from './will'
 
 export const DISCORD_LIMITS = { title: 256, fieldName: 256, fieldValue: 1024, footer: 2048, total: 6000, fields: 25 } as const
 
@@ -198,6 +199,84 @@ export function buildDiscordPayload(summary: GameSummary, options: DiscordPayloa
   while (embedSize(embed) > DISCORD_LIMITS.total && embed.fields.length > 2) embed.fields.pop()
   if (embedSize(embed) > DISCORD_LIMITS.total)
     for (const field of embed.fields) field.value = cut(field.value, Math.floor((DISCORD_LIMITS.total - 400) / embed.fields.length))
+  return { username: 'ratioAI', allowed_mentions: { parse: [] }, embeds: [embed] }
+}
+
+// ---------------------------------------------------------------------------
+// Will to win
+// ---------------------------------------------------------------------------
+
+/** Embed colour per band, lowest first (grey → blue → violet → gold). */
+const WILL_COLORS = [0x7f8c8d, 0xb4c2d1, 0x5fb4ff, 0xb58bff, 0xf2c14e]
+
+/** A 0–100 score as ten squares, e.g. 🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛. */
+export function willBar(score: number, square: string): string {
+  const filled = Math.max(0, Math.min(10, Math.round(score / 10)))
+  return square.repeat(filled) + '⬛'.repeat(10 - filled)
+}
+
+/**
+ * The message for the will to win of a game (sent only when you press the button on the game page):
+ * both teams' scores as bars, the verdict and what made it. Null when the game can't be judged.
+ */
+export function buildWillPayload(
+  summary: GameSummary,
+  options: Pick<DiscordPayloadOptions, 'champion' | 'ddragonVersion' | 'test'>
+): DiscordPayload | null {
+  const ours = willToWin(summary, true)
+  if (!ours) return null
+  const theirs = willToWin(summary, false)
+  const nameOf = (puuid: string): string => {
+    const player = summary.players.find((other) => other.puuid === puuid)
+    if (!player) return '?'
+    const champion = options.champion(player.championId)?.name ?? `Champion ${player.championId}`
+    // "away" is a label nobody gets with their name unless they are you or a premade, whatever the setting
+    return escapeDiscord(displayName(player, champion, true))
+  }
+  const title = cut(
+    `${options.test ? '[TEST] ' : ''}🔥 Will to win · ${summary.win ? 'VICTORY' : 'DEFEAT'} · ${MODE_LABEL[summary.mode] ?? summary.mode} · ${clock(summary.duration)}`,
+    DISCORD_LIMITS.title
+  )
+  const lines = [
+    `🔵 **Your team ${ours.score}** – ${ours.band.label}`,
+    willBar(ours.score, '🟦'),
+    ...(theirs ? [`🔺 **Enemy ${theirs.score}** – ${theirs.band.label}`, willBar(theirs.score, '🟥')] : []),
+    '',
+    `*${[ours.band.text, willVerdict(ours, theirs)].filter(Boolean).join(' ')}*`
+  ]
+  const score = (value: number | null): string => (value === null ? '–' : String(Math.round(value)))
+  const fields: DiscordEmbedField[] = ours.factors.map((factor, i) => {
+    const enemy = theirs?.factors[i]
+    return {
+      name: cut(
+        `${WILL_FACTOR_NAMES[factor.key]} · ${score(factor.score)}${enemy ? ` vs ${score(enemy.score)}` : ''}`,
+        DISCORD_LIMITS.fieldName
+      ),
+      value: cut(willFactorText(factor), DISCORD_LIMITS.fieldValue)
+    }
+  })
+  fields.push({
+    name: `Presence · × ${ours.presence.toFixed(2)}${theirs ? ` vs × ${theirs.presence.toFixed(2)}` : ''}`,
+    value: cut(willPresenceText(ours, nameOf), DISCORD_LIMITS.fieldValue)
+  })
+  if (ours.surrender || theirs?.surrender)
+    fields.push({
+      name: `Surrender · ${ours.surrender ? `− ${Math.round(ours.surrender)}` : '–'}${theirs ? ` vs ${theirs.surrender ? `− ${Math.round(theirs.surrender)}` : '–'}` : ''}`,
+      value: willSurrenderText(ours.surrender ? ours : theirs!) + (ours.surrender ? ' (your team)' : ' (the enemy)')
+    })
+  const me = summary.players.find((player) => player.me)
+  const meChamp = me && options.champion(me.championId)
+  const embed: DiscordEmbed = {
+    title,
+    color: WILL_COLORS[Math.min(WILL_COLORS.length - 1, Math.floor(ours.score / 20))],
+    description: lines.join('\n'),
+    ...(meChamp && options.ddragonVersion
+      ? { thumbnail: { url: `${DDRAGON}/cdn/${options.ddragonVersion}/img/champion/${meChamp.id}.png` } }
+      : {}),
+    fields,
+    footer: { text: 'ratioAI · will to win – effort, not skill · 50 = a typical team' },
+    timestamp: new Date(summary.createdAt + Math.max(0, summary.duration) * 1000).toISOString()
+  }
   return { username: 'ratioAI', allowed_mentions: { parse: [] }, embeds: [embed] }
 }
 

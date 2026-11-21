@@ -24,6 +24,7 @@ import { PageHeader } from '@/components/Layout'
 import { UniverseGl, projectPoint, type Camera, type ConstellationMesh, type StarCloud } from '@/components/universeGl'
 import { RankChip } from './Achievements'
 import { freshCanvas } from '@/lib/glCanvas'
+import { formatDate } from '@/lib/format'
 
 interface Visit {
   galaxy: Galaxy
@@ -461,7 +462,7 @@ export function StarMap() {
                       <span className="text-sm tabular-nums">
                         {game.kda[0]}/<span className="text-loss">{game.kda[1]}</span>/{game.kda[2]}
                       </span>
-                      <span className="ml-auto text-[11px] text-muted">{new Date(game.createdAt).toLocaleDateString()}</span>
+                      <span className="ml-auto text-[11px] text-muted">{formatDate(game.createdAt)}</span>
                     </Link>
                   ))
                 ) : (
@@ -521,7 +522,7 @@ function ConstellationLabel({ achievement, at }: { achievement?: AchievementStat
       <p className="mt-1.5 font-semibold">
         {achievement.unlocked ? (
           <span className="text-text">
-            Discovered {achievement.unlockedAt ? new Date(achievement.unlockedAt).toLocaleDateString() : ''}
+            Discovered {achievement.unlockedAt ? formatDate(achievement.unlockedAt) : ''}
             {achievement.gameId !== null && <span className="text-accent"> · click to open the game</span>}
           </span>
         ) : (

@@ -2,7 +2,7 @@ import { liveChampionKey } from '@shared/staticData'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Ban, Eye, Loader2, Radio, Skull, X } from 'lucide-react'
-import type { ChampSelectPlayer, GameMode, LiveGameState, MinimapState, Platform, ScoutResult } from '@shared/types'
+import type { ChampSelectPlayer, GameMode, ImportResult, LiveGameState, MinimapState, Platform, ScoutResult } from '@shared/types'
 import { PLATFORMS, ROLE_LABELS, statsModeOf } from '@shared/types'
 import { MayhemChampionPanel, useMayhemData, useOwnedAugments } from '@/components/mayhem'
 import { AugmentFrame } from '@/components/AugmentFrame'
@@ -12,7 +12,7 @@ import { duration, num, pct, RANK_COLORS, wrColor } from '@/lib/format'
 import { useApp, useAsync } from '@/lib/store'
 import { img } from '@/lib/img'
 import { ChampIcon, GameImage, ItemIcon, RoleIcon, RuneIcon, SpellIcon, TierBadge } from '@/components/icons'
-import { EmptyState, PageHeader } from '@/components/Layout'
+import { EmptyState, PageHeader, Spinner } from '@/components/Layout'
 
 export function Live() {
   const { champSelect, live, client, settings } = useApp()
@@ -98,12 +98,29 @@ function ChampSelectView() {
   const session = champSelect!
   const statsMode: GameMode = statsModeOf(session.mode)
   const role = statsMode === 'aram' ? 'ARAM' : (session.myRole ?? undefined)
-  const { value: build } = useAsync(async () => {
+  const [importing, setImporting] = useState(false)
+  const [manualImport, setManualImport] = useState<{ championId: number; result: ImportResult } | null>(null)
+  const importNow = async (): Promise<void> => {
+    const championId = session.myChampionId
+    setImporting(true)
+    setManualImport(null)
+    try {
+      setManualImport({ championId, result: await api.importBuild(championId, role ?? null, undefined, statsMode) })
+    } catch (reason) {
+      setManualImport({ championId, result: { errors: [reason instanceof Error ? reason.message : String(reason)] } })
+    }
+    setImporting(false)
+  }
+  const { value: loadedBuild, loading: buildLoading } = useAsync(async () => {
     if (!session.myChampionId) return null
     // Use the newest patch that actually has data for this mode
     const statsPatch = (await api.getPatches(statsMode)).find((patchStats) => patchStats.matches > 0)?.patch ?? patch
     return statsPatch ? api.getChampionBuild(statsPatch, session.myChampionId, role, statsMode) : null
   }, [patch, session.myChampionId, role, statsMode, statsVersion])
+  // after a swap or reroll the last champion's build must not stay under the new one
+  const build = loadedBuild && loadedBuild.championId === session.myChampionId ? loadedBuild : null
+  // the newest import of this champion, done by hand or automatically
+  const imported = manualImport?.championId === session.myChampionId ? manualImport.result : lastImport?.championId === session.myChampionId ? lastImport : null
   return (
     <>
       <div className="mb-3 text-xs font-semibold text-muted">
@@ -160,19 +177,22 @@ function ChampSelectView() {
                     <Link to={`/champion/${session.myChampionId}/${build.role}`} className="text-sm font-semibold text-accent">
                       Full build →
                     </Link>
-                    <button
-                      className="btn btn-primary"
-                      onClick={() => api.importBuild(session.myChampionId, role ?? null, undefined, statsMode)}
-                    >
-                      Import
+                    <button className="btn btn-primary" disabled={importing} onClick={() => void importNow()}>
+                      {importing && <Loader2 size={15} className="animate-spin" />} Import
                     </button>
                   </div>
-                  {lastImport && lastImport.championId === session.myChampionId && (
-                    <p className={`mt-3 text-xs ${lastImport.errors.length ? 'text-loss' : 'text-win'}`}>
-                      {lastImport.errors.length ? lastImport.errors.join(' · ') : '✔ Runes & items imported automatically'}
+                  {imported && (
+                    <p className={`mt-3 text-xs ${imported.errors.length ? 'text-loss' : 'text-win'}`}>
+                      {imported.errors.length
+                        ? imported.errors.join(' · ')
+                        : imported === lastImport
+                          ? '✔ Runes & items imported automatically'
+                          : `✔ Imported: ${[imported.runes && 'runes', imported.items && 'items', imported.spells && 'spells'].filter(Boolean).join(', ') || 'nothing to import'}`}
                     </p>
                   )}
                 </>
+              ) : buildLoading ? (
+                <Spinner />
               ) : (
                 <p className="text-sm text-muted">No data for this champion yet.</p>
               )}
@@ -263,8 +283,9 @@ function OwnedAugments({ championId, owned }: { championId: number; owned: numbe
             <AugmentFrame augment={augment} tier={tierEntry?.tier ?? 'C'} size={26} note={tierEntry?.note ?? null} />
             <button
               onClick={() => api.setOwnedAugments(owned.filter((ownedId) => ownedId !== id))}
-              className="absolute -top-2 -right-2 hidden rounded-full bg-black/85 p-0.5 text-muted group-hover:block hover:text-loss"
+              className="absolute -top-2 -right-2 rounded-full bg-black/85 p-0.5 text-muted opacity-0 group-hover:opacity-100 hover:text-loss focus-visible:opacity-100"
               title="Not picked – remove"
+              aria-label={`Remove ${augment.name}`}
             >
               <X size={10} />
             </button>
@@ -276,8 +297,8 @@ function OwnedAugments({ championId, owned }: { championId: number; owned: numbe
 }
 
 const TEAM_STYLE = {
-  ORDER: { label: 'Blue team', color: '#4ea3ff', tint: 'rgb(78 163 255 / 0.13)', edge: 'rgb(78 163 255 / 0.55)' },
-  CHAOS: { label: 'Red team', color: '#ff5a78', tint: 'rgb(255 90 120 / 0.12)', edge: 'rgb(255 90 120 / 0.55)' }
+  ORDER: { label: 'Blue team', color: '#4ea3ff', tint: 'rgb(78 163 255 / 0.13)' },
+  CHAOS: { label: 'Red team', color: '#ff5a78', tint: 'rgb(255 90 120 / 0.12)' }
 } as const
 
 const formatClock = (seconds: number): string => {
@@ -361,10 +382,9 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
           return (
             <div
               key={team}
-              className="rounded-2xl p-4"
+              className="tinted rounded-2xl p-4"
               style={{
-                background: `linear-gradient(135deg, ${teamStyle.tint}, rgb(20 13 40 / 0.78) 70%)`,
-                border: `1px solid ${teamStyle.edge}`,
+                ['--tint' as string]: teamStyle.color,
                 boxShadow: isMyTeam ? `0 0 24px -10px ${teamStyle.color}` : undefined
               }}
             >
@@ -434,7 +454,7 @@ function LiveScoreboard({ live }: { live: LiveGameState }) {
         {live.gameMode === 'KIWI' && myChampionId > 0 && (
           <div className="panel p-4">
             <h2 className="mb-3 text-sm font-bold text-gold uppercase">Augments for {live.activeChampion}</h2>
-            <MayhemChampionPanel championId={myChampionId} compact owned={owned} />
+            <MayhemChampionPanel championId={myChampionId} compact />
           </div>
         )}
         <div className="panel p-4">

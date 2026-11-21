@@ -65,6 +65,7 @@ import { api, isDemo } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { drawOverlays, emojiUrl, loadPeaks, renderExportImages } from '@/lib/clipCanvas'
 import { EmptyState, formatBytes } from '@/components/Layout'
+import { Modal as Dialog, modalOpen } from '@/components/Modal'
 import { ShareToDiscord } from './Clips'
 
 type Selection = { type: 'part'; index: number } | { type: 'text'; id: string } | { type: 'sticker'; id: string } | null
@@ -94,12 +95,19 @@ function useHistory(initial: EditProject | null) {
   const past = useRef<EditProject[]>([])
   const future = useRef<EditProject[]>([])
   const [, bump] = useState(0)
+  // Changes that follow each other within a moment (dragging a slider, typing) are ONE undo step:
+  // otherwise a single drag fills the whole history and Ctrl+Z walks back tick by tick.
+  const lastSet = useRef(0)
   const set = useCallback((next: EditProject | ((current: EditProject) => EditProject)) => {
+    const now = performance.now()
+    const sameGesture = now - lastSet.current < 400
+    lastSet.current = now
     setProject((current) => {
       if (!current) return typeof next === 'function' ? current : next
       const value = typeof next === 'function' ? next(current) : next
       if (value === current) return current
-      past.current = [...past.current.slice(-80), current]
+      // (the updater may run twice in development: never push the same state twice)
+      if (!sameGesture && past.current[past.current.length - 1] !== current) past.current = [...past.current.slice(-80), current]
       future.current = []
       return value
     })
@@ -181,7 +189,7 @@ export function ClipEditor() {
   const [exporting, setExporting] = useState(false)
   const [summary, setSummary] = useState<GameSummary | null>(null)
   const [peaks, setPeaks] = useState<Record<number, number[] | null>>({})
-  const [saved, setSaved] = useState(true)
+  const [saved, setSaved] = useState<boolean | 'failed'>(true)
 
   const canvas = useRef<HTMLCanvasElement>(null)
   const videos = useRef(new Map<number, HTMLVideoElement>())
@@ -211,14 +219,38 @@ export function ClipEditor() {
   }, [owner])
 
   // --- autosave ---
+  // Saved a moment after the last change. What is still waiting is written at once when the editor
+  // closes (Back right after a change, or a finished game opening its summary), so nothing is lost.
+  const unsaved = useRef<{ id: number; project: EditProject } | null>(null)
+  const flushSave = useCallback((): void => {
+    const waiting = unsaved.current
+    if (!waiting) return
+    unsaved.current = null
+    api
+      .saveEdit(waiting.id, waiting.project)
+      .then(() => {
+        if (!unsaved.current) setSaved(true)
+      })
+      .catch(() => {
+        // keep it for the next try (the next change, or closing the editor)
+        unsaved.current ??= waiting
+        setSaved('failed')
+      })
+  }, [])
+  // the project as it came from the disk is not a change
+  const loadedProject = useRef<EditProject | null>(null)
   useEffect(() => {
     if (!project || !owner) return
+    if (loadedProject.current === null) {
+      loadedProject.current = project
+      return
+    }
+    unsaved.current = { id: owner.id, project }
     setSaved(false)
-    const timer = setTimeout(() => {
-      void api.saveEdit(owner.id, project).then(() => setSaved(true))
-    }, 700)
+    const timer = setTimeout(flushSave, 700)
     return () => clearTimeout(timer)
-  }, [project, owner])
+  }, [project, owner, flushSave])
+  useEffect(() => flushSave, [flushSave])
 
   // --- one video element per clip in use, plus its waveform ---
   const usedIds = useMemo(() => [...new Set(project?.clips.map((part) => part.clipId) ?? [])].join(','), [project])
@@ -430,7 +462,8 @@ export function ClipEditor() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null
-      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return
+      // an open dialog (add clip, export) has the keyboard: no splitting or deleting behind it
+      if (modalOpen() || (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return
       const key = event.key.toLowerCase()
       if ((event.ctrlKey || event.metaKey) && key === 'z') return void (event.shiftKey ? history.redo() : history.undo()), event.preventDefault()
       if ((event.ctrlKey || event.metaKey) && key === 'y') return void history.redo(), event.preventDefault()
@@ -531,7 +564,13 @@ export function ClipEditor() {
         <h1 className="min-w-0 truncate font-display text-xl font-extrabold">
           <span className="iridescent-text">Edit</span> · {clipTitle(owner)}
         </h1>
-        <span className="text-xs text-muted">{saved ? 'Saved' : 'Saving …'}</span>
+        {saved === 'failed' ? (
+          <button className="text-xs font-semibold text-loss" onClick={flushSave} title="Your changes are not on the disk yet – click to try again">
+            Could not save – retry
+          </button>
+        ) : (
+          <span className="text-xs text-muted">{saved ? 'Saved' : 'Saving …'}</span>
+        )}
         <span className="flex-1" />
         <button className="btn btn-ghost px-2.5" onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)">
           <Undo2 size={16} />
@@ -868,17 +907,15 @@ function Slider({ label, value, min, max, step, onChange, onStart }: { label: st
 
 function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center p-8" style={{ background: 'rgb(4 2 10 / 0.84)' }} onClick={onClose}>
-      <div className={`panel w-full ${wide ? 'max-w-3xl' : 'max-w-2xl'} p-6`} onClick={(event) => event.stopPropagation()}>
-        <div className="mb-4 flex items-center">
-          <h2 className="flex-1 font-display text-xl font-extrabold">{title}</h2>
-          <button className="btn btn-ghost px-2 py-1.5" onClick={onClose}>
-            <X size={16} />
-          </button>
-        </div>
-        {children}
+    <Dialog onClose={onClose} label={title} className={`${wide ? 'max-w-3xl' : 'max-w-2xl'} p-6`}>
+      <div className="mb-4 flex items-center">
+        <h2 className="flex-1 font-display text-xl font-extrabold">{title}</h2>
+        <button className="btn btn-ghost px-2 py-1.5" onClick={onClose} title="Close (Esc)" aria-label="Close">
+          <X size={16} />
+        </button>
       </div>
-    </div>
+      {children}
+    </Dialog>
   )
 }
 
@@ -1092,7 +1129,11 @@ export function ExportDialog({
   const [note, setNote] = useState<string | null>(null)
   useEffect(() => {
     void api.exportStatus().then((current) => current && (current.state === 'running' || current.state === 'paused') && setJob(current))
-    return api.on('exportProgress', setJob)
+    // Only one export runs at a time, so a running one is always shown. But the end of an export this
+    // dialog was not showing (a highlight video made elsewhere) is not this project's "Done".
+    return api.on('exportProgress', (next) =>
+      setJob((current) => (next.id === current?.id || next.state === 'running' || next.state === 'paused' ? next : current))
+    )
   }, [])
   const setOptions = (patch: Partial<ExportOptions>) => {
     const next = { ...options, ...patch }

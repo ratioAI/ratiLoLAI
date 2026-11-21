@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import { QUEUE_IDS, type GameListEntry, type LeaderboardEntry } from '@shared/types'
 import { teamBlame, type GameSummary } from '@shared/summary'
+import { willToWin } from '@shared/will'
 import type { EncounterStats } from '@shared/encounters'
 
 /** The layout of version 1 (1.0 and 1.1). Later versions build on it through MIGRATIONS. */
@@ -42,7 +43,7 @@ CREATE INDEX IF NOT EXISTS game_players_puuid ON game_players (puuid);
 `
 
 /** Version of the database layout, kept in `PRAGMA user_version`. Databases from 1.0 and 1.1 are version 1 (or 0). */
-export const DB_VERSION = 4
+export const DB_VERSION = 5
 
 /** Columns one migration adds to an existing table (skipped when they are already there). */
 type AddColumns = { table: string; columns: [name: string, definition: string][] }
@@ -129,6 +130,48 @@ const MIGRATIONS: Record<number, { add?: AddColumns[]; sql?: string; after?: (db
         clip_id   INTEGER PRIMARY KEY,
         posted_at INTEGER NOT NULL
       );`
+  },
+  // 1.3.3: your team's will to win per game (leaderboard); per recording the game clock (recording
+  // seconds minus game seconds) and what happened in it (live events, your health), and the sound
+  // analysis of each clip – both for the highlight videos
+  5: {
+    add: [
+      { table: 'games', columns: [['will', 'INTEGER']] },
+      {
+        table: 'recordings',
+        columns: [
+          ['game_offset', 'REAL'],
+          ['feed', 'TEXT']
+        ]
+      }
+    ],
+    sql: `
+      CREATE TABLE IF NOT EXISTS clip_signals (
+        clip_id     INTEGER PRIMARY KEY,
+        audio       TEXT,
+        score       INTEGER,
+        tier        TEXT,
+        label       TEXT,
+        analyzed_at INTEGER NOT NULL
+      );`,
+    after: backfillWill
+  }
+}
+
+/** Your team's will to win of a game, null when the game can't be judged (see willToWin). */
+export const willOf = (summary: GameSummary): number | null => willToWin(summary, true)?.score ?? null
+
+/** Fills the will column from the summaries that already have the signals. */
+function backfillWill(db: DatabaseSync): void {
+  const update = db.prepare('UPDATE games SET will = ? WHERE game_id = ?')
+  const rows = db.prepare('SELECT game_id, summary FROM games').all() as unknown as { game_id: number; summary: string }[]
+  for (const row of rows) {
+    try {
+      const summary = JSON.parse(row.summary) as GameSummary
+      if (summary?.effort) update.run(willOf(summary), row.game_id)
+    } catch {
+      // unreadable summary: no will
+    }
   }
 }
 
@@ -213,12 +256,12 @@ export class GameStore {
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
     migrate(this.db)
     this.insertGame = this.db.prepare(
-      `INSERT INTO games (${LIST_COLUMNS}, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO games (${LIST_COLUMNS}, will, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (game_id) DO UPDATE SET
          created_at = excluded.created_at, duration = excluded.duration, queue_id = excluded.queue_id, mode = excluded.mode,
          win = excluded.win, champion_id = excluded.champion_id, kills = excluded.kills, deaths = excluded.deaths,
          assists = excluded.assists, blamed = excluded.blamed, cosmos = COALESCE(games.cosmos, excluded.cosmos),
-         summary = excluded.summary`
+         will = excluded.will, summary = excluded.summary`
     )
     this.insertPlayer = this.db.prepare(
       `INSERT INTO game_players (game_id, puuid, riot_id, champion_id, ally, me, premade, score, mvp, troll, win, kills, deaths, assists, multikill)
@@ -255,6 +298,7 @@ export class GameStore {
       me?.assists ?? 0,
       blamed?.riotId ?? null,
       summary.cosmos ?? null,
+      willOf(summary),
       JSON.stringify(summary)
     )
     this.deletePlayers.run(summary.gameId)
@@ -465,12 +509,15 @@ export class GameStore {
                 SUM(p.mvp) AS mvps,
                 SUM(p.troll) AS trolls,
                 AVG(p.score) AS score,
+                AVG(g.will) AS will,
+                COUNT(g.will) AS will_games,
                 (SELECT l.riot_id FROM game_players l JOIN games g ON g.game_id = l.game_id
                   WHERE l.puuid = p.puuid ORDER BY g.created_at DESC LIMIT 1) AS riot_id,
                 (SELECT c.champion_id FROM game_players c
                   WHERE c.puuid = p.puuid AND c.ally = 1 AND (c.me = 1 OR c.premade = 1)
                   GROUP BY c.champion_id ORDER BY COUNT(*) DESC, MAX(c.game_id) DESC LIMIT 1) AS champion_id
            FROM game_players p
+           JOIN games g ON g.game_id = p.game_id
           WHERE p.ally = 1 AND (p.me = 1 OR p.premade = 1)
           GROUP BY p.puuid
           ORDER BY mvps DESC, games DESC`
@@ -483,6 +530,8 @@ export class GameStore {
       mvps: number
       trolls: number
       score: number
+      will: number | null
+      will_games: number
       riot_id: string
       champion_id: number
     }[]
@@ -495,7 +544,9 @@ export class GameStore {
       wins: row.wins,
       mvps: row.mvps,
       trolls: row.trolls,
-      avgScore: Math.round(row.score)
+      avgScore: Math.round(row.score),
+      avgWill: row.will_games ? Math.round(row.will!) : null,
+      willGames: row.will_games
     }))
   }
 

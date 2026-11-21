@@ -4,8 +4,9 @@ import { Lock, Orbit } from 'lucide-react'
 import type { AchievementState } from '@shared/types'
 import { ACHIEVEMENTS, CATEGORY_LABELS, RANK_CSS, RANK_ORDER, type AchievementCategory, type AchievementRank } from '@shared/achievements'
 import { api } from '@/lib/api'
-import { PageHeader } from '@/components/Layout'
+import { PageHeader, PageLoading } from '@/components/Layout'
 import { ConstellationReveal } from '@/components/ConstellationReveal'
+import { formatDate } from '@/lib/format'
 
 const RANK_LABEL: Record<AchievementRank, string> = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold', cosmic: 'Cosmic' }
 
@@ -59,12 +60,8 @@ function AchievementCard({ achievement }: { achievement: AchievementState }) {
   const accent = achievement.rank === 'cosmic' ? '#b58bff' : RANK_CSS[achievement.rank]
   const body = (
     <div
-      className={`panel flex h-full gap-3 p-3 transition ${achievement.unlocked ? 'hover:brightness-125' : 'opacity-80'}`}
-      style={
-        achievement.unlocked
-          ? { borderColor: `${accent}66`, background: `linear-gradient(135deg, ${accent}1c, transparent 65%)` }
-          : undefined
-      }
+      className={`flex h-full gap-3 p-3 transition ${achievement.unlocked ? 'tinted rounded-2xl hover:brightness-125' : 'panel'}`}
+      style={achievement.unlocked ? { ['--tint' as string]: accent } : undefined}
     >
       <div className="relative flex h-[76px] w-[76px] shrink-0 items-center justify-center rounded-xl bg-black/40">
         {hidden ? (
@@ -89,7 +86,7 @@ function AchievementCard({ achievement }: { achievement: AchievementState }) {
         <div className="mt-auto pt-2">
           {achievement.unlocked ? (
             <span className="text-[11px] font-semibold text-text">
-              Discovered {achievement.unlockedAt ? new Date(achievement.unlockedAt).toLocaleDateString() : ''}
+              Discovered {achievement.unlockedAt ? formatDate(achievement.unlockedAt) : ''}
             </span>
           ) : achievement.goal > 1 && !hidden ? (
             <div className="flex items-center gap-2">
@@ -163,6 +160,7 @@ export function Achievements() {
           All games
         </Link>
       </PageHeader>
+      {!list && <PageLoading />}
       {groups.map(([category, items]) => (
         <section key={category ?? 'all'} className="mb-6">
           {category && <h2 className="mb-2 text-xs font-bold tracking-wider text-muted uppercase">{CATEGORY_LABELS[category]}</h2>}

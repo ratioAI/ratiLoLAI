@@ -5,7 +5,7 @@ import type { LeaderboardEntry } from '@shared/types'
 import { podium, type PodiumKind } from '@shared/leaderboard'
 import { api } from '@/lib/api'
 import { ChampIcon } from '@/components/icons'
-import { EmptyState, PageHeader } from '@/components/Layout'
+import { EmptyState, LoadFailed, PageHeader, PageLoading, errorText } from '@/components/Layout'
 
 const pct = (part: number, whole: number): string => `${whole ? Math.round((part / whole) * 100) : 0} %`
 const shortName = (riotId: string): string => riotId.split('#')[0]
@@ -58,7 +58,7 @@ function Step({ entry, place, kind }: { entry: LeaderboardEntry | undefined; pla
         style={{
           height: STEP_HEIGHT[place],
           color: `${colour}`,
-          background: `linear-gradient(180deg, ${colour}55, ${colour}14)`,
+          background: `linear-gradient(180deg, ${colour}55, ${colour}14), var(--color-panel)`,
           borderTop: `2px solid ${colour}`,
           animationDelay: `${place * 120}ms`
         }}
@@ -87,23 +87,42 @@ function Podium({ entries, kind }: { entries: LeaderboardEntry[]; kind: PodiumKi
   )
 }
 
-type SortKey = 'games' | 'winRate' | 'mvps' | 'mvpRate' | 'trolls' | 'trollRate' | 'avgScore'
-const COLUMNS: { key: SortKey; label: string; value: (entry: LeaderboardEntry) => number; text: (entry: LeaderboardEntry) => string }[] = [
+type SortKey = 'games' | 'winRate' | 'mvps' | 'mvpRate' | 'trolls' | 'trollRate' | 'avgScore' | 'avgWill'
+const COLUMNS: {
+  key: SortKey
+  label: string
+  value: (entry: LeaderboardEntry) => number
+  text: (entry: LeaderboardEntry) => string
+  title?: string
+}[] = [
   { key: 'games', label: 'Games', value: (entry) => entry.games, text: (entry) => String(entry.games) },
   { key: 'winRate', label: 'Win rate', value: (entry) => entry.wins / entry.games, text: (entry) => pct(entry.wins, entry.games) },
   { key: 'mvps', label: 'MVP', value: (entry) => entry.mvps, text: (entry) => String(entry.mvps) },
   { key: 'mvpRate', label: 'MVP rate', value: (entry) => entry.mvps / entry.games, text: (entry) => pct(entry.mvps, entry.games) },
   { key: 'trolls', label: 'Troll', value: (entry) => entry.trolls, text: (entry) => String(entry.trolls) },
   { key: 'trollRate', label: 'Troll rate', value: (entry) => entry.trolls / entry.games, text: (entry) => pct(entry.trolls, entry.games) },
-  { key: 'avgScore', label: 'Ø impact', value: (entry) => entry.avgScore, text: (entry) => String(entry.avgScore) }
+  { key: 'avgScore', label: 'Ø impact', value: (entry) => entry.avgScore, text: (entry) => String(entry.avgScore) },
+  {
+    key: 'avgWill',
+    label: 'Ø will',
+    // players without a judged game go to the end
+    value: (entry) => entry.avgWill ?? -1,
+    text: (entry) => (entry.avgWill === null ? '–' : String(entry.avgWill)),
+    title: 'Average will to win (0–100) of your team in their games – 50 is a typical team. Older games count once they were opened.'
+  }
 ]
 
 /** Who of you and your premades was MVP or troll how often: two podiums and the full table. */
 export function Leaderboard() {
   const [entries, setEntries] = useState<LeaderboardEntry[] | null>(null)
   const [sort, setSort] = useState<SortKey>('mvps')
+  const [loadError, setLoadError] = useState<string | null>(null)
   useEffect(() => {
-    const load = () => void api.getLeaderboard().then(setEntries)
+    const load = () =>
+      void api
+        .getLeaderboard()
+        .then(setEntries)
+        .catch((reason) => setLoadError(errorText(reason)))
     load()
     return api.on('gameSummary', load)
   }, [])
@@ -116,7 +135,13 @@ export function Leaderboard() {
           All games
         </Link>
       </PageHeader>
-      {!entries ? null : !entries.length ? (
+      {!entries ? (
+        loadError ? (
+          <LoadFailed what="The leaderboard" error={loadError} />
+        ) : (
+          <PageLoading />
+        )
+      ) : !entries.length ? (
         <EmptyState icon={<Trophy size={28} />} title="No games yet">
           Play a game with ratioAI running – you and your premades show up here.
         </EmptyState>
@@ -131,8 +156,8 @@ export function Leaderboard() {
               <thead>
                 <tr className="border-b border-line text-left text-[11px] tracking-wider text-muted uppercase">
                   <th className="px-4 py-2.5 font-bold">Player</th>
-                  {COLUMNS.map(({ key, label }) => (
-                    <th key={key} className="px-3 py-2.5 text-right font-bold">
+                  {COLUMNS.map(({ key, label, title }) => (
+                    <th key={key} className="px-3 py-2.5 text-right font-bold" title={title}>
                       <button className={`uppercase ${sort === key ? 'text-accent' : 'hover:text-text'}`} onClick={() => setSort(key)}>
                         {label}
                         {sort === key ? ' ▾' : ''}
@@ -153,6 +178,11 @@ export function Leaderboard() {
                     {COLUMNS.map(({ key, text }) => (
                       <td
                         key={key}
+                        title={
+                          key === 'avgWill' && entry.willGames
+                            ? `over ${entry.willGames} game${entry.willGames === 1 ? '' : 's'}`
+                            : undefined
+                        }
                         className={`px-3 py-2 text-right tabular-nums ${
                           key === 'mvps' ? 'font-bold text-[#f2c14e]' : key === 'trolls' ? 'font-bold text-[#ff7a62]' : 'text-text'
                         }`}

@@ -1,6 +1,7 @@
 import type { Tier } from '@shared/types'
 
-export const pct = (n: number, digits = 1): string => `${(n * 100).toFixed(digits)}%`
+/** "54.1 %" – with a space as everywhere else in the app (game report, Discord, logs); a no-break space, so a number never loses its sign at a line end */
+export const pct = (n: number, digits = 1): string => `${(n * 100).toFixed(digits)}\u00a0%`
 export const num = (n: number): string => n.toLocaleString('en-US')
 
 export function duration(seconds: number): string {
@@ -8,6 +9,13 @@ export function duration(seconds: number): string {
   const secs = Math.floor(seconds % 60)
   return `${minutes}:${String(secs).padStart(2, '0')}`
 }
+
+// One way to write a date in the whole app. The interface is English, so dates do not follow the
+// Windows region (they came out as "21.11.2026, 16:43:45" next to English text): "21 Nov 2026, 16:43".
+const DATE = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+const DATE_TIME = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+export const formatDate = (timestamp: number): string => DATE.format(timestamp)
+export const formatDateTime = (timestamp: number): string => DATE_TIME.format(timestamp)
 
 export function timeAgo(timestamp: number): string {
   const diff = (Date.now() - timestamp) / 1000
